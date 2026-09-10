@@ -203,6 +203,18 @@ SUGGESTION_ANNOT=" · suggestion shown (inert, not queued input)"
 # pane_suggestion_suffix <session> — $SUGGESTION_ANNOT when that golem's prompt is
 # showing a suggestion, else the empty string. Wraps the classifier so both idle
 # call sites annotate identically and neither has to know the class vocabulary.
+#
+# NOT ATOMIC with the idle verdict it annotates, and deliberately so. The callers
+# classify idle from an earlier flagless capture; this issues its own `-e` read a
+# moment later, so the pane can change in between — annotating a suggestion that
+# has just cleared, or missing one that just appeared. That is acceptable ONLY
+# because the annotation is advisory: it never changes the idle verdict, gates
+# nothing, and is explicitly not clearance to send (monitor-protocol.md). A
+# single `-e` capture shared with the other matchers would close the race but put
+# escape sequences into the text every footer matcher reads, loosening the #246/
+# #452 anchoring they depend on — a real correctness risk traded for a cosmetic
+# one. Do not "fix" this by switching the shared capture; if atomicity is ever
+# needed, strip SGR locally from one `-e` read and feed the matchers that.
 pane_suggestion_suffix() {
     case "$(pane_prompt_line_class "$1")" in
         suggestion) command printf '%s' "$SUGGESTION_ANNOT" ;;
@@ -792,8 +804,22 @@ pane_prompt_line_class() {
         command echo "unknown"
         return 0
     fi
-    # Everything after the LAST glyph on that line is the buffer region.
-    rest="${line##*"$PROMPT_GLYPH"}"
+    # Everything after the LAST prompt PREFIX (glyph + NBSP) is the buffer
+    # region. Anchoring on the two-byte-sequence pair rather than the bare glyph
+    # matters: the buffer text can itself CONTAIN the glyph (a suggestion that
+    # mentions it, or pasted text), and splitting on the last bare glyph would
+    # then slice from inside the text — dropping the opening dim run and
+    # silently reporting a real suggestion as queued `input`. That false negative
+    # is the worst outcome for this feature, and it is invisible: the annotation
+    # is simply absent and the pane reads as ordinary typed text. Measured on the
+    # real composer shape (ESC[...m <glyph> <NBSP> ...), which pads with U+00A0
+    # on every live golem checked; a selection MENU uses glyph + plain space, so
+    # the fallback below keeps the old behavior for any line without the pair
+    # (such a pane is classified as a modal gate before this ever runs).
+    case "$line" in
+        *"$PROMPT_GLYPH$PROMPT_NBSP"*) rest="${line##*"$PROMPT_GLYPH$PROMPT_NBSP"}" ;;
+        *) rest="${line##*"$PROMPT_GLYPH"}" ;;
+    esac
     visible="$(_strip_sgr "$rest")"
     visible="${visible//$PROMPT_NBSP/ }"
     visible="$(command printf '%s' "$visible" | "$TR" -d '[:space:]')"

@@ -137,4 +137,6 @@ run_fragment_test test_strip_sgr_unterminated_csi "_strip_sgr: unterminated CSI 
 run_fragment_test test_panes_stream_suggestion_flicker_dedup "panes stream: a suggestion flicker does not re-emit the standing idle line (#977 cycle-2)"
 run_fragment_test test_panes_snapshot_input_not_annotated "panes_snapshot: real queued input is not annotated as a suggestion (#977 cycle-2)"
 
+run_fragment_test test_pane_prompt_line_class_glyph_in_text "pane_prompt_line_class: a glyph INSIDE the buffer text does not hide the dim run (#977 cycle-3)"
+
 generate_report

@@ -911,6 +911,27 @@ test_pane_prompt_line_class_unknown_not_empty() {
     assert_equals "unknown" \
         "$(_pane_e_class "just some scrolling build output"$'\n'"  auto mode on")" \
         "A pane with no prompt-glyph line at all is unknown, NOT empty"
+
+    # tmux missing from PATH entirely (#977 cycle-3 review) — a distinct early
+    # return from "capture-pane came back empty", and the one a tmux-less host
+    # takes. It must answer `unknown` and exit 0, never crash the callers that
+    # wrap it. Every other case here installs a tmux stub, so this branch was
+    # unexercised.
+    local tmp real_bash out rc
+    tmp="$(command mktemp -d)" || return 1
+    real_bash="$(command -v bash)"
+    command mkdir -p "$tmp/stub-bin"
+    command ln -s "$real_bash" "$tmp/stub-bin/bash"
+    rc=0
+    out="$(
+        /usr/bin/env -uBASH_ENV PATH="$tmp/stub-bin" \
+            "$real_bash" -c '. "$1"; pane_prompt_line_class golem-9' _ "$GATE_WATCH" 2>/dev/null
+    )" || rc=$?
+    command rm -rf "$tmp"
+    assert_equals "unknown" "$out" \
+        "With tmux absent from PATH the classifier answers unknown (not empty, not a crash)"
+    assert_equals "0" "$rc" \
+        "...and returns 0, so pane_suggestion_suffix's callers are never broken by a tmux-less host"
 }
 
 # Footer anchoring (#246 discipline, as every sibling matcher): this very file
@@ -1140,4 +1161,30 @@ test_panes_snapshot_input_not_annotated() {
         "Real queued input at the prompt is NOT annotated as a suggestion"
     assert_contains "$PANES_OUT" "idle at prompt" \
         "...and the golem is still reported idle"
+}
+
+# Embedded-glyph false negative (#977 cycle-3 review). The buffer text can itself
+# contain the prompt glyph — a suggestion that mentions it, or pasted text — and
+# splitting on the LAST bare glyph then sliced from inside the text, dropping the
+# opening dim run and reporting a real suggestion as queued `input`. Measured
+# before the fix. That is the worst failure mode for this feature and a SILENT
+# one: the annotation is simply absent and the pane reads as ordinary typed text.
+# Anchoring on the composer's glyph+NBSP pair fixes it.
+test_pane_prompt_line_class_glyph_in_text() {
+    local esc glyph nbsp
+    esc="$(command printf '\033')"
+    glyph="$(command printf '\342\235\257')"
+    nbsp="$(command printf '\302\240')"
+
+    assert_equals "suggestion" \
+        "$(_pane_e_class "${esc}[39m${glyph}${nbsp} ${esc}[2msee the ${glyph} marker docs${esc}[0m")" \
+        "A suggestion whose TEXT contains the prompt glyph is still a suggestion"
+    assert_equals "input" \
+        "$(_pane_e_class "${esc}[39m${glyph}${nbsp} type ${glyph} to continue")" \
+        "Real input containing the glyph is still input (the fix did not invert the classes)"
+    # A selection MENU pads with a plain space, not the NBSP; the bare-glyph
+    # fallback must keep working for any line without the pair.
+    assert_equals "input" \
+        "$(_pane_e_class "${esc}[38;5;153m${glyph}${esc}[39m Yes, proceed")" \
+        "A glyph+SPACE line (menu shape, no NBSP) still classifies via the fallback"
 }
