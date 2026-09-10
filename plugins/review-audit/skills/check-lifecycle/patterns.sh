@@ -140,6 +140,36 @@ emit_rows_word() {
         done || true
 }
 
+# emit_rows_unless PATTERN CATEGORY LABEL FILE EXCLUDE — as emit_rows, but drops
+# any matching line that ALSO matches EXCLUDE. The mirror of emit_rows_word's
+# extra-filter shape (#841), inverted; added for the Bash unreaped-subprocess arm
+# (#842), whose correctness depends on an exclusion the match pattern cannot
+# express (see the *.[Ss][Hh] arm for which exclusions and why).
+#
+# `grep -v` is the second stage rather than a negative lookahead because ERE has
+# none. Note the -v grep is NOT `-q`: a `-q` here would exit on its first match
+# and SIGPIPE the upstream writer, which under this file's `set -o pipefail`
+# reports 141 and inverts the result (the lesson recorded at :210).
+#
+# EXCLUDE is matched against the `-n` OUTPUT, so it sees a `NNN:` line-number
+# prefix that the python twin's per-line regex does not. A caller anchoring with
+# `^` must therefore spell that prefix — the arms below use `^[0-9]+:` — or the
+# anchor binds to the digits and the exclusion silently never fires. Measured:
+# omitting it let the one corpus false positive through on the bash runtime
+# ONLY, which is precisely the asymmetric divergence validate-python-ports.sh
+# exists to catch.
+emit_rows_unless() {
+    command grep -nE -- "$1" "$4" 2>/dev/null |
+        command grep -vE -- "$5" |
+        while IFS= read -r raw; do
+            line_num=${raw%%:*}
+            content=${raw#*:}
+            evidence=$(truncate_chars 80 "$content")
+            command printf '%s\t%s\t%s\t%s\t%s\n' \
+                "$4" "$line_num" "$2" "$3: ${evidence}" "MEDIUM"
+        done || true
+}
+
 assert_file_list_shape() {
     local list="$1"
     local tool="${BASH_SOURCE[0]##*/}"
@@ -386,6 +416,53 @@ while IFS= read -r file; do
             # installed signal handler, both of which outlive the statement and
             # want a matching teardown.
             emit_rows '\b(TcpListener|UnixListener)::bind[[:space:]]*\(|\bsignal::unix::signal[[:space:]]*\(' "unpaired-listener" "$L_LISTENER" "$file"
+            ;;
+        *.[Ss][Hh] | *.[Bb][Aa][Ss][Hh])
+            # Bash (#842, ADR 0002 Phase 5). Two of the four categories are
+            # modeled; the other two are `—` for the reasons below, not for want
+            # of an arm.
+            #
+            # unreaped-subprocess: a command backgrounded with a trailing `&`.
+            # THREE exclusions, each measured necessary against this repo's own
+            # 299-file shell corpus rather than reasoned about:
+            #
+            #   `&&`  — a control operator, not a job-control `&`.
+            #   `>&`  — an fd-dup (`2>&1`), which is why the class before the
+            #           space excludes `>` and `|` as well.
+            #   an ASSIGNMENT-shaped line — `_tgt="${_tgt#&}"`. This one is the
+            #           interesting exclusion: that line's `&` sits inside a
+            #           TRAILING comment, and is_comment() is line-START only,
+            #           so the lexical model cannot suppress it. It was the sole
+            #           false positive in the corpus, and excluding assignments
+            #           is what removes it. A backgrounded job is a COMMAND, so
+            #           the exclusion costs no true positive.
+            #
+            # Measured after those exclusions: 6 rows over the non-test corpus,
+            # all genuine background jobs, 0 false positives. Like every other
+            # arm here this is a single-line CANDIDATE for the LLM pass to
+            # confirm against its `wait` — deliberately not a lookahead, since a
+            # reaping `wait` may sit anywhere (a trap, a later loop, a caller).
+            #
+            # The exclusion rides emit_rows_unless because ERE has no negative
+            # lookahead. `[ \t]` is spelled as a bracket expression here (not
+            # `\t`, which BSD grep reads literally) — the class before it must
+            # keep excluding the backtick and both quote characters.
+            emit_rows_unless '[^&>|`"'"'"'}][[:space:]]&[[:space:]]*$' "unreaped-subprocess" "$L_SUBPROCESS" "$file" '^[0-9]+:[[:space:]]*[A-Za-z_][A-Za-z0-9_]*='
+            # terminate-without-kill: the GRACEFUL send site, matching how the
+            # Rust arm above reads this category — flag the SIGTERM, let the
+            # pass confirm it escalates. `-15` and `-s TERM` are the same signal
+            # spelled two other ways; all three appear in the wild.
+            emit_rows '\bkill[[:space:]]+(-TERM|-15|-s[[:space:]]+TERM)\b' "terminate-without-kill" "$L_TERMINATE" "$file"
+            # unclosed-handle is `—`: bash's analogue would be `exec 3>file`
+            # without a closing `exec 3>&-`, and that idiom measures ZERO
+            # occurrences across the corpus. An arm for it would be unfalsifiable
+            # by this repo's own evidence. Pinned by a silence fixture instead,
+            # the way Swift's empty `debugger` column is.
+            #
+            # unpaired-listener is `—`: bash has no in-process registration that
+            # outlives the statement. `trap` is the nearest shape, but a trap is
+            # scoped to the shell's own lifetime and needs no paired removal —
+            # flagging it would report the correct idiom as the defect.
             ;;
     esac
 

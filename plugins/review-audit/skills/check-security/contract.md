@@ -121,6 +121,29 @@ certainty tier for ordinary formatting. That is the same trade #838 refused for
 Rust's `let _ =`, reached from the other direction: a detector whose measured
 hit rate cannot support its tier does not ship at that tier.
 
+**The Bash row was audited by measurement in Phase 5 (#842) and needed no
+change** — the third row in a row to arrive already correct, which is itself the
+finding: a phase's size is set by what is already modeled, not by the number of
+governed scanners. Bash resolves in this scanner's lexical model more thoroughly
+than any other language, by *four* independent paths: the `sh`/`bash` extension
+keys, the `zsh`/`fish` hash-family keys, the shell dotfiles (`.bashrc`,
+`.zshrc`, `.profile`, `.bash_profile`), and the **shebang** resolver, which maps
+`sh`/`bash`/`dash`/`ksh` → `sh` for an extensionless script. Probed in both
+directions rather than reasoned about: a real `password = "…"` in a `.sh` file
+fires at HIGH, the identical line behind a leading `#` is silent, and an
+`AKIA…` literal fires either way as a declared lexical-independent detector.
+
+Its `injection-risk` cell stays `—`, on the same measured grounds as Swift's
+above. #842 proposed two bash idioms and the corpus refused both. Over this
+repo's own 299 tracked `.sh` files: an unquoted expansion into `eval` matches
+**once**, and that single hit is a *test fixture inside a markdown heredoc*
+(`tests/lint-worktree-recipes.sh:268`) rather than executable shell — while the
+quoted, safe form matches 52 times. SQL-shaped strings carrying an expansion
+match 32 times, essentially all false: `glab issue update` CLI invocations and
+JavaScript fixture strings inside shell heredocs. This column emits at
+**CRITICAL** (`>= 0.9`), the strictest tier in the four scanners, and a detector
+whose only true-positive candidate is a fixture cannot support it.
+
 **The rows below Swift are grouped by comment MARKER, not by language family,
 and that is the point.** Three review cycles each found one more group that had
 silently lost coverage to the gating — config formats, then the C-family, then a

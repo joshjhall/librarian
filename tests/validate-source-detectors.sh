@@ -105,6 +105,7 @@ run_fragment_test test_security_command_injection "check-security: shell=True/os
 run_fragment_test test_security_deserialization "check-security: pickle/yaml.load/unserialize fire, safe_load + explicit Loader stay silent (#707)"
 run_fragment_test test_security_weak_randomness "check-security: non-CSPRNG fires only with a security-context word; CSPRNG silent (#707)"
 run_fragment_test test_security_tls_cors_jwt_xxe "check-security: TLS/CORS/JWT/XXE arms + the JWT-vs-TLS disambiguation (#707)"
+run_fragment_test test_security_bash_lexical_gating "check-security: bash comment gating both directions + shebang path + lexical-independent control (#842)"
 run_fragment_test test_health_debt "check-code-health: tech-debt marker"
 run_fragment_test test_health_debug "check-code-health: py/js/rb/go/java/rs/swift debug arms + logger negative + test-file suppression"
 run_fragment_test test_health_empty_handler "check-code-health: py/js/rb/go/rs/swift empty-handler arms + handled negative"
@@ -113,5 +114,6 @@ run_fragment_test test_health_dispatch_order_and_shape "check-code-health: bash 
 run_fragment_test test_health_stdout_git_failure_fails_closed "check-code-health: a hanging git fails CLOSED and leaks nothing (#686)"
 run_fragment_test test_health_stdout_is_output "check-code-health: stdout_is_output exempts prints only, keeps breakpoints (#686/#680 AC3)"
 run_fragment_test test_health_stdout_repo_cleaned_up "check-code-health: the stdout match-repo is not leaked (#686)"
+run_fragment_test test_health_bash_refusals "check-code-health: the three bash $(—) cells stay silent, with the tech-debt-marker control (#842)"
 
 generate_report

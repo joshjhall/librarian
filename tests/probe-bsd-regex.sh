@@ -174,6 +174,21 @@ require "grep -w matches a whole word" "$V"
 probe_grep_rejects V 'def my_func_extra():' 'my_func' -w
 require "grep -w rejects a partial word" "$V"
 
+# check-lifecycle's Bash unreaped-subprocess arm (#842) is a negated bracket
+# class holding a backtick and both quote characters, plus a `grep -n`-prefix
+# anchor in its exclusion filter. Neither is exotic, but both are load-bearing:
+# the class is what separates a job-control `&` from an fd-dup, and the anchor
+# is what makes the exclusion fire at all (it binds to the line-number prefix
+# otherwise — the divergence that phase measured on the bash runtime only).
+probe_grep V 'command sleep 30 &' '[^&>|`"'"'"'}][[:space:]]&[[:space:]]*$' -E
+require "negated class with quotes/backtick, trailing & (#842)" "$V"
+
+probe_grep_rejects V 'command ls >/dev/null 2>&1' '[^&>|`"'"'"'}][[:space:]]&[[:space:]]*$' -E
+require "that class rejects an fd-dup line (#842)" "$V"
+
+probe_grep V '701:            _tgt="${_tgt#&}"' '^[0-9]+:[[:space:]]*[A-Za-z_][A-Za-z0-9_]*=' -E
+require "grep -n prefix anchor in an exclusion filter (#842)" "$V"
+
 probe_sed V 'a  b' 's/[[:space:]]+/_/' 'a_b'
 require "[[:space:]] under sed -E" "$V"
 

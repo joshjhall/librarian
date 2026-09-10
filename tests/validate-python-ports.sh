@@ -390,6 +390,15 @@ EOF
 #
 # Content is chosen to reach several arms at once: a TODO marker, a swallowed
 # error (`|| true`), and a function definition.
+#
+# Extended for check-lifecycle's Bash arms (#842). Each SIGTERM spelling is
+# present because they are separate alternation halves — one line covering all
+# three would leave two compared vacuously. The trailing-`&` job and the
+# assignment line are the arm's positive and its exclusion: the assignment is
+# the load-bearing one here, because that exclusion is spelled DIFFERENTLY in
+# the two runtimes (the bash filter runs over `grep -n` output and must match
+# the `NNN:` prefix, the python one does not), so it is exactly the shape that
+# can diverge while both halves look correct in isolation.
 command cat >"$FIXDIR/tool.sh" <<'EOF'
 #!/usr/bin/env bash
 # TODO: implement
@@ -397,6 +406,11 @@ run_thing() {
     do_work || true
 }
 run_thing
+worker_task &
+command kill -TERM "$pid"
+command kill -15 "$pid"
+command kill -s TERM "$pid"
+_tgt="${_tgt#&}"   # fd-dup, not a file — strip &
 EOF
 
 # Classified-prose fixtures (#724). Both lenses now decide a markdown file's

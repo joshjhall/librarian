@@ -41,6 +41,7 @@ separate columns here.
 | Ruby         | rb              | L                | —           | M        | M             |
 | Rust         | rs              | L                | M           | M        | M             |
 | Swift        | swift           | L                | M           | —        | M             |
+| Bash         | sh, bash        | L                | —           | —        | —             |
 | every other  | —               | L                | —           | —        | —             |
 
 <!-- contract: end-check-code-health-language-support -->
@@ -93,7 +94,41 @@ into a `String` (infallible by construction), `let _ = guard;` to extend an RAII
 lifetime, `let _ = param;` to silence an unused warning. It is a real signal at a
 lower tier (the `MEDIUM` candidate shape `check-lifecycle` uses), but this
 scanner has no per-detector certainty, so the honest options were "wrong tier" or
-"not yet". Revisit if `check-code-health` gains one.
+"not yet". Revisit if `check-code-health` gains one — tracked as
+[#1003](https://github.com/joshjhall/librarian/issues/1003).
+
+Bash (#842, Phase 5) is `L` — the language-agnostic `tech-debt-marker` runs
+under its `#` comment model, and **all three per-language columns are `—` by
+measurement**, not for want of an arm. #842 proposed arms for both; the corpus
+refused them. Measured against this repo's own shell corpus (299 tracked `.sh`
+files, 119,139 lines — the corpus that issue names):
+
+| Proposed idiom | Column | Hits | Verdict |
+| --- | --- | --- | --- |
+| `\|\| true` swallow | `empty-handler` | **1009** | refused — noise at this tier |
+| empty `trap ''` handler | `empty-handler` | 0 | no corpus evidence |
+| `set -x` | `debug-print` | 0 | nothing to detect |
+| a bare `echo` statement | `debug-print` | 238 | legitimate program **output**, not debug |
+
+`|| true` is the same shape as Rust's `let _ =` above, reached from a different
+language: a real signal at a **lower** tier, unshippable at this one. At 1009
+hits it would add roughly a thousand `HIGH`-certainty rows to make a handful of
+genuine swallows reachable. And `echo` is not merely noisy but *wrong* here —
+this scanner already records above that a shell script's stdout **is** its
+output, so flagging `echo` would contradict the file's own stated model.
+
+The distinction worth preserving: these are refusals **at HIGH**, not judgements
+that the idioms are undetectable. A per-detector certainty tier would make
+`|| true` shippable at `MEDIUM` for the LLM pass-2 to confirm, exactly as
+`check-lifecycle` handles its candidates. Two phases have now hit this same wall
+from two languages, which is what motivated filing it as
+[#1003](https://github.com/joshjhall/librarian/issues/1003) rather than leaving
+it implicit here.
+
+Both refusals are pinned by **silence fixtures** — a `.sh` file carrying
+`|| true` and `set -x` must emit nothing. A refusal recorded only in prose is
+unfalsifiable: without the fixture, implementing the arm anyway would pass every
+gate.
 
 Detector classification per ADR 0002 § 3:
 
