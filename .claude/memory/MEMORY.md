@@ -79,6 +79,7 @@
 - [A hanging push is the pre-push suite](push-hang-is-the-prepush-suite.md) — 461s of gates before any bytes move; fetches stay instant. Budget 10 min, never --no-verify
 - [Pre-push already runs the suite](prepush-hook-already-runs-the-suite.md) — don't run `run-all.sh`/`just lint` by hand first; run the targeted gate and budget the push
 - [Scratch file under memory fails the push](scratch-file-under-memory-fails-the-push.md) — rumdl lints `.claude/memory/` ignoring gitignore; keep scratch prose OUT, but not at a shared `/tmp` name a peer golem clobbers
+- [Adding a memory bumps the OKF baseline](adding-a-memory-bumps-the-okf-baseline.md) — one new file raises a count; omit the bump and main goes red for everyone
 - [Read the memory body, not just the index](read-the-memory-body-not-just-the-index.md) — the index line is a pointer; the trigger and the exception live in the body (#936)
 - [Explicit path still honors gitignore](explicit-path-still-honors-gitignore.md) — a DIRECTORY arg re-applies .gitignore; only a FILE is exempt (#578)
 - [Expand before you scope a path](path-guard-must-expand-before-scoping.md) — unexpanded `~` → nonexistent path → fail-open → silent bypass; same target must decide alike in every spelling (#662)
