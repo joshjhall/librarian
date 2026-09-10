@@ -108,6 +108,27 @@ _PRESCAN_BIDI_BYTES="${_PRESCAN_BIDI_BYTES}$(command printf '\342\201\246|\342\2
 # commonly lacks it), so forcing it would trade a measured bug for a silent one.
 # Built with printf as LITERAL bytes for the #679/#932 reason -- `\200` inside
 # the pattern text is read as literal characters by grep, not as a byte.
+#
+# THIS IS A TRADE-OFF, NOT FULL PARITY -- say so plainly, because an earlier
+# draft of this comment claimed the two runtimes simply "match" and that was
+# false (#542/#498: a comment must not assert a property the code lacks).
+#
+# Under a C locale, matching python EXACTLY is impossible for any bracket class.
+# grep classifies ONE BYTE with no knowledge of its character; python classifies
+# the CHARACTER. The byte before the token is 0xA9 for a letter (which python
+# REJECTS as a boundary) and 0x94 for an em dash (which python ACCEPTS). One
+# class must treat those bytes alike; python must treat them oppositely.
+#
+# So the choice is between two residual gaps:
+#   naive `[^[:alnum:]_]` -> C-locale FALSE POSITIVE on a letter prefix
+#   this class            -> C-locale FALSE NEGATIVE on punctuation abutting a
+#                            call
+# The false negative wins because its shape is not valid python (an em dash
+# outside a string is a SyntaxError), so it is reachable only in a comment or
+# string -- a prose mention, where dropping a MEDIUM candidate is harmless.
+# Emitting a false positive on real code is not. Under a UTF-8 locale the two
+# runtimes agree on BOTH shapes, so the gap is bounded to the C locale, and
+# tests/validate-lifecycle-detectors.sh pins both halves of that statement.
 _LISTENER_NOT_WORD="$(command printf '[^[:alnum:]_\200-\377]')"
 
 assert_file_list_shape() {

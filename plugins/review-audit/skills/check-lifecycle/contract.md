@@ -129,8 +129,23 @@ Three consequences, all load-bearing:
 
 - **The bash class excludes high bytes** (`_LISTENER_NOT_WORD`, built with
   `printf` as literal bytes per #679/#932). It is deliberately *wider* than the
-  Python side's `[^\w]`; the two spellings differ so the two **behaviours** can
-  match.
+  Python side's `[^\w]`.
+
+  **This is a bounded trade-off, not full parity**, and saying so is the point —
+  an earlier draft claimed the behaviours simply "match", which is exactly the
+  overclaiming #542/#498 warns about. Under a C locale no bracket class can
+  match the Python arm: grep classifies one **byte** with no knowledge of its
+  character, while Python classifies the **character**. The byte before the
+  token is `0xA9` for a letter (Python *rejects* that boundary) and `0x94` for
+  an em dash (Python *accepts* it) — one class must treat those alike, Python
+  must treat them oppositely. The choice is therefore between a C-locale false
+  **positive** on a letter prefix (the naive class) and a C-locale false
+  **negative** on punctuation abutting a call (this class). The false negative
+  wins because its shape is **not valid Python** — an em dash outside a string
+  is a `SyntaxError` — so it is reachable only in a comment or string, where
+  dropping a MEDIUM candidate is harmless; a false positive on real code is not.
+  Under a UTF-8 locale the two agree on both shapes, so the gap is bounded to
+  the C locale, and both halves of that claim are fixture-pinned.
 - **The class is pinned, not the locale.** Forcing `LC_ALL=C.UTF-8` would trade a
   measured bug for a silent one: base macOS commonly lacks that locale. This
   follows `loc_engine.py`'s `BLANK_RE`/`INDENT_RE` precedent, which pins both

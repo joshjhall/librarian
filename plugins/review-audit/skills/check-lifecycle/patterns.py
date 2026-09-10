@@ -151,7 +151,14 @@ def scan_file(path: str, lines: list[str]) -> None:
             #
             # Python's `\w` is Unicode-aware regardless of the OS locale, so a
             # non-ASCII leading boundary is rejected here always. The
-            # bash class is locale-SENSITIVE: under a UTF-8 locale
+            # bash class is locale-SENSITIVE and its high-byte spelling is a
+            # measured TRADE-OFF, not full parity -- under a C locale it drops
+            # a row this arm emits when multibyte PUNCTUATION abuts a call (a
+            # shape that is not valid python, so it is prose-only). Read the
+            # `_LISTENER_NOT_WORD` comment in the twin for why no bracket class
+            # can match this arm exactly under that locale.
+            #
+            # Under a UTF-8 locale
             # `[[:alnum:]]` matches the multibyte letter and agrees with this
             # arm, but under a strict `C` locale it classifies each byte alone,
             # neither byte is alnum, and the arm FIRES -- a bash-only false

@@ -538,6 +538,17 @@ test_unpaired_listener() {
     assert_silent "$list" unpaired-listener \
         "lifecycle: Python listener trailing-boundary negative (signal.signalx at line start)"
 
+    # TRAILING edge, SECOND alternation half. The `signal.signalx` case above
+    # only exercises the first half; both halves carry their own copy of the
+    # `[[:space:]]*\(` terminator, so a future edit touching only this one
+    # would otherwise be unpinned -- the same one-fixture-per-half rule the
+    # qualified-form fixtures above exist for.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'add_readerx(fd)' >"$d/trail2.py"
+    list="$(make_list "$d/l" "$d/trail2.py")"
+    assert_silent "$list" unpaired-listener \
+        "lifecycle: Python listener trailing-boundary negative, second half (add_readerx at line start)"
+
     # The bare-Timer exclusion, separately: `threading.Timer` is matched but a
     # bare `Timer(` is not (measured too generic for this certainty tier).
     d="$(fresh_dir)"
@@ -604,6 +615,58 @@ test_unpaired_listener() {
                 "lifecycle: non-ASCII listener boundary silent in python under LC_ALL=$_loc"
         fi
     done
+
+    # THE RESIDUAL GAP, pinned as a KNOWN and BOUNDED divergence (#841 cycle 3).
+    #
+    # Under a C locale, full py/sh parity on this boundary is IMPOSSIBLE, and it
+    # is worth stating why rather than re-attempting it. grep classifies ONE
+    # BYTE with no knowledge of the character it belongs to, while python
+    # classifies the CHARACTER. The byte before the token is 0xA9 for a letter
+    # (caf<e-acute>, which python REJECTS as a boundary) and 0x94 for an em dash
+    # (which python ACCEPTS). A single bracket class must treat those two bytes
+    # alike; python must treat them oppositely. No spelling satisfies both.
+    #
+    # So the class is a CHOICE between two residual gaps, and this is the
+    # measured basis for it:
+    #   naive `[^[:alnum:]_]` -> C-locale FALSE POSITIVE on a letter prefix.
+    #   high-byte class       -> C-locale FALSE NEGATIVE on punctuation that
+    #                            directly abuts a call, THIS case.
+    # The false negative is the better trade because its shape is not valid
+    # python -- an em dash outside a string is a SyntaxError -- so it is only
+    # reachable in a COMMENT or STRING, i.e. a prose mention. Losing a MEDIUM
+    # candidate on prose is the harmless direction; emitting a HIGH-traffic
+    # false positive on real code is not.
+    #
+    # Asserted, NOT as parity: python fires and bash does not, under C only.
+    # If a future edit makes these agree under C, this fixture SHOULD fail --
+    # that is a better world, and the assertion below must then be revisited
+    # rather than silently loosened.
+    d="$(fresh_dir)"
+    command printf '\342\200\224add_reader(fd)\n' >"$d/emdash.py"
+    list="$(make_list "$d/l" "$d/emdash.py")"
+
+    _em_sh_c="$(/usr/bin/env -i LANG=C LC_ALL=C "PATH=$PATH" \
+        PATTERNS_FORCE_BASH=1 "$REAL_BASH" "$SK/patterns.sh" "$list" 2>/dev/null |
+        command awk -F '\t' '$3 == "unpaired-listener"')"
+    assert_output_empty "$_em_sh_c" \
+        "lifecycle: KNOWN GAP -- multibyte punctuation boundary is silent in bash under LC_ALL=C"
+
+    # ...and under a UTF-8 locale the two DO agree, which bounds the gap to the
+    # C locale alone. This half is what stops the gap being described as wider
+    # than it is.
+    _em_sh_u="$(/usr/bin/env -i LANG=C.UTF-8 LC_ALL=C.UTF-8 "PATH=$PATH" \
+        PATTERNS_FORCE_BASH=1 "$REAL_BASH" "$SK/patterns.sh" "$list" 2>/dev/null |
+        command awk -F '\t' '$3 == "unpaired-listener"')"
+    assert_contains "$_em_sh_u" "Listener/timer registered without visible removal" \
+        "lifecycle: multibyte punctuation boundary DOES fire in bash under a UTF-8 locale"
+
+    if [ "$HAVE_PY" -eq 1 ]; then
+        _em_py="$(/usr/bin/env -i LANG=C LC_ALL=C "PATH=$PATH" \
+            python3 "$SK/patterns.py" "$list" 2>/dev/null |
+            command awk -F '\t' '$3 == "unpaired-listener"')"
+        assert_contains "$_em_py" "Listener/timer registered without visible removal" \
+            "lifecycle: multibyte punctuation boundary fires in python (the side of the known gap)"
+    fi
 
     # Control for the loop above: a REAL registration must still fire under the
     # C locale, so the silence asserted there is the boundary working and not
