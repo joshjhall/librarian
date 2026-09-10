@@ -783,23 +783,29 @@ test_step_summary_mirrors_stdout() {
 test_all_md_safe_metacharacters_are_neutralized() {
     local box raw
     box="$(make_sandbox status/in-progress)"
-    # md_safe maps TWELVE characters; only the backtick and the bracket/paren pair
-    # were exercised. An off-by-one between the tr class and its replacement string
-    # would silently mis-map the other nine, and nothing would have noticed. One
-    # label carrying all of them pins the whole class.
-    raw='status/x*b*_e_~t~#h|p<l>g'
+    # md_safe maps THIRTEEN characters — ` [ ] ( ) * _ ~ # | < > : — and this one
+    # label carries every one of them, so an off-by-one between the tr class and its
+    # replacement string cannot hide in any of the thirteen.
+    #
+    # THE COUNT AND THE FIXTURE ARE BOTH LOAD-BEARING, and both were wrong once. The
+    # comment said TWELVE (the `:` added later for autolinks was never counted) while
+    # the fixture carried only seven, so a comment claiming whole-class coverage sat
+    # over a partial one. The six stragglers happened to be covered by the backtick,
+    # markdown-injection and autolink tests, which is what made the false claim
+    # survive: incremental coverage elsewhere is not the same as the single-label
+    # guarantee this test's own name promises. Widened rather than reworded, so the
+    # claim is true instead of merely honest about being partial.
+    raw='status/x`c`[b](u)*e*_m_~t~#h|p<l>g:z'
     stub_gh "$box" ok status/in-progress "$raw"
 
     run_reconcile "$box"
     assert_exit 1 "$RC_CODE" "the undeclared label is reported"
-    # The expected string is the MEASURED output, not a hand-written guess: every
-    # one of the twelve maps to `?`, including the closing `*`/`_`/`~`, so the
-    # result is `status/x?b??e??t??h?p?l?g`. A first draft wrote the openers as `?`
-    # and left the closers literal, which failed — worth recording, since an
-    # assertion built on a guessed transformation is how a test ends up pinning the
-    # wrong behavior when it happens to pass.
-    assert_contains "$RC_OUT" "status/x?b??e??t?" "emphasis and tilde are replaced on both sides"
-    assert_contains "$RC_OUT" "?h?p?l?g" "hash, pipe and angle brackets are replaced"
+    # MEASURED from the real pipeline, never hand-written. Every mapped character
+    # becomes `?`, closers included, so the pairs collapse to `??`. An earlier draft
+    # guessed openers-only and failed; a guessed transformation is how a test ends up
+    # pinning the wrong behavior on the day it happens to pass.
+    assert_contains "$RC_OUT" "status/x?c??b??u??e??m??t??h?p?l?g?z" \
+        "all thirteen mapped characters are replaced, in one label"
     assert_not_contains "$RC_OUT" "$raw" "the raw metacharacters never reach the report"
 }
 
