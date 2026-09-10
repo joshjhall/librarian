@@ -102,6 +102,8 @@ run_fragment_test test_pane_multi_question_form_above_footer "pane_is_multi_ques
 run_fragment_test test_pane_multi_question_form_no_self_trip "pane_is_multi_question_form does not self-trip on a working golem's pane (#467)"
 run_fragment_test test_pane_multi_question_form_error_window "pane_is_multi_question_form: exact \$pane_error_lines boundary + GOLEM_PANE_ERROR_LINES override (#467)"
 run_fragment_test test_pane_multi_question_form_prose_scrollback "pane_is_multi_question_form: glyph-bearing prose in scrollback does not fake a form (#467)"
+run_fragment_test test_pane_multi_question_form_single_question_not_multi "pane_is_multi_question_form: a SINGLE-question form is not multi; gate still surfaced as a fork (#986)"
+run_fragment_test test_pane_multi_question_form_false_negative_two_question_bar "pane_is_multi_question_form: FALSE-NEGATIVE direction — a two-question bar stays labelled (regression guard; passes pre-#986) (#986)"
 run_fragment_test test_panes_snapshot_multi_question_dispatch "panes_snapshot: form label wins over the fork label; fork stays plain (#467)"
 run_fragment_test test_pane_is_turn_end "pane_is_turn_end matches the turn-ended/idle-at-prompt footer only (#447)"
 run_fragment_test test_pane_is_turn_end_footer_anchored "pane_is_turn_end is footer-anchored (no self-trip on scrolled text)"
