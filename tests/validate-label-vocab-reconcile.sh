@@ -331,7 +331,7 @@ test_missing_gh_exits_two() {
     # gh and this case silently asserts nothing.
     local t src
     command mkdir -p "$box/nogh"
-    for t in sort comm awk mktemp sed grep rm find cat printf; do
+    for t in sort comm awk mktemp sed grep rm find cat printf dirname pwd env bash; do
         src="$(command -v "$t" 2>/dev/null)" || continue
         [ -n "$src" ] || continue
         command ln -sf "$src" "$box/nogh/$t" 2>/dev/null || true
@@ -1078,7 +1078,7 @@ run_test test_autolink_in_a_label_name_is_neutralized "a bare url in a label nam
 run_test test_shared_library_is_syntactically_valid "every shipped script parses (a comment apostrophe can break the awk block)"
 run_test test_reconciler_missing_shared_parser_exits_two "the reconciler's OWN missing-parser guard exits 2 (the twin)"
 run_test test_step_summary_mirrors_stdout "findings reach GITHUB_STEP_SUMMARY, not only stdout"
-run_test test_all_md_safe_metacharacters_are_neutralized "all twelve md_safe metacharacters are neutralized"
+run_test test_all_md_safe_metacharacters_are_neutralized "all thirteen md_safe metacharacters are neutralized"
 run_test test_shared_parser_is_the_only_parser "one parser: neither caller carries a copy"
 run_test test_both_callers_derive_the_same_vocabulary "one parser: both callers derive the same vocabulary"
 run_test test_workflow_is_dispatchable_and_informational "the workflow is dispatchable and cannot red a PR"
