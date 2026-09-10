@@ -474,38 +474,29 @@ each other once 1 is in.
 
    **The one real gap was `check-lifecycle`'s `unpaired-listener`**, absent for
    Python in both runtimes. Filled, keyed on registration idioms chosen by
-   measured rate over the 3.12 stdlib (1096 non-test files): `signal.signal` 17,
-   `atexit.register` 11, `add_signal_handler` 4, `add_reader`/`add_writer` 2.
-   Sparse and registration-shaped — the *opposite* profile to the `let _ =` that
-   Phase 1 refused (723 candidates against 2 true positives), which is the
-   comparison that justified shipping at MEDIUM rather than deferring.
-   `threading.Timer` is included on 0 stdlib hits (the stdlib does not use its
-   own convenience wrapper); a bare `Timer(` is excluded at 6, as too generic.
+   measured rate over the 3.12 stdlib — the *opposite*, sparse profile to the
+   `let _ =` Phase 1 refused, which is what justified shipping at MEDIUM rather
+   than deferring. The rates, the `threading.Timer`-in / bare-`Timer(`-out call,
+   and the single-alternation parity constraint are in
+   `check-lifecycle/contract.md`.
 
    **The docstring question, answered: NO — line-prefix is sufficient**, for
-   these scanners and for `loc_engine.COMMENT_RE` alike. A `"""…"""` block is a
-   string literal, not a comment, and the leading one is *the documentation these
-   scanners exist to find* — `check-docs-missing-api` keys on `"""` as Python's
-   doc marker, so a model that hid docstrings would make that arm report every
-   documented symbol as undocumented. The two requirements are in direct
-   opposition and one model cannot serve both. Pairing openers with closers also
-   needs cross-line state a **line** scanner does not have and the bash runtime
-   cannot carry at all — it would manufacture the very py/sh divergence
-   `validate-python-ports.sh` exists to prevent. The cost is real (a constructed
-   docstring fires HIGH rows in three scanners) but measured **zero** across this
-   repo's 70 tracked `.py` files, so it is recorded as a declared limitation in
-   `check-code-health/contract.md` rather than dismissed.
+   these scanners and for `loc_engine.COMMENT_RE` alike. The short reason: a
+   `"""…"""` block is a string literal, not a comment, and
+   `check-docs-missing-api` keys on `"""` as Python's **doc marker** — so a model
+   that hid docstrings would make that arm report every documented symbol as
+   undocumented. The full decision, its three grounds and its measured cost live
+   in `check-code-health/contract.md` § *Python docstrings are NOT modeled as
+   comments*; read that before proposing a block-comment dimension.
 
-   **Measure a docstring claim with `ast`, not with a regex.** The first pass
-   here used a quote-pairing regex and reported six in-docstring rows; all six
-   were artifacts of mispairing quotes inside the one file that *defines* a
-   docstring regex. Widening the corrected check from docstrings to any
-   multi-line string then surfaced a real neighbour — **3** `tech-debt-marker`
-   rows inside multi-line **regex literals**, where two marker-detectors match
-   each other's patterns. True to that detector's lexical-independent contract
-   and left firing, but they are the reason the phase's headline number is
-   "zero **docstring** rows" rather than "zero string rows". The two are
-   different claims and only the narrower one is true.
+   One methodological note belongs here rather than there: **measure a docstring
+   claim with `ast`, not with a regex.** The first pass used a quote-pairing
+   regex and reported six in-docstring rows; all six were artifacts of
+   mispairing quotes inside the one file that *defines* a docstring regex.
+   Widening the corrected check to any multi-line string then surfaced a real
+   neighbour — 3 `tech-debt-marker` rows inside multi-line **regex literals**.
+   Hence the phase's headline is "zero **docstring** rows", never "zero string
+   rows": two different claims, only the narrower one true.
 
    **Two lessons from the mutation round, both about the fixtures rather than the
    arm.** They are the reusable part of this phase:
@@ -514,22 +505,20 @@ each other once 1 is in.
      leading class was first written `[^\w.]`, excluding `.` on the stated
      theory that `mysignal.signal(` would otherwise match on its attribute-access
      tail. Mutating the `.` away produced *no* test failure, which is what
-     exposed the claim: the plain `[^\w]` already rejects that line on the `y`.
-     What the exclusion actually did was silence the **qualified** forms —
-     `mod.threading.Timer(`, `self.loop.add_reader(` — which are true positives.
-     A false rationale had been protecting a false negative, and only the
-     mutation could tell the difference. This is #542/#498's shape reached
-     through a regex: the comment claimed what the code lacked, and hid the
-     defect.
+     exposed the claim: the plain `[^\w]` already rejects that line. What the
+     exclusion actually did was silence the **qualified** forms, which are true
+     positives. A false rationale had been protecting a false negative, and only
+     the mutation could tell the difference — #542/#498's shape reached through a
+     regex. Detail: `check-lifecycle/contract.md`.
    - **The fixture written to pin that true positive was itself vacuous at
-     first.** It put both qualified forms in ONE file; because the two idioms sit
-     in different halves of the alternation and share one evidence label,
-     re-applying the mutation left `mod.threading` silent while
-     `self.loop.add_reader` still emitted the label — so `assert_fires` passed
-     and the fixture proved nothing. Split per alternation half, the same
-     mutation goes red. This is the composite-fixture trap the function's own
-     header warns about, hit anyway while writing the fixture *for* a mutation —
-     a fixture is not load-bearing until a mutation has actually turned it red.
+     first.** It put both qualified forms in ONE file; the two idioms sit in
+     different halves of the alternation and share one evidence label, so
+     re-applying the mutation left one silent while the other still emitted the
+     label — `assert_fires` passed and the fixture proved nothing. Split per
+     half, the same mutation goes red. The composite-fixture trap the function's
+     own header warns about, hit anyway while writing the fixture *for* a
+     mutation: **a fixture is not load-bearing until a mutation has actually
+     turned it red.**
 5. **Phase 5 — Bash** ([#842](https://github.com/joshjhall/librarian/issues/842)). Full arms; currently `check-docs-missing-api` only.
    Closes #622.
 
