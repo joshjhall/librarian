@@ -146,32 +146,24 @@ def scan_file(path: str, lines: list[str]) -> None:
             # `[^\w]` / `[^[:alnum:]_]`, and the negative fixtures pin the
             # boundary that actually does the work.
             #
-            # NON-ASCII: do NOT add `re.ASCII` here, and note the bash twin's
-            # class is deliberately WIDER than this one (#841 review).
+            # NON-ASCII: do NOT add `re.ASCII` here. Python's `\w` is
+            # Unicode-aware regardless of the OS locale, which is the behaviour
+            # the bash twin is written to match -- it uses POSIX `grep -w`
+            # after two bracket-class spellings failed (one bytewise under a
+            # `C` locale, one rejected outright by BSD grep). Read the
+            # emit_rows_word comment in the twin before touching either side.
             #
-            # Python's `\w` is Unicode-aware regardless of the OS locale, so a
-            # non-ASCII leading boundary is rejected here always. The
-            # bash class is locale-SENSITIVE and its high-byte spelling is a
-            # measured TRADE-OFF, not full parity -- under a C locale it drops
-            # a row this arm emits when multibyte PUNCTUATION abuts a call (a
-            # shape that is not valid python, so it is prose-only). Read the
-            # `_LISTENER_NOT_WORD` comment in the twin for why no bracket class
-            # can match this arm exactly under that locale.
-            #
-            # Under a UTF-8 locale
-            # `[[:alnum:]]` matches the multibyte letter and agrees with this
-            # arm, but under a strict `C` locale it classifies each byte alone,
-            # neither byte is alnum, and the arm FIRES -- a bash-only false
-            # positive and a byte-parity break. The twin therefore excludes
-            # high bytes explicitly (`_LISTENER_NOT_WORD`); read its definition
-            # before touching either spelling.
+            # The twin agrees with this arm exactly under a UTF-8 locale; under
+            # a strict `C` locale it over-fires on a non-ASCII IDENTIFIER
+            # prefix, a documented and fixture-pinned limitation. `re.ASCII`
+            # here would "fix" that by breaking this side instead.
             #
             # An earlier draft of this comment asserted the two agreed "under C
             # and C.UTF-8". That was measured with `LC_ALL=C` alone while the
-            # ambient `LANG=C.UTF-8` still applied, so the C-locale case was
-            # never actually exercised -- the claim was false and hid this bug.
-            # Re-measure locale behaviour with `env -i`, never by setting one
-            # locale variable over an inherited environment.
+            # ambient `LANG=C.UTF-8` still applied, so the C case was never
+            # exercised -- the claim was false and hid a real bug. Measure
+            # locale behaviour with `env -i`, never by setting one locale
+            # variable over an inherited environment.
             #
             # Note the idiom names above are written WITHOUT a trailing
             # paren on purpose. This scanner has no lexical gating -- every

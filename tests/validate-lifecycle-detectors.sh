@@ -581,104 +581,71 @@ test_unpaired_listener() {
     assert_fires "$list" unpaired-listener "Listener/timer registered without visible removal" \
         "lifecycle: Python QUALIFIED registration fires (self.loop.add_reader)"
 
-    # NON-ASCII leading boundary -- py/sh parity under BOTH locales (#841).
+    # NON-ASCII BOUNDARY -- the UTF-8 behaviour is pinned; the C-locale gap is
+    # named as a KNOWN LIMITATION rather than asserted away (#841).
     #
-    # THE LOCALE IS THE POINT, so this runs the scanners under `env -i` with an
-    # explicit locale rather than inheriting the suite's. A first version of
-    # this fixture ran ambient and passed while the bug was live: the box's
-    # LANG=C.UTF-8 meant the C-locale path was never exercised at all.
+    # THE LOCALE IS THE POINT, so these run the scanners under `env -i` with an
+    # explicit locale rather than inheriting the suite's. An earlier version ran
+    # ambient and passed while a bug was live: the box's LANG=C.UTF-8 meant the
+    # C-locale path was never exercised at all.
     #
-    # What it pins: python `\w` is Unicode-aware regardless of locale, so
-    # `caf<e-acute>add_reader(` is always rejected there. Bash `[[:alnum:]]` is
-    # locale-SENSITIVE -- under a UTF-8 locale it matches the multibyte letter
-    # and agrees, but under a strict `C` locale it classifies each byte alone,
-    # neither byte is alnum, the negated class matches the trailing byte, and
-    # the arm FIRES. That is a bash-only false positive AND a byte-parity break
-    # on the minimal-container/CI default this fallback targets. The fix is the
-    # high-byte exclusion in `_LISTENER_NOT_WORD`; this fixture is what stops it
-    # being reverted to a plain `[^[:alnum:]_]`.
+    # The leading boundary is POSIX `grep -w` (see emit_rows_word in
+    # patterns.sh). Under a UTF-8 locale it agrees with the python twin exactly,
+    # on BOTH shapes below -- a multibyte LETTER prefix (rejected: it is part of
+    # the identifier) and multibyte PUNCTUATION (accepted: a real boundary).
+    # Under a strict `C` locale `-w` decides word-ness bytewise and the LETTER
+    # case diverges; that gap is pinned separately below.
     d="$(fresh_dir)"
     command printf 'caf\303\251add_reader(fd)\n' >"$d/nonascii.py"
     list="$(make_list "$d/l" "$d/nonascii.py")"
 
-    for _loc in C C.UTF-8; do
-        _sh_rows="$(/usr/bin/env -i "LANG=$_loc" "LC_ALL=$_loc" "PATH=$PATH" \
-            PATTERNS_FORCE_BASH=1 "$REAL_BASH" "$SK/patterns.sh" "$list" 2>/dev/null |
+    _na_sh="$(/usr/bin/env -i LANG=C.UTF-8 LC_ALL=C.UTF-8 "PATH=$PATH" \
+        PATTERNS_FORCE_BASH=1 "$REAL_BASH" "$SK/patterns.sh" "$list" 2>/dev/null |
+        command awk -F '\t' '$3 == "unpaired-listener"')"
+    assert_output_empty "$_na_sh" \
+        "lifecycle: non-ASCII IDENTIFIER boundary silent in bash under a UTF-8 locale"
+    if [ "$HAVE_PY" -eq 1 ]; then
+        _na_py="$(/usr/bin/env -i LANG=C.UTF-8 LC_ALL=C.UTF-8 "PATH=$PATH" \
+            python3 "$SK/patterns.py" "$list" 2>/dev/null |
             command awk -F '\t' '$3 == "unpaired-listener"')"
-        assert_output_empty "$_sh_rows" \
-            "lifecycle: non-ASCII listener boundary silent in bash under LC_ALL=$_loc"
-        if [ "$HAVE_PY" -eq 1 ]; then
-            _py_rows="$(/usr/bin/env -i "LANG=$_loc" "LC_ALL=$_loc" "PATH=$PATH" \
-                python3 "$SK/patterns.py" "$list" 2>/dev/null |
-                command awk -F '\t' '$3 == "unpaired-listener"')"
-            assert_output_empty "$_py_rows" \
-                "lifecycle: non-ASCII listener boundary silent in python under LC_ALL=$_loc"
-        fi
-    done
+        assert_output_empty "$_na_py" \
+            "lifecycle: non-ASCII IDENTIFIER boundary silent in python (agrees under UTF-8)"
+    fi
 
-    # THE RESIDUAL GAP, pinned as a KNOWN and BOUNDED divergence (#841 cycle 3).
-    #
-    # Under a C locale, full py/sh parity on this boundary is IMPOSSIBLE, and it
-    # is worth stating why rather than re-attempting it. grep classifies ONE
-    # BYTE with no knowledge of the character it belongs to, while python
-    # classifies the CHARACTER. The byte before the token is 0xA9 for a letter
-    # (caf<e-acute>, which python REJECTS as a boundary) and 0x94 for an em dash
-    # (which python ACCEPTS). A single bracket class must treat those two bytes
-    # alike; python must treat them oppositely. No spelling satisfies both.
-    #
-    # So the class is a CHOICE between two residual gaps, and this is the
-    # measured basis for it:
-    #   naive `[^[:alnum:]_]` -> C-locale FALSE POSITIVE on a letter prefix.
-    #   high-byte class       -> C-locale FALSE NEGATIVE on punctuation that
-    #                            directly abuts a call, THIS case.
-    # The false negative is the better trade because its shape is not valid
-    # python -- an em dash outside a string is a SyntaxError -- so it is only
-    # reachable in a COMMENT or STRING, i.e. a prose mention. Losing a MEDIUM
-    # candidate on prose is the harmless direction; emitting a HIGH-traffic
-    # false positive on real code is not.
-    #
-    # Asserted, NOT as parity: python fires and bash does not, under C only.
-    # If a future edit makes these agree under C, this fixture SHOULD fail --
-    # that is a better world, and the assertion below must then be revisited
-    # rather than silently loosened.
+    # KNOWN LIMITATION, pinned so a locale change SURFACES here instead of
+    # silently widening the gap. Under `LC_ALL=C` the same line fires in bash
+    # and not in python -- a false positive on what is REAL CODE, since PEP 3131
+    # permits non-ASCII identifiers, so `caf<e-acute>add_reader` compiles. This
+    # is asserted as the CURRENT behaviour, not as desirable: if a future change
+    # makes the two agree under C, this assertion SHOULD fail and be revisited.
+    _na_sh_c="$(/usr/bin/env -i LANG=C LC_ALL=C "PATH=$PATH" \
+        PATTERNS_FORCE_BASH=1 "$REAL_BASH" "$SK/patterns.sh" "$list" 2>/dev/null |
+        command awk -F '\t' '$3 == "unpaired-listener"')"
+    assert_contains "$_na_sh_c" "Listener/timer registered without visible removal" \
+        "lifecycle: KNOWN GAP -- non-ASCII identifier fires in bash under LC_ALL=C (python does not)"
+
+    # Multibyte PUNCTUATION abutting a call is a REAL boundary, and unlike the
+    # identifier case the two runtimes agree on it under both locales. This is
+    # what the earlier high-byte bracket class got wrong (it silenced bash here),
+    # so it is pinned in both directions.
     d="$(fresh_dir)"
     command printf '\342\200\224add_reader(fd)\n' >"$d/emdash.py"
     list="$(make_list "$d/l" "$d/emdash.py")"
-
-    _em_sh_c="$(/usr/bin/env -i LANG=C LC_ALL=C "PATH=$PATH" \
-        PATTERNS_FORCE_BASH=1 "$REAL_BASH" "$SK/patterns.sh" "$list" 2>/dev/null |
-        command awk -F '\t' '$3 == "unpaired-listener"')"
-    assert_output_empty "$_em_sh_c" \
-        "lifecycle: KNOWN GAP -- multibyte punctuation boundary is silent in bash under LC_ALL=C"
-
-    # ...and under a UTF-8 locale the two DO agree, which bounds the gap to the
-    # C locale alone. This half is what stops the gap being described as wider
-    # than it is.
-    _em_sh_u="$(/usr/bin/env -i LANG=C.UTF-8 LC_ALL=C.UTF-8 "PATH=$PATH" \
-        PATTERNS_FORCE_BASH=1 "$REAL_BASH" "$SK/patterns.sh" "$list" 2>/dev/null |
-        command awk -F '\t' '$3 == "unpaired-listener"')"
-    assert_contains "$_em_sh_u" "Listener/timer registered without visible removal" \
-        "lifecycle: multibyte punctuation boundary DOES fire in bash under a UTF-8 locale"
-
-    if [ "$HAVE_PY" -eq 1 ]; then
-        _em_py="$(/usr/bin/env -i LANG=C LC_ALL=C "PATH=$PATH" \
-            python3 "$SK/patterns.py" "$list" 2>/dev/null |
+    for _loc in C C.UTF-8; do
+        _em_sh="$(/usr/bin/env -i "LANG=$_loc" "LC_ALL=$_loc" "PATH=$PATH" \
+            PATTERNS_FORCE_BASH=1 "$REAL_BASH" "$SK/patterns.sh" "$list" 2>/dev/null |
             command awk -F '\t' '$3 == "unpaired-listener"')"
-        assert_contains "$_em_py" "Listener/timer registered without visible removal" \
-            "lifecycle: multibyte punctuation boundary fires in python (the side of the known gap)"
-    fi
+        assert_contains "$_em_sh" "Listener/timer registered without visible removal" \
+            "lifecycle: multibyte PUNCTUATION boundary fires in bash under LC_ALL=$_loc"
+    done
 
-    # Control for the loop above: a REAL registration must still fire under the
-    # C locale, so the silence asserted there is the boundary working and not
-    # the whole arm going dark.
+    # `-w` alone would match a bare mention with no call, so the paren test is
+    # re-imposed separately in emit_rows_word. This pins that it still applies.
     d="$(fresh_dir)"
-    command printf '%s\n' 'loop.add_reader(fd, cb)' >"$d/cloc.py"
-    list="$(make_list "$d/l" "$d/cloc.py")"
-    _sh_ctl="$(/usr/bin/env -i LANG=C LC_ALL=C "PATH=$PATH" \
-        PATTERNS_FORCE_BASH=1 "$REAL_BASH" "$SK/patterns.sh" "$list" 2>/dev/null |
-        command awk -F '\t' '$3 == "unpaired-listener"')"
-    assert_contains "$_sh_ctl" "Listener/timer registered without visible removal" \
-        "lifecycle: a real registration still fires in bash under LC_ALL=C (control)"
+    command printf '%s\n' 'add_reader = 5' >"$d/nocall.py"
+    list="$(make_list "$d/l" "$d/nocall.py")"
+    assert_silent "$list" unpaired-listener \
+        "lifecycle: a bare mention with no call does not fire (the -w paren guard)"
 
     # ONE row, not two, for a line matching BOTH halves of the alternation --
     # the property that keeps the single-emit_rows spelling honest. Asserted on

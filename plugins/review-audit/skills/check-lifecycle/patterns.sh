@@ -91,45 +91,54 @@ _PRESCAN_BIDI_BYTES="$(command printf '\342\200\213|\342\200\214|\342\200\215|\3
 _PRESCAN_BIDI_BYTES="${_PRESCAN_BIDI_BYTES}$(command printf '\342\200\252|\342\200\253|\342\200\254|\342\200\255|\342\200\256|')"
 _PRESCAN_BIDI_BYTES="${_PRESCAN_BIDI_BYTES}$(command printf '\342\201\246|\342\201\247|\342\201\250|\342\201\251|\357\273\277')"
 
-# The leading word-boundary class for the Python listener arm (#841 review).
+# emit_rows_word PATTERN CATEGORY LABEL FILE PAREN_RE -- like emit_rows, but the
+# leading word boundary comes from POSIX `grep -w` instead of a bracket class,
+# and PAREN_RE re-imposes the "must be a call" requirement that -w drops.
 #
-# It excludes ASCII identifier characters AND every HIGH BYTE (\200-\377),
-# and the high-byte half is the locale bug fix. Under a UTF-8 locale, grep
-# reads `\303\251` as one letter that `[[:alnum:]]` matches, so a plain
-# `[^[:alnum:]_]` correctly rejects `caf<e-acute>add_reader(`. Under a strict
-# `C` locale the SAME pattern classifies each byte on its own: neither 0303 nor
-# 0251 is alnum, so the negated class matches the trailing byte and the arm
-# FIRES -- while the python twin, whose `re` is Unicode-aware regardless of the
-# OS locale, stays silent. That is a bash-only false positive AND a byte-parity
-# break, on exactly the minimal-container/CI default this fallback targets.
+# WHY NOT A BRACKET CLASS (#841, found by CI on macos-latest). The Python
+# listener arm needs a leading boundary that behaves like python's `\w`, which
+# is Unicode-aware regardless of the OS locale. Two spellings were tried and
+# both failed, in different ways:
 #
-# Pinning the class rather than forcing a locale, per loc_engine.py's
-# BLANK_RE/INDENT_RE precedent: `LC_ALL=C.UTF-8` is NOT portable (base macOS
-# commonly lacks it), so forcing it would trade a measured bug for a silent one.
-# Built with printf as LITERAL bytes for the #679/#932 reason -- `\200` inside
-# the pattern text is read as literal characters by grep, not as a byte.
+#   `[^[:alnum:]_]`            -- portable, but under a strict `C` locale grep
+#                                 classifies each BYTE alone, so the trailing
+#                                 byte of a multibyte letter satisfies the
+#                                 negated class and the arm FIRES where python
+#                                 stays silent.
+#   `[^[:alnum:]_\200-\377]`   -- fixed that on GNU grep, and BSD grep REJECTS
+#                                 the pattern outright (exit >1): raw \200-\377
+#                                 is not a valid range under its collation. It
+#                                 passed every local check because this box has
+#                                 GNU grep; tests/probe-bsd-regex.sh caught it
+#                                 on the only macos-latest job.
 #
-# THIS IS A TRADE-OFF, NOT FULL PARITY -- say so plainly, because an earlier
-# draft of this comment claimed the two runtimes simply "match" and that was
-# false (#542/#498: a comment must not assert a property the code lacks).
+# `-w` is a FLAG, not a regex construct, so it sidesteps the dialect question
+# entirely -- the same reasoning probe-bsd-regex.sh already records for the
+# `\b` sites. It is POSIX and probe-verified SUPPORTED on BSD.
 #
-# Under a C locale, matching python EXACTLY is impossible for any bracket class.
-# grep classifies ONE BYTE with no knowledge of its character; python classifies
-# the CHARACTER. The byte before the token is 0xA9 for a letter (which python
-# REJECTS as a boundary) and 0x94 for an em dash (which python ACCEPTS). One
-# class must treat those bytes alike; python must treat them oppositely.
-#
-# So the choice is between two residual gaps:
-#   naive `[^[:alnum:]_]` -> C-locale FALSE POSITIVE on a letter prefix
-#   this class            -> C-locale FALSE NEGATIVE on punctuation abutting a
-#                            call
-# The false negative wins because its shape is not valid python (an em dash
-# outside a string is a SyntaxError), so it is reachable only in a comment or
-# string -- a prose mention, where dropping a MEDIUM candidate is harmless.
-# Emitting a false positive on real code is not. Under a UTF-8 locale the two
-# runtimes agree on BOTH shapes, so the gap is bounded to the C locale, and
-# tests/validate-lifecycle-detectors.sh pins both halves of that statement.
-_LISTENER_NOT_WORD="$(command printf '[^[:alnum:]_\200-\377]')"
+# KNOWN LIMITATION -- the boundary is correct under a UTF-8 locale, NOT under a
+# strict `C` locale. Say it plainly rather than calling the boundary "correct":
+# under `LC_ALL=C`, `-w` decides word-ness bytewise, so a line whose call is
+# prefixed by a non-ASCII IDENTIFIER character emits a false positive here while
+# the python twin stays silent. The concrete case, and it is real code rather
+# than prose: an identifier such as caf<e-acute>add_reader (PEP 3131 permits
+# non-ASCII identifiers, so this COMPILES) followed by `(` fires in bash under
+# `LC_ALL=C` only. Under any UTF-8 locale -- including C.UTF-8, the default on
+# the containers and CI runners this scanner targets -- the two runtimes agree
+# exactly, on this shape and on multibyte PUNCTUATION alike. The UTF-8 behaviour
+# is fixture-pinned in tests/validate-lifecycle-detectors.sh so a future locale
+# change surfaces there instead of silently widening the gap.
+emit_rows_word() {
+    command grep -nEw -- "$1" "$4" 2>/dev/null |
+        command grep -E -- "$5" |
+        while IFS= read -r raw; do
+            line_num=${raw%%:*}
+            content=${raw#*:}
+            evidence=$(truncate_chars 80 "$content")
+            command printf '%s\t%s\t%s\t%s\t%s\n' \
+                "$4" "$line_num" "$2" "$3: ${evidence}" "MEDIUM"
+        done || true
+}
 
 assert_file_list_shape() {
     local list="$1"
@@ -333,21 +342,20 @@ while IFS= read -r file; do
             # unlike Phase 2's `[^{}]*`, which admitted identifier characters
             # and let `catches { }` through on bash alone.
             #
-            # NON-ASCII: the leading class is $_LISTENER_NOT_WORD, which also
-            # excludes high bytes -- see its definition above for why a plain
-            # `[^[:alnum:]_]` diverges from the python twin under a `C` locale.
+            # Registration sites (#841), leading boundary via POSIX `grep -w`
+            # -- see emit_rows_word above for why no bracket class works here
+            # and for the C-locale limitation this spelling still carries.
             #
-            # ONE emit_rows, not two, and that is load-bearing for parity:
-            # emit_rows greps the WHOLE FILE per call, so a second call would
-            # emit all of its rows AFTER the first pattern's -- while the Python
-            # twin walks line by line. A file registering an add_reader above a
-            # signal.signal would then differ in ROW ORDER, which
-            # validate-python-ports.sh compares byte-for-byte. MEASURED, not
-            # reasoned: on that two-line file the two-call spelling emits rows
-            # in order 2,1 while the python twin emits 1,2. A single
-            # alternation also keeps a line matching both halves at ONE row,
-            # matching the twin's single re.search.
-            emit_rows "(^|${_LISTENER_NOT_WORD})(signal\.signal|atexit\.register|threading\.Timer)[[:space:]]*\(|(^|${_LISTENER_NOT_WORD})(add_signal_handler|add_reader|add_writer)[[:space:]]*\(" "unpaired-listener" "$L_LISTENER" "$file"
+            # -w drops the "must be a call" requirement (it needs the match to
+            # END on a word character, which `(` is not), so the paren test is
+            # re-imposed as the fifth argument rather than folded in. ONE call,
+            # not two: emit_rows_word greps the whole file, so a second call
+            # would emit its rows AFTER the first pattern's while the python
+            # twin walks line by line -- a ROW ORDER divergence that
+            # validate-python-ports.sh compares byte-for-byte (measured: the
+            # two-call spelling emits 2,1 where python emits 1,2). A single
+            # alternation also keeps a line matching both halves at ONE row.
+            emit_rows_word '(signal\.signal|atexit\.register|threading\.Timer|add_signal_handler|add_reader|add_writer)' "unpaired-listener" "$L_LISTENER" "$file" '(signal\.signal|atexit\.register|threading\.Timer|add_signal_handler|add_reader|add_writer)[[:space:]]*\('
             ;;
         *.[Jj][Ss] | *.[Tt][Ss] | *.[Jj][Ss][Xx] | *.[Tt][Ss][Xx] | *.[Mm][Jj][Ss] | *.[Cc][Jj][Ss])
             emit_rows '\b(spawn|spawnSync|exec|execFile|execFileSync|execSync)[[:space:]]*\(' "unreaped-subprocess" "$L_SUBPROCESS" "$file"

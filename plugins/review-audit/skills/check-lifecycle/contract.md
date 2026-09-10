@@ -110,55 +110,42 @@ terminator unlike Phase 2's `[^{}]*`, which admitted identifier characters and
 let `catches { }` through on the bash runtime alone. Both edges, and the
 qualified form, are fixture-pinned in both runtimes.
 
-**The leading boundary is locale-proofed, and the story is worth keeping.**
-Pre-PR review raised the two spellings as a suspected py/sh divergence on
-non-ASCII input — Python's `\w` being Unicode-aware while `[[:alnum:]_]` was
-assumed ASCII-only. The first response measured it and "refuted" it. **That
-measurement was wrong, and the bug was real.**
+**The leading boundary is POSIX `grep -w`, and the road there is worth keeping.**
+Pre-PR review raised the two boundary spellings as a suspected py/sh divergence
+on non-ASCII input. The first response measured it and "refuted" it — **that
+measurement was wrong**: it set `LC_ALL=C` over an environment whose `LANG` was
+already `C.UTF-8`, so the C-locale path was never exercised. Re-run under
+`env -i`, bash fired where Python stayed silent.
 
-The test set `LC_ALL=C` over an environment whose `LANG` was already
-`C.UTF-8`, so the C-locale path was never exercised; re-run under `env -i`, bash
-**fires** on `caf<é>add_reader(` while Python stays silent. Under a UTF-8 locale
-`[[:alnum:]]` matches the multibyte letter and the two agree; under a strict `C`
-locale grep classifies each byte alone, neither byte is alnum, the negated class
-matches the trailing byte, and the arm emits — a **bash-only false positive** and
-a byte-parity break, on precisely the minimal-container / CI default the bash
-fallback exists to serve.
+Two bracket-class fixes were then tried, and **both failed**:
 
-Three consequences, all load-bearing:
+| Spelling | Result |
+| --- | --- |
+| `[^[:alnum:]_]` | portable, but bytewise under `C` — a multibyte letter's trailing byte satisfies it, so the arm fires where Python does not |
+| `[^[:alnum:]_\200-\377]` | correct on GNU grep; **BSD grep rejects the pattern outright** (exit >1 — the raw byte range is invalid under its collation) |
 
-- **The bash class excludes high bytes** (`_LISTENER_NOT_WORD`, built with
-  `printf` as literal bytes per #679/#932). It is deliberately *wider* than the
-  Python side's `[^\w]`.
+The second failure is the instructive one: it passed every local check because
+this repo's dev boxes carry GNU grep, and only `tests/probe-bsd-regex.sh` — the
+lone gate on the `macos-latest` shard — caught it. That probe existed because an
+earlier review cycle asked for exactly this coverage.
 
-  **This is a bounded trade-off, not full parity**, and saying so is the point —
-  an earlier draft claimed the behaviours simply "match", which is exactly the
-  overclaiming #542/#498 warns about. Under a C locale no bracket class can
-  match the Python arm: grep classifies one **byte** with no knowledge of its
-  character, while Python classifies the **character**. The byte before the
-  token is `0xA9` for a letter (Python *rejects* that boundary) and `0x94` for
-  an em dash (Python *accepts* it) — one class must treat those alike, Python
-  must treat them oppositely. The choice is therefore between a C-locale false
-  **positive** on a letter prefix (the naive class) and a C-locale false
-  **negative** on punctuation abutting a call (this class). The false negative
-  wins because its shape is **not valid Python** — an em dash outside a string
-  is a `SyntaxError` — so it is reachable only in a comment or string, where
-  dropping a MEDIUM candidate is harmless; a false positive on real code is not.
-  Under a UTF-8 locale the two agree on both shapes, so the gap is bounded to
-  the C locale, and both halves of that claim are fixture-pinned.
-- **The class is pinned, not the locale.** Forcing `LC_ALL=C.UTF-8` would trade a
-  measured bug for a silent one: base macOS commonly lacks that locale. This
-  follows `loc_engine.py`'s `BLANK_RE`/`INDENT_RE` precedent, which pins both
-  impls to an explicit class for the same reason.
-- **Do not add `re.ASCII` to the Python arm.** That was the review's original
-  suggested remedy and it fixes the wrong side — it flips Python to matching and
-  re-opens the divergence from the other direction.
+The arm now uses **`grep -w`**, a POSIX *flag* rather than a regex construct, so
+it sidesteps the dialect question entirely — the same reasoning `probe-bsd-regex.sh`
+already records for the `\b` sites. Because `-w` requires the match to *end* on a
+word character (and `(` is not one), the "must be a call" test is re-imposed
+separately inside `emit_rows_word` rather than folded into the `-w` pattern.
 
-The fixture runs the scanners under `env -i` at **both** `C` and `C.UTF-8`, with
-a control asserting a real registration still fires under `C`. An ambient-locale
-fixture passed while the bug was live, which is the reusable lesson: **measure
-locale behaviour with `env -i`, never by setting one locale variable over an
-inherited environment.**
+**Known limitation, stated rather than papered over.** The boundary is correct
+under a **UTF-8** locale, not under a strict `C` one. Under `LC_ALL=C`, `-w`
+decides word-ness bytewise, so a call prefixed by a non-ASCII **identifier**
+character emits a false positive in bash while the Python twin stays silent. The
+concrete case is real code, not prose: PEP 3131 permits non-ASCII identifiers, so
+`caféadd_reader(...)` compiles, and that line fires in bash under `C` only. Under
+any UTF-8 locale — including `C.UTF-8`, the default on the containers and CI
+runners this scanner targets — the two runtimes agree exactly, on that shape and
+on multibyte **punctuation** alike. Both the agreement and the gap are
+fixture-pinned, so a locale change surfaces in the suite instead of silently
+widening the divergence.
 
 Rust (#838) is `M` for all four, but two of its arms are spelled differently from
 every other language's and the reason is worth recording:
