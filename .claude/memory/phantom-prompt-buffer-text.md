@@ -21,6 +21,11 @@ real input   ESC[39m❯ rebase onto main and push                (control sessio
 empty        ESC[39m❯
 ```
 
+Parse the line by anchoring on the composer's **glyph + U+00A0 (NBSP)** prefix,
+not the bare glyph: the buffer text can contain the glyph itself, and splitting
+on the last bare one drops the opening dim run — silently reporting a real
+suggestion as queued input. A selection MENU uses glyph + plain space instead.
+
 **Why it stayed invisible for seven weeks: `tmux capture-pane -p` STRIPS the SGR
 run.** Every pane reader used the flagless form, so the one discriminating byte
 never reached a matcher. `capture-pane -p -e` preserves it.
@@ -47,6 +52,12 @@ into these very panes routinely, and two of the five phantoms were outward or
 gate-bypassing (`merge it once CI is green`; `push it` on a golem that had
 **explicitly stated** it was withholding the push pending its portability gate
 and review cycle 2). A stray `Enter` would submit an unapproved action.
+
+**Still unverified (#977 could not settle these):** whether `Enter` can submit a
+suggestion, and whether anything clears the line short of reaping. A disposable
+probe session would not reproduce a suggestion on demand across ~10 minutes, so
+both are recorded as open rather than guessed. Until they are answered, keep
+treating a phantom line as a latent hazard and reap rather than clear.
 
 **How to apply:** (1) Never assume a pane's `❯ <text>` is something you or the
 operator queued — check the class, or capture with `-e` and look for the dim run.
