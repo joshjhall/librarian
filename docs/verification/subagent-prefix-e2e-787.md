@@ -177,6 +177,15 @@ that the cost model does not support.
   cache), which is why the first step there is to timestamp misses against cycle
   boundaries rather than reason from the harness source.
 
+  **RESOLVED** — see [`subagent-cache-miss-e2e-870.md`](subagent-cache-miss-e2e-870.md).
+  Both hypotheses turned out to be operating, not one: 76% of misses are the
+  *leader* of a fan-out barrier (its siblings then read what it wrote), and that
+  leader's own miss probability climbs with the gap since the previous barrier,
+  steepening past the TTL. Neither has an in-repo lever — `parallel()` is
+  injected by the Workflow runtime, and #256 already made the prompt prefix
+  maximally cache-stable — so Finding 3's cost stands as measured. Finding 3's
+  33% re-measured to 36% at 9x the sample.
+
 ## Reproducing
 
 ```bash

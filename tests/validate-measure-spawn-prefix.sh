@@ -512,6 +512,267 @@ test_shim_diagnoses_a_broken_path_correctly() {
     esac
 }
 
+# --- `timing`: barrier reconstruction and miss attribution (#870) ------------
+#
+# #870 asked which of two hypotheses explains a 38% cache-miss rate: a 5-minute
+# TTL expiring between review cycles, or barrier scheduling racing to populate
+# the cache. They make DIFFERENT predictions, so the report must be able to tell
+# them apart — which means the two axes it separates (rank within a barrier, and
+# the gap before the barrier) each need a fixture that isolates one of them.
+#
+# The clustering is inferred, not read from a field: there is no barrier id in a
+# transcript. So these fixtures pin the inference itself — that a gap past the
+# threshold starts a new barrier, that a session change does too regardless of
+# timing, and that a spawn which cannot be ordered is DROPPED rather than
+# guessed into a barrier (a guess would fabricate the very signal being measured).
+
+# timed_spawn ROOT SESSION NAME CACHE_READ CACHE_CREATION TIMESTAMP
+# A transcript carrying the sessionId + timestamp that barrier clustering reads.
+# Distinct from spawn_file above, which deliberately omits both (its callers pin
+# the subcommands that ignore ordering, and that corpus must keep proving those
+# still work without the fields).
+timed_spawn() {
+    local dir="$1/proj/$2/subagents/wf" sess="$2" f="$3" read="$4" create="$5" ts="$6"
+    command mkdir -p "$dir"
+    {
+        command printf '{"type":"user","message":{"role":"user","content":"dispatch"}}\n'
+        command printf '{"type":"assistant","sessionId":"%s","timestamp":"%s","message":{"role":"assistant","usage":{"input_tokens":2,"cache_read_input_tokens":%s,"cache_creation_input_tokens":%s}}}\n' \
+            "$sess" "$ts" "$read" "$create"
+    } >"$dir/agent-$f.jsonl"
+    command printf '{"agentType":"dev-core:code-reviewer","spawnDepth":1}\n' \
+        >"$dir/agent-$f.meta.json"
+}
+
+# Two barriers in session A, 6 minutes apart (so the second leader is past the
+# TTL), plus one barrier in session B that OVERLAPS barrier 1 in wall-clock time.
+# The overlap is the point: if clustering keyed on time alone, B's spawn would be
+# absorbed into A's barrier and the barrier count would be 2 instead of 3.
+TIMED="$WORKDIR/timed"
+timed_spawn "$TIMED" sessA b1lead 0 30000 "2026-09-01T10:00:00.000Z"
+timed_spawn "$TIMED" sessA b1f1 11000 18000 "2026-09-01T10:00:04.000Z"
+timed_spawn "$TIMED" sessA b1f2 11000 18000 "2026-09-01T10:00:08.000Z"
+timed_spawn "$TIMED" sessA b2lead 0 30000 "2026-09-01T10:06:00.000Z"
+timed_spawn "$TIMED" sessA b2f1 11000 18000 "2026-09-01T10:06:05.000Z"
+timed_spawn "$TIMED" sessB b3lead 0 30000 "2026-09-01T10:00:02.000Z"
+
+test_barriers_split_on_gap_and_session() {
+    run_measure timing "$TIMED"
+    assert_equals "0" "$RC" "timing exits 0 on a well-formed corpus"
+    assert_contains "$OUT" "spawns placed in barriers   6 of 6" "places every ordered spawn"
+    # 3 = A's two (split by the 6-minute gap) + B's one (split by session
+    # despite overlapping A's first in wall-clock time).
+    assert_contains "$OUT" "barriers                    3" "splits on gap AND on session"
+}
+
+test_leader_carries_the_misses() {
+    run_measure timing "$TIMED"
+    # Every leader misses and every follower hits, so the two rows are the
+    # extremes: this pins that rank is computed per barrier rather than over the
+    # whole corpus (which would put all six spawns at distinct ranks).
+    assert_contains "$OUT" "0                            3/3" "all three leaders are rank 0"
+    assert_contains "$OUT" "1                            0/2" "both rank-1 followers hit"
+}
+
+test_attribution_separates_ttl_from_barrier() {
+    run_measure timing "$TIMED"
+    # Barrier 2's leader sits 6 min after barrier 1 ENDED -> past the 300s TTL.
+    # Barriers 1 and 3 are each their session's first -> cold start. So the
+    # in-TTL category must be EMPTY here; a fixture where every leader landed in
+    # one bucket could not show the categories are actually distinguished.
+    assert_contains "$OUT" "leader, gap >= TTL               1" "the 6-min-gap leader is a TTL miss"
+    assert_contains "$OUT" "leader, session cold start       2" "both first-in-session leaders are cold"
+    assert_not_contains "$OUT" "leader, gap < TTL" "no in-TTL leader in this corpus"
+}
+
+test_cold_start_is_its_own_category() {
+    run_measure timing "$TIMED"
+    # A session's first barrier has no prior entry to reuse, so it is not
+    # evidence about the TTL. Folding it into the largest gap bucket would
+    # inflate that bucket's rate with misses the TTL cannot explain.
+    #
+    # Assert the COUNTS, not just the label: a row that merely exists still
+    # passes when cold starts have been folded in elsewhere. Both leaders here
+    # are cold, and exactly one leader is past the TTL — so a fold-in shows up
+    # as 3 in the TTL row.
+    assert_contains "$OUT" "cold (session's first)       2/2" "cold starts are counted separately"
+    assert_contains "$OUT" "leader, gap >= TTL               1" "the TTL row does not absorb them"
+}
+
+# Barrier membership needs BOTH a session and a timestamp, so each missing field
+# gets its own unplaceable spawn: one with neither (spawn_file's shape), and one
+# carrying a timestamp but no sessionId. The second is the load-bearing case —
+# it is orderable in time, so a clustering that checked only the timestamp would
+# happily absorb it into a barrier it has no demonstrated membership in.
+UNORDERED="$WORKDIR/unordered"
+timed_spawn "$UNORDERED" sessA ok 0 30000 "2026-09-01T10:00:00.000Z"
+spawn_file "$UNORDERED" nots dev-core:code-reviewer 11000 18000
+# Hand-built rather than via timed_spawn: the point is the ABSENT sessionId.
+command mkdir -p "$UNORDERED/proj/nosess/subagents/wf"
+{
+    command printf '{"type":"user","message":{"role":"user","content":"dispatch"}}\n'
+    command printf '{"type":"assistant","timestamp":"2026-09-01T10:00:02.000Z","message":{"role":"assistant","usage":{"input_tokens":2,"cache_read_input_tokens":11000,"cache_creation_input_tokens":18000}}}\n'
+} >"$UNORDERED/proj/nosess/subagents/wf/agent-nosess.jsonl"
+
+test_timing_ignores_unorderable_spawns() {
+    run_measure timing "$UNORDERED"
+    assert_equals "0" "$RC" "an unorderable spawn does not abort the report"
+    assert_contains "$OUT" "spawns placed in barriers   1 of 3" "reports what it could not place"
+    assert_contains "$OUT" "barriers                    1" "neither unplaceable spawn joins a barrier"
+}
+
+# A single spawn is one barrier with one member: no follower ranks, and no
+# previous barrier to measure a gap against. Every rate denominator in the
+# report must survive that.
+SINGLE="$WORKDIR/single"
+timed_spawn "$SINGLE" sessA only 0 30000 "2026-09-01T10:00:00.000Z"
+
+test_timing_single_spawn_corpus() {
+    run_measure timing "$SINGLE"
+    assert_equals "0" "$RC" "a one-spawn corpus exits 0"
+    assert_contains "$OUT" "barriers                    1" "counts the lone barrier"
+    assert_not_contains "$OUT" "Traceback" "no division-by-zero on empty buckets"
+}
+
+# With no misses the shared block cannot be sized (cmd_cache makes the same
+# refusal). The report must say there is nothing to attribute rather than print
+# a 0-token penalty, which would read as "measured, and free".
+ALLHIT="$WORKDIR/timed-allhit"
+timed_spawn "$ALLHIT" sessA h1 11000 18000 "2026-09-01T10:00:00.000Z"
+timed_spawn "$ALLHIT" sessA h2 11000 18000 "2026-09-01T10:00:04.000Z"
+
+test_timing_all_hits_reports_no_misses() {
+    run_measure timing "$ALLHIT"
+    assert_equals "0" "$RC" "an all-hits corpus exits 0"
+    assert_contains "$OUT" "no misses in this corpus" "says there is nothing to attribute"
+}
+
+# The TIMED corpus above has only a >TTL leader and two cold starts, so the
+# in-TTL arm was proven ABSENT (assert_not_contains) and never proven correct
+# when present. This corpus supplies a leader at a ~60s gap: far enough past the
+# 20s barrier threshold to start a new barrier, well inside the 300s TTL.
+INTTL="$WORKDIR/in-ttl"
+timed_spawn "$INTTL" sessA b1lead 11000 18000 "2026-09-01T11:00:00.000Z"
+timed_spawn "$INTTL" sessA b1f1 11000 18000 "2026-09-01T11:00:04.000Z"
+timed_spawn "$INTTL" sessA b2lead 0 30000 "2026-09-01T11:01:04.000Z"
+
+test_in_ttl_leader_is_bucketed_and_attributed() {
+    run_measure timing "$INTTL"
+    assert_equals "0" "$RC" "the in-TTL corpus exits 0"
+    # 11:01:04 minus barrier 1's last START (11:00:04) = exactly 60s, which the
+    # half-open buckets place in "60-120s" rather than "30-60s".
+    assert_contains "$OUT" "60-120s                      1/1" "a 60s gap lands in the 60-120s bucket"
+    assert_contains "$OUT" "leader, gap < TTL                1" "and is attributed as an in-TTL leader"
+}
+
+# The TTL boundary is the one value the bucket table and the attribution
+# category could disagree about — and did, until both were made half-open. A gap
+# of EXACTLY CACHE_TTL_SECONDS must read as past-TTL in both places.
+BOUNDARY="$WORKDIR/ttl-boundary"
+timed_spawn "$BOUNDARY" sessA b1lead 11000 18000 "2026-09-01T12:00:00.000Z"
+timed_spawn "$BOUNDARY" sessA b2lead 0 30000 "2026-09-01T12:05:00.000Z"
+
+test_ttl_boundary_agrees_between_both_tables() {
+    run_measure timing "$BOUNDARY"
+    # Exactly 300.0s. Half-open `low <= gap < high` puts it in 300-600s; the
+    # attribution's `>=` must agree. A strict `>` there reported the SAME spawn
+    # as in-TTL in one table and past-TTL in the other.
+    assert_contains "$OUT" "300-600s                     1/1" "gap == TTL buckets as past-TTL"
+    assert_contains "$OUT" "leader, gap >= TTL               1" "and attributes as past-TTL too"
+    assert_not_contains "$OUT" "leader, gap < TTL" "never in-TTL in the same report"
+}
+
+# Ranks 5 and beyond are pooled into one "5+" row. Every other fixture tops out
+# at 3 members, so the clamp was never exercised: a bug that dropped or
+# mislabeled ranks 5-N would have passed the whole suite.
+WIDE="$WORKDIR/wide-barrier"
+timed_spawn "$WIDE" sessA w0 0 30000 "2026-09-01T13:00:00.000Z"
+timed_spawn "$WIDE" sessA w1 11000 18000 "2026-09-01T13:00:02.000Z"
+timed_spawn "$WIDE" sessA w2 11000 18000 "2026-09-01T13:00:04.000Z"
+timed_spawn "$WIDE" sessA w3 11000 18000 "2026-09-01T13:00:06.000Z"
+timed_spawn "$WIDE" sessA w4 11000 18000 "2026-09-01T13:00:08.000Z"
+timed_spawn "$WIDE" sessA w5 11000 18000 "2026-09-01T13:00:10.000Z"
+timed_spawn "$WIDE" sessA w6 0 30000 "2026-09-01T13:00:12.000Z"
+
+test_rank_five_plus_is_pooled() {
+    run_measure timing "$WIDE"
+    assert_equals "0" "$RC" "a 7-member barrier exits 0"
+    assert_contains "$OUT" "barriers                    1" "all seven spawns are one barrier"
+    # Ranks 5 and 6 pool into one row: 2 spawns, of which w6 missed.
+    assert_contains "$OUT" "5+                           1/2" "ranks 5 and 6 pool into a single row"
+    # And nothing is dropped on the way: 7 placed, ranks 0-4 individually.
+    assert_contains "$OUT" "spawns placed in barriers   7 of 7" "no spawn is lost to the clamp"
+}
+
+# iter_spawns takes session/timestamp from the first BILLED turn, and a comment
+# justifies that choice against an earlier unbilled record. This fixture is the
+# only place that claim is testable: an unbilled assistant record carrying a
+# DIFFERENT session and an earlier timestamp precedes the billed one. Reading
+# the first line instead would file the spawn under sessDECOY.
+# The decoy carries the SAME session as the partner but a timestamp 10 minutes
+# EARLIER. That combination is what makes the two readings distinguishable:
+# reading the billed turn puts this spawn 4s before its partner -> ONE barrier;
+# reading the first record puts it 10 min earlier -> TWO barriers, and the
+# partner's leader then shows a >TTL gap. An earlier decoy in a DIFFERENT
+# session would not work: it sorts away and still yields one barrier either way.
+BILLED="$WORKDIR/billed-turn"
+command mkdir -p "$BILLED/proj/x/subagents/wf"
+{
+    command printf '{"type":"user","message":{"role":"user","content":"dispatch"}}\n'
+    command printf '{"type":"assistant","sessionId":"sessREAL","timestamp":"2026-09-01T13:50:00.000Z","message":{"role":"assistant","usage":{"input_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}\n'
+    command printf '{"type":"assistant","sessionId":"sessREAL","timestamp":"2026-09-01T14:00:04.000Z","message":{"role":"assistant","usage":{"input_tokens":2,"cache_read_input_tokens":11000,"cache_creation_input_tokens":18000}}}\n'
+} >"$BILLED/proj/x/subagents/wf/agent-billed.jsonl"
+command printf '{"agentType":"dev-core:code-reviewer","spawnDepth":1}\n' \
+    >"$BILLED/proj/x/subagents/wf/agent-billed.meta.json"
+timed_spawn "$BILLED" sessREAL leader 0 30000 "2026-09-01T14:00:00.000Z"
+
+test_identity_comes_from_the_billed_turn() {
+    run_measure timing "$BILLED"
+    assert_equals "0" "$RC" "the decoy-record corpus exits 0"
+    assert_contains "$OUT" "spawns placed in barriers   2 of 2" "both spawns are placeable"
+    # ONE barrier: the decoy-bearing spawn is placed at 14:00:04 (its billed
+    # turn), 4s after the leader. Reading the unbilled 13:50 record instead
+    # would split them into two barriers.
+    assert_contains "$OUT" "barriers                    1" "identity comes from the billed turn"
+    # And it lands as the FOLLOWER, not as a second leader.
+    assert_contains "$OUT" "1                            0/1" "the billed timestamp makes it rank 1"
+}
+
+# cmd_timing re-derives cmd_cache's shared-block arithmetic, so it needs
+# cmd_cache's refusal too: with no hits the block cannot be sized, and a
+# fabricated 0-token cost would read as "measured, and free".
+NOHITS="$WORKDIR/timing-nohits"
+timed_spawn "$NOHITS" sessA m1 0 30000 "2026-09-01T15:00:00.000Z"
+timed_spawn "$NOHITS" sessA m2 0 31000 "2026-09-01T15:00:04.000Z"
+
+test_timing_refuses_to_price_an_unsizable_sample() {
+    run_measure timing "$NOHITS"
+    assert_equals "0" "$RC" "an all-miss corpus exits 0"
+    assert_contains "$OUT" "cost per miss unavailable" "refuses to price what it cannot size"
+    assert_not_contains "$OUT" "total penalty" "prints no fabricated total"
+}
+
+test_timing_is_an_accepted_subcommand() {
+    run_measure timing "$TIMED"
+    assert_equals "0" "$RC" "timing is a registered subcommand"
+    # The argparse choices tuple and the dispatch dict are separate edits; a
+    # subcommand added to one and not the other fails here rather than at use.
+    run_measure tiiming "$TIMED"
+    assert_equals "2" "$RC" "an unknown subcommand still exits 2"
+}
+
+run_test test_in_ttl_leader_is_bucketed_and_attributed "An in-TTL leader is bucketed and attributed, not just proven absent"
+run_test test_ttl_boundary_agrees_between_both_tables "A gap of exactly the TTL reads the same in both tables"
+run_test test_rank_five_plus_is_pooled "Ranks 5+ pool into one row without losing a spawn"
+run_test test_identity_comes_from_the_billed_turn "Session identity comes from the billed turn, not the first line"
+run_test test_timing_refuses_to_price_an_unsizable_sample "timing refuses to price a sample it cannot size"
+run_test test_barriers_split_on_gap_and_session "Barriers split on the gap threshold and on a session change"
+run_test test_leader_carries_the_misses "The leader/follower split is reported per rank"
+run_test test_attribution_separates_ttl_from_barrier "Attribution separates a >TTL leader from an in-TTL one"
+run_test test_cold_start_is_its_own_category "A session's first barrier is a cold start, not the largest gap bucket"
+run_test test_timing_ignores_unorderable_spawns "A spawn with no timestamp is dropped, not guessed into a barrier"
+run_test test_timing_single_spawn_corpus "A single-spawn corpus reports without dividing by zero"
+run_test test_timing_all_hits_reports_no_misses "An all-hits corpus says so instead of pricing nothing"
+run_test test_timing_is_an_accepted_subcommand "timing is accepted and an unknown subcommand still exits 2"
 run_test test_counts_hits_and_misses "Hit/miss classification counts every spawn"
 run_test test_shared_block_and_penalty_arithmetic "Shared-block and penalty arithmetic is exact"
 run_test test_summary_groups_by_agent_type "Summary groups spawns by agent type"
