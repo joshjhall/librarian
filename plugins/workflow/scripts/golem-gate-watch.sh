@@ -429,13 +429,29 @@ _set_has() {
 LAST_EMIT=""
 emit_transitions() {
     local snapshot="$1" prime="${2:-0}"
-    local seen=" " golem msg prev
+    local seen=" " golem msg prev key
     while IFS=$'\t' read -r golem msg; do
         [ -z "$golem" ] && continue
         seen="${seen}${golem} "
+        # #977: dedup on the message with the VOLATILE suggestion annotation
+        # stripped, but print the message in full. The annotation appears and
+        # vanishes on its own while a golem sits equally idle, so keying on it
+        # would read each flicker as a fresh transition and re-push a standing
+        # idle line — the notification spam this function exists to suppress.
+        #
+        # Stripping HERE rather than in the caller is what makes it hold on BOTH
+        # channels: --stream-liveness passes through liveness_stabilize (which
+        # strips before this point, so this is a no-op there), while
+        # --stream-panes feeds CONFIRMED_SNAPSHOT in directly and would otherwise
+        # keep the annotation in the key. The first attempt at this fix stripped
+        # only inside confirm_turn_end's debounce comparison and re-attached the
+        # annotation before emitting — which fixed the debounce but left the
+        # dedup keyed on the flicker, so the operator still got a repeat push on
+        # every toggle. Measured, then fixed here.
+        key="${msg%"$SUGGESTION_ANNOT"}"
         prev="$(_map_get "$LAST_EMIT" "$golem")"
-        if [ "$prev" != "$msg" ]; then
-            LAST_EMIT="$(_map_set "$LAST_EMIT" "$golem" "$msg")"
+        if [ "$prev" != "$key" ]; then
+            LAST_EMIT="$(_map_set "$LAST_EMIT" "$golem" "$key")"
             [ "$prime" = "1" ] || command printf '%s\t%s\n' "$golem" "$msg"
         fi
     done <<<"$snapshot"
@@ -983,12 +999,15 @@ confirm_turn_end() {
         # that test and fall through the `else` arm — emitted on the FIRST poll,
         # skipping the very #447 confirmation this function exists to apply, and
         # dropping the golem from $nextpending so a suggestion that then clears
-        # re-suppresses the standing idle line for an extra poll. The annotation
-        # also toggles on its own while the golem sits equally idle, so leaving it
-        # in the message would make emit_transitions' exact-match dedup read each
-        # flicker as a fresh transition. Same reasoning, and same fix, as
-        # liveness_stabilize() on the --stream-liveness channel; this is the
-        # sibling path (grep every channel when hardening one).
+        # re-suppresses the standing idle line for an extra poll.
+        #
+        # SCOPE: this split governs the DEBOUNCE only. The annotation is
+        # re-attached to whatever is emitted, so the operator still sees it — and
+        # the separate problem of a flicker re-triggering the downstream dedup is
+        # handled in emit_transitions, which strips the annotation from its KEY.
+        # Both are needed and neither substitutes for the other; an earlier
+        # version of this comment claimed this split alone matched
+        # liveness_stabilize's protection, which it does not.
         base="$msg"
         annot=""
         case "$msg" in

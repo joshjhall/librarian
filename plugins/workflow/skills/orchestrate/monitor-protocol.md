@@ -366,6 +366,10 @@ inferred**: a suggestion is rendered in **SGR 2 (dim)**, real typed input is not
 - **Do not blind-send keystrokes to clear a phantom line.** A suggestion is inert
   while nothing sends `Enter`, but the plan-gate broker sends `1 Enter` into
   these very panes; treat it as a latent hazard, not noise. Teardown disposes it.
+- **The annotation is a rendering heuristic, not a security control.** It reports
+  how the pane's bytes are *attributed*, which is whatever the writing process
+  emitted — so never treat "inert" as clearance to send. If the broker is ever
+  made suggestion-aware, it needs its own confirmation, not this signal.
 
 A human operator gets the same proactive surface with **`${CLAUDE_PLUGIN_ROOT}/scripts/golem-watch.sh`**
 (streams both channels). See `mode-protocol.md` § *Gate-watch contract* for the

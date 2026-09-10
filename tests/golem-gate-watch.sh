@@ -134,4 +134,7 @@ run_fragment_test test_liveness_pane_suggestion_annotation "liveness_snapshot id
 
 run_fragment_test test_strip_sgr_unterminated_csi "_strip_sgr: unterminated CSI does not invent an empty prompt (#977 review)"
 
+run_fragment_test test_panes_stream_suggestion_flicker_dedup "panes stream: a suggestion flicker does not re-emit the standing idle line (#977 cycle-2)"
+run_fragment_test test_panes_snapshot_input_not_annotated "panes_snapshot: real queued input is not annotated as a suggestion (#977 cycle-2)"
+
 generate_report

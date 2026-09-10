@@ -1080,3 +1080,64 @@ test_strip_sgr_unterminated_csi() {
         "$(_pane_e_class "${esc}[39m${glyph}${nbsp} real text${esc}[2")" \
         "A truncated-escape prompt line reports input, never a false empty"
 }
+
+# The CHAINED path (#977 cycle-2 review): confirm_turn_end -> emit_transitions,
+# exactly as the --stream-panes drive arm wires them. The isolated debounce test
+# above passes even while a flicker re-pushes the standing line, because the
+# re-push happens in emit_transitions' dedup — which the isolated test never
+# reaches. Measured before the fix: an idle golem whose suggestion toggled
+# emitted on EVERY toggle while it sat equally idle.
+#
+# This is the sibling of test_liveness_stream_dedup on the --stream-liveness
+# channel; --stream-liveness routes through liveness_stabilize (which strips
+# earlier), --stream-panes does not, so the strip lives in emit_transitions to
+# cover both.
+test_panes_stream_suggestion_flicker_dedup() {
+    local out
+    out="$(
+        . "$GATE_WATCH"
+        # A bare directive covers only the NEXT statement, so both assignments
+        # are wrapped in a block to keep it in scope (the repo's documented trap).
+        # shellcheck disable=SC2034  # both read by the sourced functions
+        {
+            PENDING_TURN_END=" "
+            LAST_EMIT=""
+        }
+        annot="${TURN_END_MSG}${SUGGESTION_ANNOT}"
+        _step() {
+            confirm_turn_end "$(command printf 'golem-1\t%s\n' "$1")"
+            command printf '[%s]' "$2"
+            emit_transitions "$CONFIRMED_SNAPSHOT" "$3"
+        }
+        _step "$annot" p1 0
+        _step "$annot" p2 0
+        _step "$TURN_END_MSG" p3 0
+        _step "$annot" p4 0
+    )"
+    assert_contains "$out" "[p1][p2]golem-1" \
+        "The confirmed idle line is emitted once, on the second poll"
+    assert_contains "$out" "suggestion shown (inert, not queued input)" \
+        "...carrying the annotation, so the operator still sees it"
+    assert_contains "$out" "[p3][p4]" \
+        "A suggestion that clears and returns does NOT re-emit the standing idle line"
+}
+
+# The `input` class at an integration call site (#977 cycle-2 review). The
+# classifier's four classes are unit-tested, but the emitting call sites only
+# covered `suggestion` and an `empty` control — never a real non-dim string at
+# the prompt, which is the very case the feature exists to distinguish. Without
+# this, a future edit that annotated `input` too would pass every test.
+test_panes_snapshot_input_not_annotated() {
+    local esc glyph nbsp idle_footer
+    esc="$(command printf '\033')"
+    glyph="$(command printf '\342\235\257')"
+    nbsp="$(command printf '\302\240')"
+    idle_footer="  ⏵⏵ auto mode on"
+
+    PANE_TEXT_E="${esc}[39m${glyph}${nbsp} genuinely queued text"$'\n'"$idle_footer" \
+        _run_panes_snapshot_tmux "$idle_footer"
+    assert_not_contains "$PANES_OUT" "suggestion shown" \
+        "Real queued input at the prompt is NOT annotated as a suggestion"
+    assert_contains "$PANES_OUT" "idle at prompt" \
+        "...and the golem is still reported idle"
+}
