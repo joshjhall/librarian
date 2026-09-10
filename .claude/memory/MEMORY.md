@@ -63,6 +63,7 @@
 - [Detector must fail OPEN on its own failure](detector-must-fail-open-on-its-own-failure.md) — a guard that couldn't RUN learned nothing; only readable outcomes may refuse; grep every early return sharing the sentinel
 - [An absent env scrub hides a PATH stub](env-scrub-absence-hides-a-path-stub.md) — unset BASH_ENV or a profile restores PATH; green in CI, red only locally
 - [Untestable is a claim about your search](untestable-is-a-claim-about-your-search.md) — don't write it into the source; BASH_ENV restored PATH and the harness already had the fix
+- [Proxy path returns 200, not JSON](proxy-path-returns-200-not-json.md) — BIFROST_URL is ANTHROPIC_BASE_URL minus the suffix; check content-type, never the status alone
 - [Measure a suppression before keeping it](measure-suppression-before-keeping-it.md) — neuter the predicate and diff; a guard can buy 0 rows and cost a false negative (#604)
 - [A skip guard may outlive its dependency](skip-guard-may-outlive-its-dependency.md) — widening it re-asserts a dependency that is GONE; A/B the guard against its subject, not its text
 - [An exemption is a runtime claim — measure it](exemption-is-a-runtime-claim-measure-it.md) — ask which ACTOR runs it; a ratchet needs a floor too; 3 asserted boundaries wrong in one change
