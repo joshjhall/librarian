@@ -56,7 +56,8 @@ source_fragments "$SCRIPT_DIR/gate-watch" \
     10-feed-snapshot.sh \
     20-liveness.sh \
     30-helpers-and-modes.sh \
-    40-stream-dedup.sh
+    40-stream-dedup.sh \
+    50-prompt-line.sh
 
 # --- Run all tests ----------------------------------------------------------
 
@@ -121,5 +122,22 @@ run_fragment_test test_heartbeat_interval_numeric_coercion "GOLEM_HEARTBEAT_INTE
 run_fragment_test test_ghost_gate_dropped_when_no_trace "Ghost filter: gated golem with no live trace dropped from BLOCKED (#446)"
 run_fragment_test test_pane_is_api_error "pane_is_api_error: matches API-error death, spinner vetoes, classifies retriable/terminal (#446)"
 run_fragment_test test_panes_snapshot_died_dispatch "panes_snapshot: died-on-API-error emits DIED before turn-end; modal gates still win (#446)"
+
+run_fragment_test test_pane_prompt_line_class "pane_prompt_line_class: dim=suggestion, plain=input, bare=empty (#977)"
+run_fragment_test test_pane_prompt_line_class_unknown_not_empty "pane_prompt_line_class: unreadable/glyph-less pane is unknown, NOT empty (#977)"
+run_fragment_test test_pane_prompt_line_class_footer_anchored "pane_prompt_line_class is footer-anchored (no self-trip on scrolled text) (#977)"
+run_fragment_test test_pane_prompt_line_class_last_line_wins "pane_prompt_line_class reads the LAST prompt line, not a submitted history one (#977)"
+run_fragment_test test_panes_snapshot_suggestion_annotation "panes_snapshot annotates a suggestion; plain idle line byte-identical (#977)"
+run_fragment_test test_liveness_stabilize_strips_suggestion_annotation "liveness_stabilize strips the volatile suggestion annotation (#977)"
+
+run_fragment_test test_confirm_turn_end_suggestion_annotation "confirm_turn_end: annotated idle still debounced; annotation survives (#977 review)"
+run_fragment_test test_liveness_pane_suggestion_annotation "liveness_snapshot idle arm annotates a suggestion end-to-end (#977 review)"
+
+run_fragment_test test_strip_sgr_unterminated_csi "_strip_sgr: unterminated CSI does not invent an empty prompt (#977 review)"
+
+run_fragment_test test_panes_stream_suggestion_flicker_dedup "panes stream: a suggestion flicker does not re-emit the standing idle line (#977 cycle-2)"
+run_fragment_test test_panes_snapshot_input_not_annotated "panes_snapshot: real queued input is not annotated as a suggestion (#977 cycle-2)"
+
+run_fragment_test test_pane_prompt_line_class_glyph_in_text "pane_prompt_line_class: a glyph INSIDE the buffer text does not hide the dim run (#977 cycle-3)"
 
 generate_report

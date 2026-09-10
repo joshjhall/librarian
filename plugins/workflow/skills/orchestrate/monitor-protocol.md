@@ -347,6 +347,30 @@ clears and later re-occurs re-fires), so this is signal, not noise.
   stops it (#621). See `mode-protocol.md` § *Gate-watch contract* for the prompt
   signatures and the capture-pane caveats.
 
+**A `❯` line is never assumed to be operator-queued (#977).** Golem panes
+intermittently show a plausible next-step instruction sitting at the input line
+that nobody typed — five instances across two runs, e.g. `merge it once CI is
+green`, and `push it` on a golem that had explicitly said it was withholding the
+push. It is Claude Code's **autocomplete suggestion**, and it is **measured, not
+inferred**: a suggestion is rendered in **SGR 2 (dim)**, real typed input is not.
+
+- The idle lines above are suffixed with `· suggestion shown (inert, not queued
+  input)` (separated by a space) when `pane_prompt_line_class` sees the dim run. It is an **annotation**, not a
+  class — a golem showing a suggestion is still idle — so the verdict is
+  unchanged and a plain idle line is byte-identical to before.
+- The classifier takes its own `capture-pane -p -e`. The shared capture stays
+  flagless on purpose: `-e` in the footer text every other matcher reads would
+  silently loosen the anchoring the gate matchers depend on.
+- It answers `unknown`, never `empty`, when it could not read the pane — an
+  unreadable golem must not gain a false all-clear.
+- **Do not blind-send keystrokes to clear a phantom line.** A suggestion is inert
+  while nothing sends `Enter`, but the plan-gate broker sends `1 Enter` into
+  these very panes; treat it as a latent hazard, not noise. Teardown disposes it.
+- **The annotation is a rendering heuristic, not a security control.** It reports
+  how the pane's bytes are *attributed*, which is whatever the writing process
+  emitted — so never treat "inert" as clearance to send. If the broker is ever
+  made suggestion-aware, it needs its own confirmation, not this signal.
+
 A human operator gets the same proactive surface with **`${CLAUDE_PLUGIN_ROOT}/scripts/golem-watch.sh`**
 (streams both channels). See `mode-protocol.md` § *Gate-watch contract* for the
 notify/suppress/re-notify rules, and #600 (feed classification) / #587 (golem-id

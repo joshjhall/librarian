@@ -428,3 +428,36 @@ test_liveness_transcript_background_singular_item() {
     assert_not_contains "$LIVE_OUT" "idle at prompt" \
         "still never reported idle at prompt"
 }
+
+# The suggestion annotation on the LIVENESS channel (#977). liveness_snapshot()
+# has its own idle arm that annotates, distinct from the panes_snapshot() push
+# path — and the review of the original #977 change caught that only the push
+# site had an end-to-end test, leaving this call site's wiring unexercised (a
+# wrong session name or a mis-interpolated variable here would have shipped).
+#
+# $LIVE_PANE_TEXT_E feeds the escape-preserving `-e` read that
+# pane_prompt_line_class makes; the plain-capture fixture stays the #229 idle
+# signature so the idle classification itself is unchanged.
+test_liveness_pane_suggestion_annotation() {
+    local esc glyph nbsp
+    esc="$(command printf '\033')"
+    glyph="$(command printf '\342\235\257')"
+    nbsp="$(command printf '\302\240')"
+
+    LIVE_PANE_TEXT_E="${esc}[39m${glyph}${nbsp} ${esc}[2mpush it${esc}[0m" \
+        _run_liveness_snapshot_tmux 1200 0 "⏺ Unknown command: /next-issue"
+    assert_equals "0" "$LIVE_RC" "Liveness snapshot exits 0 for an annotated idle pane"
+    assert_contains "$LIVE_OUT" "idle at prompt" \
+        "The idle verdict itself is unchanged by the annotation"
+    assert_contains "$LIVE_OUT" "suggestion shown (inert, not queued input)" \
+        "liveness_snapshot's idle arm annotates a suggestion end-to-end (#977)"
+
+    # Control: an empty prompt on the same idle pane annotates nothing, so the
+    # pre-#977 line is byte-identical.
+    LIVE_PANE_TEXT_E="${esc}[39m${glyph}${nbsp} ${esc}[39m" \
+        _run_liveness_snapshot_tmux 1200 0 "⏺ Unknown command: /next-issue"
+    assert_not_contains "$LIVE_OUT" "suggestion shown" \
+        "A plain idle pane's liveness line carries no annotation"
+    assert_contains "$LIVE_OUT" "idle at prompt" \
+        "...and still reports idle"
+}

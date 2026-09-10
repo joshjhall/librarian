@@ -1,6 +1,6 @@
 ---
 name: phantom-prompt-buffer-text
-description: "golem panes sometimes show unsent next-step text pre-populated in the input line; source unconfirmed, verified inert (no Enter sent)"
+description: "a golem pane's ❯ line may hold an autocomplete SUGGESTION, not queued input; the discriminator is the dim (SGR 2) attribute, and a plain capture-pane strips it"
 metadata:
   node_type: memory
   type: reference
@@ -8,57 +8,64 @@ metadata:
   modified: 2026-09-09T00:00:00.000Z
 ---
 
-Golem tmux panes sometimes show a plausible **next-step instruction** sitting at
-the `❯` input line, UNSENT, that neither operator nor orchestrator typed.
+A golem tmux pane's `❯` input line sometimes shows a plausible next-step
+instruction that neither the operator nor the orchestrator typed. It is **Claude
+Code's autocomplete suggestion** — inert chrome, not queued input.
 
-Observed 2026-07-24 (wave-2 orchestration):
+**The discriminator is the DIM attribute, and it is measured (#977, 2026-09-09).**
+A suggestion is rendered in **SGR 2**; real typed input is not:
 
-- golem-446 (post-close, idle): `work the stretch auto-resume in #465`
-- golem-494 (mid pre-push suite): `merge it once CI is green`
+```text
+suggestion   ESC[39m❯ ESC[2mopen the PR once it lands ESC[0m   (live golem-840)
+real input   ESC[39m❯ rebase onto main and push                (control session)
+empty        ESC[39m❯
+```
 
-Observed again 2026-09-09 (4-lane tracks run), three more:
+Parse the line by anchoring on the composer's **glyph + U+00A0 (NBSP)** prefix,
+not the bare glyph: the buffer text can contain the glyph itself, and splitting
+on the last bare one drops the opening dim run — silently reporting a real
+suggestion as queued input. A selection MENU uses glyph + plain space instead.
 
-- golem-793 (post-merge, idle): `file the upstream report by hand and close #971`
-- golem-705 (post-merge, idle): `closing 705 was right, move on to 898`
-- golem-899 (idle, work staged unpushed): `push it`
+**Why it stayed invisible for seven weeks: `tmux capture-pane -p` STRIPS the SGR
+run.** Every pane reader used the flagless form, so the one discriminating byte
+never reached a matcher. `capture-pane -p -e` preserves it.
+`pane_prompt_line_class` in `golem-gate-watch.sh` now takes its own `-e` capture
+and the idle lines gain a `· suggestion shown (inert, not queued input)`
+suffix. The
+shared capture stays flagless deliberately — `-e` in the text the other matchers
+read would silently loosen their anchoring.
 
-**Trigger hint (new, 2026-09-09):** all three fired on a golem that had just
-**asked the operator a question** and was idle awaiting the answer — and each
-phantom line reads as a plausible ANSWER to that specific question. The
-2026-07-24 pair fits too (both idle). This is a sharper repro hint than "idle"
-alone; it suggests the TUI composing a suggested reply, not random text.
+**`C-u` is evidence, not a mystery.** `C-u` *does* clear real typed input
+(measured). Its failure on a phantom is therefore positive confirmation that
+nothing is in the buffer — the observation the 2026-07-24 and 2026-09-09 runs
+both recorded as an unexplained oddity.
 
-**Verified NOT from orchestration scripts** (re-confirmed 2026-09-09): every
-`send-keys` in `plugins/workflow/scripts|hooks` sends only `1`, `Enter`, `BTab`
-or `S-Tab` — never free text. Also ruled out that run: zero tmux clients attached
-(`tmux list-clients` empty, all sessions `attached=0`), the only other Claude
-session on the box had four MCP servers as its sole children (no tmux, no shell),
-and no configured hook writes to a pane.
+**Observed instances** — 2026-07-24: golem-446 `work the stretch auto-resume
+in #465`; golem-494 `merge it once CI is green`. 2026-09-09: golem-793 `file the
+upstream report by hand and close #971`; golem-705 `closing 705 was right, move
+on to 898`; golem-899 `push it`. Each fired on a golem idle after asking a
+question, and each reads as a plausible answer to *that* question.
 
-**IDENTIFIED (operator, 2026-09-09): it is Claude Code's recommended autocomplete
-/ suggested next input.** That fits every observation — it appears after the
-golem asks a question, always reads as a plausible answer to *that* question,
-and `C-u` cannot clear it because there is nothing in the buffer to clear. The
-suggestion feature is upstream; what is ours is that the orchestrator's pane
-readers cannot tell a suggestion from queued input. Tracked as #977 (reopened
-and reframed — it was wrongly closed as "external, nothing to fix").
+**Risk: benign while inert, but treat it as a latent hazard.** The buffer submits
+only on `Enter`, which nothing sends — but the plan-gate broker sends `1 Enter`
+into these very panes routinely, and two of the five phantoms were outward or
+gate-bypassing (`merge it once CI is green`; `push it` on a golem that had
+**explicitly stated** it was withholding the push pending its portability gate
+and review cycle 2). A stray `Enter` would submit an unapproved action.
 
-**Risk:** benign WHILE inert (buffer only submits on Enter, which nothing sends).
-BUT if any stray Enter ever reached that pane (misfired send-keys, monitor/script
-bug, classifier retry), it would submit an UNAPPROVED command. Two of the five
-instances were outward or gate-bypassing actions — `merge it once CI is green`,
-and `push it` on a golem that had **explicitly stated** it was withholding the
-push pending its portability gate and review cycle 2. So treat a phantom buffer
-line as a latent hazard, not noise.
+**Still unverified (#977 could not settle these):** whether `Enter` can submit a
+suggestion, and whether anything clears the line short of reaping. A disposable
+probe session would not reproduce a suggestion on demand across ~10 minutes, so
+both are recorded as open rather than guessed. Until they are answered, keep
+treating a phantom line as a latent hazard and reap rather than clear.
 
-**How to apply:** (1) When reaping/handling an idle golem, DON'T blind-send
-keystrokes to "clear" it — `C-u` did not clear it in either run (evidence it's
-not editable input), and a stray Enter could submit it. Reap the session instead
-(teardown disposes the buffer, confirmed 2026-09-09 on golem-705/793).
-(2) Never assume a pane's `❯ <text>` line is something you or the operator
-queued. (3) **Do not escalate it as an intrusion** — the 2026-09-09 session
-reached "untrusted input channel" on three data points before checking this
-file; the memory directory had it documented since July. Read the body, not just
-the index ([[read-the-memory-body-not-just-the-index]]). Tracked as #977.
+**How to apply:** (1) Never assume a pane's `❯ <text>` is something you or the
+operator queued — check the class, or capture with `-e` and look for the dim run.
+(2) **Do not blind-send keystrokes to "clear" it**; reaping the session disposes
+it (confirmed on golem-705/793). (3) **Do not escalate it as an intrusion** — the
+2026-09-09 session reached "untrusted input channel" on three data points before
+checking this file, which had it documented since July. Read the body, not just
+the index ([[read-the-memory-body-not-just-the-index]]). (4) A suggestion does
+**not** change the liveness verdict: such a golem is still idle.
 Relates to [[idle-detector-false-positive-own-monitors]] and
 [[orchestrate-broker-then-send]] (only directed digit/Enter sends are compliant).
