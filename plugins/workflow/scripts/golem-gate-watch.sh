@@ -746,8 +746,38 @@ pane_pending_own_work() {
 # entries keep their glyph in the scrollback (measured on the control session),
 # so taking the first would classify an old command as the current buffer.
 PROMPT_GLYPH="$(command printf '\342\235\257')" # the input-line marker
-SGR_DIM="$(command printf '\033[2m')"           # dim — the suggestion attribute
-PROMPT_NBSP="$(command printf '\302\240')"      # the NBSP the prompt pads with
+# _has_dim <text> — 0 when <text> carries the SGR DIM (2) attribute.
+#
+# Not a substring test for the standalone `ESC[2m`: dim is a PARAMETER, and a
+# terminal is free to bundle it with others in one escape (`ESC[1;2m`,
+# `ESC[0;2m`). Every byte captured from a live pane here uses the standalone
+# form, so a substring match works today — but the failure if that ever changes
+# is the silent one this whole function guards against: the annotation simply
+# vanishes and a real suggestion reads as queued input.
+#
+# So parse the parameter list. The trap is that a naive search for a `2`
+# matches `22` (dim OFF) and `38;5;246` (a colour) — both emitted constantly by
+# this very TUI — so each parameter is compared WHOLE, between `;` delimiters.
+_has_dim() {
+    _hd_rest="$1"
+    while :; do
+        case "$_hd_rest" in
+            *$'\033['*) ;;
+            *) return 1 ;;
+        esac
+        _hd_rest="${_hd_rest#*$'\033['}"
+        # Parameters of THIS escape, up to its `m`; skip a non-SGR sequence.
+        case "$_hd_rest" in
+            m* | [0-9\;]*m*) _hd_params="${_hd_rest%%m*}" ;;
+            *) continue ;;
+        esac
+        # Whole-parameter scan: surround with `;` so `2` cannot match `22`.
+        case ";${_hd_params};" in
+            *';2;'*) return 0 ;;
+        esac
+    done
+}
+PROMPT_NBSP="$(command printf '\302\240')" # the NBSP the prompt pads with
 
 # _strip_sgr <text> — text with CSI ... m sequences removed, so a caller can ask
 # "is there any VISIBLE text here?" without the attributes confusing the answer.
@@ -845,12 +875,10 @@ pane_prompt_line_class() {
         command echo "empty"
         return 0
     fi
-    case "$rest" in
-        *"$SGR_DIM"*)
-            command echo "suggestion"
-            return 0
-            ;;
-    esac
+    if _has_dim "$rest"; then
+        command echo "suggestion"
+        return 0
+    fi
     command echo "input"
 }
 

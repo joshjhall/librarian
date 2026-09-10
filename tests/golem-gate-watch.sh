@@ -56,7 +56,8 @@ source_fragments "$SCRIPT_DIR/gate-watch" \
     10-feed-snapshot.sh \
     20-liveness.sh \
     30-helpers-and-modes.sh \
-    40-stream-dedup.sh
+    40-stream-dedup.sh \
+    50-prompt-line.sh
 
 # --- Run all tests ----------------------------------------------------------
 
