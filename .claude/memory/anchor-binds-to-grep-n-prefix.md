@@ -1,7 +1,9 @@
 ---
 name: anchor-binds-to-grep-n-prefix
 description: A `^`-anchored filter applied to `grep -n` output binds to the line-number prefix, not the line — the exclusion silently never fires
+type: feedback
 metadata:
+  node_type: memory
   type: feedback
 ---
 
