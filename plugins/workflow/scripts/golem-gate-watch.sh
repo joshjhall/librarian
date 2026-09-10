@@ -617,7 +617,48 @@ pane_is_fork() {
 # unanswered-questions warning gets the same treatment for the same reason.
 # The `esc to interrupt` veto runs first as a further guard: a golem actively
 # WORKING is never at a gate, whatever its scrollback holds.
-MULTI_Q_RE='^[[:space:]]*(←[[:space:]]*)?(☐|☒)|^[[:space:]]*⚠[^`]*not answered all'
+#
+# LINE-ANCHORING ALONE DOES NOT SEPARATE SINGLE FROM MULTI (#986). The anchor
+# above answers "is this a widget or prose?", but the question this matcher
+# exists to answer is "one question or several?" — and a SINGLE-question
+# AskUserQuestion also paints a line starting with `☐`. Observed live (golem-699):
+# a one-question form labelled multi. What actually distinguishes the widgets is
+# how many tabs the bar carries, and whether it has a `✔ Submit` tab at all, so
+# the checkbox arm requires a SECOND signal later on the SAME line: another
+# checkbox, or `✔ Submit`.
+#
+# BOTH SIGNALS ARE NEEDED, and the conjunct must be same-LINE. A two-question bar
+# scrolled behind the `←` arrow may show only one checkbox — but it still carries
+# `✔ Submit`. And the second signal cannot be sought anywhere in the window: the
+# window-wide scan is exactly what let prose and a single-question widget satisfy
+# the test independently (the #467 lesson, arriving one level down).
+#
+# The third arm covers the extreme-scroll rendering where NO checkbox is visible
+# and only `✔ Submit` remains. The `←` scroll arrow is OPTIONAL here: a bar
+# scrolled to its last tab may render without one (nothing further right to
+# scroll to), and requiring it would silently miss that pane — the exact
+# false-negative shape this matcher exists to prevent. A line starting with `✔`
+# (arrow or not) is a shape prose never takes — measured zero occurrences across
+# plugins/ tests/ docs/ README.md — so this arm needs no second conjunct.
+#
+# `Submit` IS WORD-ANCHORED at both sites, and dropping the arrow is exactly why.
+# The tab label is the literal word `Submit`; without the trailing
+# `([^[:alnum:]]|$)` guard, a progress line like `✔ Submitted 3 files` or
+# `✔ Submitting…` satisfies the arm. That was unreachable while the `←` was
+# mandatory (measured old=0), so the loosening above is what makes the guard
+# load-bearing — a widening that needs its own boundary, not a free one. BSD-safe:
+# a bracket negation, never `\b`.
+#
+# SCOPE — THIS DOES NOT FIX THE FALSE NEGATIVE (#986). The companion failure, a
+# real two-question form going UNLABELLED, is NOT in this regex and no change
+# here can fix it: `tmux capture-pane -p` is invoked without `-S`, so it returns
+# only the VISIBLE pane, and a form whose option text overflows the pane scrolls
+# its tab bar off the TOP — measured absent in 0-of-229 live captures
+# (docs/verification/multi-question-capture-e2e-986.md). A glyph that was never
+# captured cannot be matched by any pattern. Tracked as #1010 — which also records
+# why the fix is NOT a one-line `-S` on the shared capture (all nine matchers are
+# fed by it). Do not "fix" it by loosening the arms below.
+MULTI_Q_RE='^[[:space:]]*(←[[:space:]]*)?(☐|☒).*(☐|☒|✔[[:space:]]*Submit([^[:alnum:]]|$))|^[[:space:]]*(←[[:space:]]*)?✔[[:space:]]*Submit([^[:alnum:]]|$)|^[[:space:]]*⚠[^`]*not answered all'
 pane_is_multi_question_form() {
     local pane="$1" footer window
     # Guard 1 (footer-anchored): an active run-spinner means the golem is working.

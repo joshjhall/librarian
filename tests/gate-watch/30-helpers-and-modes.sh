@@ -295,6 +295,114 @@ test_pane_is_multi_question_form() {
         "Unrelated work output is NOT a multi-question form"
 }
 
+# #986 — the FALSE-POSITIVE direction: a SINGLE-question form is not multi.
+#
+# The #467 fixtures above all happen to carry two signals (two checkboxes, or a
+# checkbox plus `✔ Submit`), so nothing pinned the one-question case. A
+# single-question AskUserQuestion also paints a line starting with `☐`, and the
+# original line-anchored MULTI_Q_RE matched it — observed live on golem-699,
+# which was labelled "escalation (multi-question form)" with questions=1.
+#
+# Harm is LOW in this direction (a broker warned off the digit still reads the
+# form and answers correctly), which is exactly why it needs a test: nothing in
+# production surfaces it. The second assertion is the one that keeps the fix
+# honest — narrowing the regex must not DROP the gate, only relabel it, so the
+# pane must still be detected as the ordinary fork it is.
+test_pane_multi_question_form_single_question_not_multi() {
+    # The golem-699 shape: one checkbox line plus the inline option preview.
+    local single=" ☐ Share mechanism"$'\n'"❯ 1. Runtime delegation"$'\n'"  2. Copy the file"$'\n'"Enter to select · ↑/↓ to navigate"
+    assert_equals "1" "$(_pane_rc pane_is_multi_question_form "$single")" \
+        "A single-question form rendering ONE ☐ line is NOT a multi-question form (#986)"
+    assert_equals "0" "$(_pane_rc pane_is_fork "$single")" \
+        "...and it is still detected as the ordinary fork (relabelled, not dropped)"
+
+    # End-to-end: the dispatch chain must emit the plain fork label for it.
+    _run_panes_snapshot_tmux "$single"
+    assert_contains "$PANES_OUT" "golem-9"$'\t'"escalation — awaiting decision (carries options)" \
+        "panes_snapshot labels a single-question form a plain fork (#986)"
+    assert_not_contains "$PANES_OUT" "multi-question form" \
+        "panes_snapshot does not mislabel a single-question form as multi (#986)"
+}
+
+# #986 — the FALSE-NEGATIVE direction. NAMED for it deliberately: this is the
+# direction that RESOLVES A GATE WRONGLY. A real two-question form going
+# unlabelled sent the orchestrator a bare `1` (golem-902), which answered Q1 and
+# jumped to the review screen with Q2 still `☐` and Submit focused — one more
+# Enter submits a half-answered form the golem acts on as the operator's
+# decision.
+#
+# READ THIS BEFORE TRUSTING A GREEN RUN. The first assertion below PASSES AGAINST
+# THE PRE-#986 REGEX TOO (measured: old=1, new=1). AC 2 as written is satisfied by
+# the code this issue was filed against, so this test being green is NOT evidence
+# the false negative is fixed. It is a guard against REGRESSION — the narrowing
+# must not break the multi case while fixing the single one.
+#
+# The live false negative is NOT in this regex and is not fixed here: with the
+# tab bar absent from the capture entirely (0 of 229 live modal captures carried
+# a glyph — capture-pane runs without -S, so an overflowing form scrolls its bar
+# off the top), no pattern can match it. See
+# docs/verification/multi-question-capture-e2e-986.md and #1010.
+test_pane_multi_question_form_false_negative_two_question_bar() {
+    # The golem-902 bar. Matches under BOTH the old and new regex — regression
+    # guard only, NOT proof the FN is fixed (see the block above).
+    local bar="←  ☒ Follow-up  ☐ Issue repo  ✔ Submit  →"$'\n'"Enter to select · ↑/↓ to navigate"
+    assert_equals "0" "$(_pane_rc pane_is_multi_question_form "$bar")" \
+        "A two-question tab bar IS labelled multi (regression guard; passes pre-#986 too)"
+
+    # AC 3 — scrolled so only ONE tab is visible, but `✔ Submit` still present.
+    # This is why the second conjunct accepts Submit as well as a second checkbox.
+    assert_equals "0" \
+        "$(_pane_rc pane_is_multi_question_form "←  ☒ Follow-up  ✔ Submit  →"$'\n'"Enter to select")" \
+        "A bar scrolled to one tab but carrying ✔ Submit is still multi (#986 AC3)"
+    # Extreme scroll: no checkbox visible at all, only the Submit tab. Covered by
+    # its own arm, which needs no second conjunct because a line starting with ✔
+    # is a shape prose never takes (measured: 0 occurrences in the repo, with the
+    # arrow optional).
+    assert_equals "0" \
+        "$(_pane_rc pane_is_multi_question_form "←  ✔ Submit  →"$'\n'"Enter to select")" \
+        "A bar scrolled to the Submit tab alone is still multi (#986)"
+    # ...and WITHOUT the leading arrow. A bar scrolled to its LAST tab may render
+    # no `←` (nothing further right to scroll to). The arm originally required the
+    # arrow while the comment above it claimed only "starts with ✔" — a comment
+    # asserting a guarantee the code did not provide, which would have missed this
+    # pane silently. Pins the arrow as OPTIONAL in the arm.
+    assert_equals "0" \
+        "$(_pane_rc pane_is_multi_question_form "  ✔ Submit"$'\n'"Enter to select")" \
+        "A bare '✔ Submit' line with NO scroll arrow is still multi (#986 review)"
+
+    # Isolates the SECOND-CHECKBOX alternative of the new same-line conjunct
+    # `(☐|☒|✔ Submit)`. Every other fixture exercising that conjunct carries BOTH
+    # a second checkbox AND `✔ Submit`, so none of them can tell which alternative
+    # fired: deleting the `(☐|☒)` option left the whole suite GREEN (measured).
+    # That is the untested-rule class this file's own comment at the head of
+    # test_pane_is_multi_question_form warns about, applied to the inner
+    # alternation #986 added. The fixture below carries two checkboxes and NO
+    # Submit tab — the real rendering of a bar scrolled so Submit is off-screen.
+    assert_equals "0" \
+        "$(_pane_rc pane_is_multi_question_form "←  ☐ Q1  ☒ Q2  →"$'\n'"Enter to select")" \
+        "Two checkboxes with NO ✔ Submit visible is still multi (#986 review)"
+
+    # NEGATIVE guard for the loosened arm (#986 review cycle 2). Dropping the
+    # mandatory `←` widened the match surface, so the arm now needs a boundary the
+    # arrow used to supply for free: the tab label is the WORD `Submit`, and
+    # without `([^[:alnum:]]|$)` an ordinary progress line starting with `✔`
+    # matches. Measured: `✔ Submitted 3 files` and `✔ Submitting…` were old=0 ->
+    # new=1 under the arrow-optional arm before the boundary was added — a false
+    # positive INTRODUCED by the loosening, not pre-existing. Removing the
+    # boundary turns these two assertions red.
+    assert_equals "1" \
+        "$(_pane_rc pane_is_multi_question_form "✔ Submitted 3 files"$'\n'"Enter to select")" \
+        "A '✔ Submitted …' progress line is NOT a Submit tab (#986 review cycle 2)"
+    assert_equals "1" \
+        "$(_pane_rc pane_is_multi_question_form "  ✔ Submitting..."$'\n'"Enter to select")" \
+        "A '✔ Submitting…' progress line is NOT a Submit tab (#986 review cycle 2)"
+
+    # End-to-end: the form label must win over the fork label for this pane.
+    _run_panes_snapshot_tmux "$bar"
+    assert_contains "$PANES_OUT" "golem-9"$'\t'"escalation (multi-question form) — forward-order only, never a digit" \
+        "panes_snapshot emits the form label for a two-question bar (#986)"
+}
+
 # The motivating live failure (#467): DETECTION failed before keystrokes did. On
 # a real two-question form the first capture-pane showed only ONE question — the
 # `☐/☒` tab bar had scrolled ABOVE the 8-line footer window — so an orchestrator
