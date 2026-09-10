@@ -150,7 +150,7 @@ def scan_file(path: str, lines: list[str]) -> None:
             # class is deliberately WIDER than this one (#841 review).
             #
             # Python's `\w` is Unicode-aware regardless of the OS locale, so a
-            # `caf<e-acute>add_reader(` boundary is rejected here always. The
+            # non-ASCII leading boundary is rejected here always. The
             # bash class is locale-SENSITIVE: under a UTF-8 locale
             # `[[:alnum:]]` matches the multibyte letter and agrees with this
             # arm, but under a strict `C` locale it classifies each byte alone,
