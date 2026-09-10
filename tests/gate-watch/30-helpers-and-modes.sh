@@ -1100,6 +1100,18 @@ test_strip_sgr_unterminated_csi() {
     assert_equals "input" \
         "$(_pane_e_class "${esc}[39m${glyph}${nbsp} real text${esc}[2")" \
         "A truncated-escape prompt line reports input, never a false empty"
+
+    # A NON-SGR CSI must not let an unrelated later `m` swallow the text between
+    # them (#977 cycle-4). Measured: tmux -e emitted only m-terminated sequences
+    # across live panes (72/72), so this guards an assumption rather than an
+    # observed failure — but "merge" is exactly the kind of word that would make
+    # it a silent one.
+    out="$(
+        . "$GATE_WATCH"
+        _strip_sgr "${esc}[Kmerge the branch"
+    )"
+    assert_contains "$out" "merge the branch" \
+        "A non-SGR CSI plus a later 'm' does not eat the visible text between them"
 }
 
 # The CHAINED path (#977 cycle-2 review): confirm_turn_end -> emit_transitions,
@@ -1179,6 +1191,17 @@ test_pane_prompt_line_class_glyph_in_text() {
     assert_equals "suggestion" \
         "$(_pane_e_class "${esc}[39m${glyph}${nbsp} ${esc}[2msee the ${glyph} marker docs${esc}[0m")" \
         "A suggestion whose TEXT contains the prompt glyph is still a suggestion"
+    # The narrower recurrence (#977 cycle-4): anchoring on the pair fixed the
+    # bare-glyph case but `##` still took the LAST match, so text containing the
+    # PAIR itself re-created the identical silent misclassification one level
+    # down. Taking the FIRST match is what actually closes the class — the
+    # composer prompt is this line's leading marker, so no content can shift it.
+    assert_equals "suggestion" \
+        "$(_pane_e_class "${esc}[39m${glyph}${nbsp} ${esc}[2msee ${glyph}${nbsp} here${esc}[0m")" \
+        "A suggestion whose text contains the glyph+NBSP PAIR is still a suggestion"
+    assert_equals "input" \
+        "$(_pane_e_class "${esc}[39m${glyph}${nbsp} type ${glyph}${nbsp} to continue")" \
+        "Real input containing the PAIR is still input (first-match did not invert the classes)"
     assert_equals "input" \
         "$(_pane_e_class "${esc}[39m${glyph}${nbsp} type ${glyph} to continue")" \
         "Real input containing the glyph is still input (the fix did not invert the classes)"

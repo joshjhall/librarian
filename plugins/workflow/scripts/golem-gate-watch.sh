@@ -771,8 +771,16 @@ _strip_sgr() {
         esac
         pre="${v%%$'\033['*}"
         post="${v#*$'\033['}"
+        # Require a well-formed SGR sequence: parameter bytes ([0-9;]) followed
+        # by the `m` terminator. A bare `*m*` test would match an `m` ANYWHERE
+        # later in the line, so a non-SGR CSI (say ESC[K) plus an unrelated `m`
+        # in the visible text ("merge") would strip the real text between them.
+        # Measured: tmux `capture-pane -e` emitted only `m`-terminated sequences
+        # across live panes here (72/72), so this is belt-and-braces rather than
+        # an observed failure — but it costs one case arm and removes the
+        # dependency on that staying true.
         case "$post" in
-            *m*) ;;
+            m* | [0-9\;]*m*) ;;
             *) break ;;
         esac
         post="${post#*m}"
@@ -804,21 +812,31 @@ pane_prompt_line_class() {
         command echo "unknown"
         return 0
     fi
-    # Everything after the LAST prompt PREFIX (glyph + NBSP) is the buffer
-    # region. Anchoring on the two-byte-sequence pair rather than the bare glyph
-    # matters: the buffer text can itself CONTAIN the glyph (a suggestion that
-    # mentions it, or pasted text), and splitting on the last bare glyph would
-    # then slice from inside the text — dropping the opening dim run and
-    # silently reporting a real suggestion as queued `input`. That false negative
-    # is the worst outcome for this feature, and it is invisible: the annotation
-    # is simply absent and the pane reads as ordinary typed text. Measured on the
-    # real composer shape (ESC[...m <glyph> <NBSP> ...), which pads with U+00A0
-    # on every live golem checked; a selection MENU uses glyph + plain space, so
-    # the fallback below keeps the old behavior for any line without the pair
-    # (such a pane is classified as a modal gate before this ever runs).
+    # Everything after the FIRST prompt PREFIX (glyph + NBSP) is the buffer
+    # region. Two choices here, both reached by measurement after getting them
+    # wrong:
+    #
+    #   * The PAIR, not the bare glyph. The buffer text can itself CONTAIN the
+    #     glyph (a suggestion that mentions it, or pasted text).
+    #   * The FIRST occurrence, not the last. `##` (greedy) anchors on the LAST
+    #     match, so text containing the PAIR re-created the same bug one level
+    #     down — narrower trigger, identical failure. `#` takes the first, which
+    #     is what the composer prompt actually IS: this line's own leading
+    #     marker. The "last" instinct came from telling a SUBMITTED history line
+    #     from the live one, but that is a choice between LINES, already settled
+    #     above by taking the last glyph-bearing line; WITHIN that line, first is
+    #     correct and cannot be shifted by content.
+    #
+    # Both guard one silent false negative: the dim run falls outside the slice,
+    # a real suggestion reports as queued `input`, and the annotation simply
+    # vanishes while the pane reads as ordinary typed text — the worst outcome
+    # for this feature. Measured on the real composer shape
+    # (ESC[...m <glyph> <NBSP> ...), which pads with U+00A0 on every live golem
+    # checked; a selection MENU uses glyph + plain space, so the fallback keeps
+    # that shape working (such a pane is classified as a modal gate first).
     case "$line" in
-        *"$PROMPT_GLYPH$PROMPT_NBSP"*) rest="${line##*"$PROMPT_GLYPH$PROMPT_NBSP"}" ;;
-        *) rest="${line##*"$PROMPT_GLYPH"}" ;;
+        *"$PROMPT_GLYPH$PROMPT_NBSP"*) rest="${line#*"$PROMPT_GLYPH$PROMPT_NBSP"}" ;;
+        *) rest="${line#*"$PROMPT_GLYPH"}" ;;
     esac
     visible="$(_strip_sgr "$rest")"
     visible="${visible//$PROMPT_NBSP/ }"
