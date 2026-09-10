@@ -883,6 +883,40 @@ test_missing_tr_fails_loud_instead_of_blanking_a_label() {
     assert_not_contains "$out" "- \`\`" "no label is rendered as an empty code span"
 }
 
+test_preflight_list_matches_its_own_derivation() {
+    local derived missing t
+    # THE COMMENT IS EXECUTABLE, SO EXECUTE IT. The preflight's note documents the
+    # grep that produces its list, precisely because the previous note CLAIMED to
+    # cover "EVERY runtime dependency" while omitting one — twice (`find`, then
+    # `tr`). A documented derivation is only better than a claim if something checks
+    # that it still holds; otherwise the next `command <tool>` added to either file
+    # drifts the same way, and the comment becomes false again.
+    #
+    # `printf` is excluded as a bash BUILTIN (measured: `command printf` works on an
+    # empty PATH), so it is the one derived name legitimately absent from the list.
+    derived="$(command grep -hE '^[^#]*command [a-z]' "$RECONCILE_SH" "$VOCAB_LIB" |
+        command grep -ohE 'command [a-z][a-z0-9_-]+' | command sed 's/command //' |
+        command sort -u | command grep -v '^printf$' || true)"
+    assert_not_empty "$derived" "the derivation found tools (a broken recipe proves nothing)"
+
+    missing=""
+    for t in $derived; do
+        # The list is one line: `for tool in gh sort ... tr; do`. The leading
+        # boundary must accept `in ` as well as a space, or the FIRST entry (`gh`)
+        # reports as missing — which it did on the first draft, a false positive
+        # that would have sent someone editing a correct list.
+        command grep -E "^for tool in ([a-z0-9_-]+ )*${t}[ ;]" "$RECONCILE_SH" \
+            >/dev/null 2>&1 || missing="$missing $t"
+    done
+    assert_equals "" "$missing" \
+        "every externally-invoked tool is in the fail-loud preflight list"
+
+    # Non-vacuity: the sweep must have inspected a real set, and `tr` — the omission
+    # that made this class dangerous — must be among what it checked.
+    assert_contains "$derived" "tr" "the derivation includes tr"
+    assert_contains "$derived" "find" "and find, the earlier omission"
+}
+
 # --- one parser, two callers (#663) -----------------------------------------
 
 test_shared_parser_is_the_only_parser() {
@@ -1016,6 +1050,7 @@ run_test test_parser_ignores_trailing_comments_and_quotes "the shared parser tri
 run_test test_a_hash_inside_a_label_name_is_not_a_comment "a # inside a label name is not a comment"
 run_test test_first_temp_file_is_cleaned_when_second_mktemp_fails "the trap re-arm: no temp file is orphaned by a later mktemp failure"
 run_test test_refactored_offline_gate_still_enforces_both_rules "the refactored offline gate is EXECUTED, not grepped"
+run_test test_preflight_list_matches_its_own_derivation "the preflight list matches the derivation its comment documents"
 run_test test_missing_tr_fails_loud_instead_of_blanking_a_label "an absent tr fails loud instead of blanking a label"
 run_test test_autolink_in_a_label_name_is_neutralized "a bare url in a label name cannot become an autolink"
 run_test test_shared_library_is_syntactically_valid "every shipped script parses (a comment apostrophe can break the awk block)"

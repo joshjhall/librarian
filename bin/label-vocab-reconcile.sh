@@ -95,9 +95,14 @@ fi
 # THE LIST IS DERIVED, NOT CURATED — and its comment used to lie. It claimed to
 # cover "EVERY runtime dependency" while omitting first `find`, then `tr`; a
 # comment asserting what the code lacks is its own defect, because it stops the
-# next reader from checking. So here is the derivation instead of the claim:
+# next reader from checking. So here is the derivation instead of the claim — and
+# it must EXCLUDE COMMENT LINES, or it scrapes prose: the notes below contain the
+# phrases "command not found" and "command substitution", which a naive grep
+# reports as tools named `not` and `substitution`. A recipe that returns junk is
+# not checkable, which is the same defect as a claim that cannot be checked.
 #
-#   grep -ohE 'command [a-z-]+' bin/label-vocab-reconcile.sh bin/lib/label-vocab.sh
+#   grep -hE '^[^#]*command [a-z]' bin/label-vocab-reconcile.sh bin/lib/label-vocab.sh \
+#     | grep -ohE 'command [a-z][a-z0-9_-]+' | sed 's/command //' | sort -u
 #
 # yields awk comm find gh grep mktemp printf rm sed sort tr. `printf` is a bash
 # BUILTIN — measured working on an empty PATH — so it is not a PATH dependency and
