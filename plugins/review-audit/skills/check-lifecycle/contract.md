@@ -42,7 +42,7 @@ per-language dispatch to declare.
 | Language   | ext(s)          | unreaped-subprocess | terminate-without-kill | unclosed-handle | unpaired-listener |
 | ---------- | --------------- | ------------------- | ---------------------- | --------------- | ----------------- |
 | Swift      | swift           | M                   | M                      | M               | M                 |
-| Python     | py              | M                   | M                      | M               | —                 |
+| Python     | py              | M                   | M                      | M               | M                 |
 | JavaScript | js, jsx, mjs, cjs | M                 | M                      | M               | M                 |
 | TypeScript | ts, tsx         | M                   | M                      | M               | M                 |
 | Go         | go              | M                   | M                      | M               | —                 |
@@ -65,9 +65,87 @@ file yields zero rows and no error. This scanner therefore carries **no
 false-positive risk** on an unmodeled language — only missing coverage. It is the
 clean end of the spectrum described in ADR 0002 § Context.
 
-Two gaps are visible above and are not yet fixed: Python and Go have no
-`unpaired-listener` arm, though both languages have listener/timer registration
-idioms worth detecting.
+One gap remains visible above: **Go** has no `unpaired-listener` arm, though the
+language has registration idioms worth detecting. **Python's was filled in Phase
+4 (#841)** — see below.
+
+**Python was audited against this matrix in Phase 4 (#841).** The three
+subprocess/terminate/handle arms were confirmed firing in both runtimes and
+needed no change; the `unpaired-listener` cell was a real `—` and is now `M`. Its
+arm keys on four registration idioms, chosen by measured rate over the Python
+3.12 stdlib (1096 non-test files): `signal.signal` (17 hits), `atexit.register`
+(11), `add_signal_handler` (4), and `add_reader`/`add_writer` (2). Each names a
+registration that outlives its statement and wants a matching teardown —
+`signal.SIG_DFL`, `atexit.unregister`, `.cancel()`,
+`remove_signal_handler`/`remove_reader`.
+
+`threading.Timer` is matched despite **0** stdlib hits: it is the canonical
+Python timer idiom, and the stdlib declining to use its own convenience wrapper
+says nothing about application code. A **bare `Timer(`** is deliberately not
+matched — measured 6 hits, and far too generic to carry this category's
+confidence. That sparse, registration-shaped profile is the *opposite* of the one
+that got `let _ =` rejected from `check-code-health` in Phase 1 (723 candidates
+against 2 true positives), which is the comparison that justified shipping this
+arm at MEDIUM rather than deferring it.
+
+Both runtimes spell the arm as **one** pattern rather than two, and that is
+load-bearing for parity rather than cosmetic: `emit_rows` greps the whole file
+per call, so a second call would emit all its rows *after* the first pattern's,
+while the Python twin walks line by line. A file registering an `add_reader`
+above a `signal.signal` would then differ in **row order** — which
+`tests/validate-python-ports.sh` compares byte-for-byte. A single alternation
+also keeps a line matching both halves at one row, matching the twin's single
+`re.search`.
+
+The leading boundary is a negated class over identifier characters only — it
+**admits `.` on purpose**, and the reason is a correction worth keeping. The
+first draft excluded `.` too, on the stated theory that `mysignal.signal(` would
+otherwise match on its attribute-access tail. Mutating the `.` away produced no
+test failure, which is what exposed the theory as false: the plain class already
+rejects that line on the preceding `y`. What the exclusion actually bought was a
+false **negative**, silencing the qualified registrations that are true
+positives — a dotted `mod.threading.Timer` or `self.loop.add_reader` call. The
+trailing boundary is carried by the **required** `[[:space:]]*\(`, a genuine
+terminator unlike Phase 2's `[^{}]*`, which admitted identifier characters and
+let `catches { }` through on the bash runtime alone. Both edges, and the
+qualified form, are fixture-pinned in both runtimes.
+
+**The leading boundary is POSIX `grep -w`, and the road there is worth keeping.**
+Pre-PR review raised the two boundary spellings as a suspected py/sh divergence
+on non-ASCII input. The first response measured it and "refuted" it — **that
+measurement was wrong**: it set `LC_ALL=C` over an environment whose `LANG` was
+already `C.UTF-8`, so the C-locale path was never exercised. Re-run under
+`env -i`, bash fired where Python stayed silent.
+
+Two bracket-class fixes were then tried, and **both failed**:
+
+| Spelling | Result |
+| --- | --- |
+| `[^[:alnum:]_]` | portable, but bytewise under `C` — a multibyte letter's trailing byte satisfies it, so the arm fires where Python does not |
+| `[^[:alnum:]_\200-\377]` | correct on GNU grep; **BSD grep rejects the pattern outright** (exit >1 — the raw byte range is invalid under its collation) |
+
+The second failure is the instructive one: it passed every local check because
+this repo's dev boxes carry GNU grep, and only `tests/probe-bsd-regex.sh` — the
+lone gate on the `macos-latest` shard — caught it. That probe existed because an
+earlier review cycle asked for exactly this coverage.
+
+The arm now uses **`grep -w`**, a POSIX *flag* rather than a regex construct, so
+it sidesteps the dialect question entirely — the same reasoning `probe-bsd-regex.sh`
+already records for the `\b` sites. Because `-w` requires the match to *end* on a
+word character (and `(` is not one), the "must be a call" test is re-imposed
+separately inside `emit_rows_word` rather than folded into the `-w` pattern.
+
+**Known limitation, stated rather than papered over.** The boundary is correct
+under a **UTF-8** locale, not under a strict `C` one. Under `LC_ALL=C`, `-w`
+decides word-ness bytewise, so a call prefixed by a non-ASCII **identifier**
+character emits a false positive in bash while the Python twin stays silent. The
+concrete case is real code, not prose: PEP 3131 permits non-ASCII identifiers, so
+`caféadd_reader(...)` compiles, and that line fires in bash under `C` only. Under
+any UTF-8 locale — including `C.UTF-8`, the default on the containers and CI
+runners this scanner targets — the two runtimes agree exactly, on that shape and
+on multibyte **punctuation** alike. Both the agreement and the gap are
+fixture-pinned, so a locale change surfaces in the suite instead of silently
+widening the divergence.
 
 Rust (#838) is `M` for all four, but two of its arms are spelled differently from
 every other language's and the reason is worth recording:

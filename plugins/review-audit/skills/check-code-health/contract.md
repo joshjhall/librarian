@@ -109,6 +109,62 @@ Detector classification per ADR 0002 § 3:
 This scanner has no lexical-dependent detector, which is why the `L` row's
 consequences are benign here — unlike check-security.
 
+### Python docstrings are NOT modeled as comments (#841)
+
+Phase 4 asked whether the lexical model needs a block-comment dimension for
+Python's `"""…"""`. **Answered NO — line-prefix is sufficient for these
+scanners.** The same answer governs `loc_engine.COMMENT_RE`'s Python entry, which
+shares the question.
+
+The cost is real and measurable. A constructed fixture whose docstring merely
+*discusses* code produces HIGH-certainty rows in three scanners — here
+`tech-debt-marker` on a `TODO:` and `debug-statement` on an indented
+`print("…")`, plus `hardcoded-secret`/`insecure-crypto` in check-security and
+`unreaped-subprocess` in check-lifecycle. So this is a declared limitation, not
+an absence of one.
+
+Three grounds for accepting it:
+
+1. **A docstring is not lexically a comment.** It is a string literal, and a
+   leading one is *the documentation these scanners exist to find*.
+   `check-docs-missing-api` keys on `"""` as Python's doc marker — a comment
+   model that hid docstrings would break that scanner's only Python arm. The two
+   requirements are in direct opposition, and only one of them can be served by
+   the same model.
+2. **It needs state these scanners do not have.** Pairing an opener with its
+   closer means tracking quote style, nesting, prefixes, and single-vs-triple
+   across lines. Every scanner here is a **line** scanner, and the bash runtime
+   cannot carry that state at all — so implementing it would guarantee exactly
+   the py/sh divergence `tests/validate-python-ports.sh` exists to prevent.
+3. **Measured cost on this repo: zero.** Across all 70 tracked `.py` files and
+   the 99 rows the four scanners emit on them, **none** lands inside a
+   docstring — checked with `ast`, by walking module/class/function bodies for a
+   leading string constant, not with a quote-pairing regex. (That distinction
+   matters: a first pass *did* use a regex and reported six rows, every one of
+   them an artifact of mispairing quotes inside the file that defines a
+   docstring regex. A measurement of docstrings must not itself be confused by
+   one.) The FP needs prose that both sits in a docstring and reads like code —
+   rare, and a candidate the LLM pass-2 dismisses on sight.
+
+**A related finding from that measurement, recorded because it is the same class
+in a different shape.** Widening the check from docstrings to *any* multi-line
+string literal finds **3** live rows: `tech-debt-marker` firing on the words
+`TODO|FIXME|XXX|HACK|WORKAROUND` inside multi-line **regex literals** — in
+`loop-make-it-work/patterns.py` and `check-docs-staleness/patterns.py`, both of
+which are detectors whose whole job is to match those markers. So the scanners
+flag each other's patterns as tech debt.
+
+These are true to `tech-debt-marker`'s declared contract, which is
+lexical-**independent** by design (ADR 0002 § 3: *"a TODO is a TODO in any
+syntax"*) and is documented above as not distinguishing a marker in a comment
+from one in a string. They are noted, not fixed: suppressing them needs the same
+multi-line state rejected in ground 2, and the honest scope of a marker detector
+is genuinely "anywhere in the text". A project that finds them noisy should reach
+for `.claude/pre-review.yml`, not for a lexical model.
+
+Revisit only if a scanner acquires a genuine multi-line model for some other
+reason; it is not worth building one for this alone.
+
 ## Finding Format
 
 Each finding extends the standard finding-schema.md:

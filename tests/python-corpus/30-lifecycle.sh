@@ -53,6 +53,19 @@ mkdir -p "$LIFEDIR/tests"
     printf '%s\n' 'with open("y.txt") as g:'
     printf '%s\n' '    pass'
     printf 'h = open("%s")\n' "$(printf '%0.s—' $(seq 1 60))"
+    # Registration sites (#841) -- both halves of the unpaired-listener
+    # alternation, plus a QUALIFIED form, so none of the new branch is measured
+    # vacuously. Phase 3's lesson: a corpus that never reaches a widened arm
+    # leaves it covered on paper only.
+    printf '%s\n' 'signal.signal(signal.SIGTERM, _handler)'
+    printf '%s\n' 'atexit.register(_cleanup)'
+    printf '%s\n' 't = threading.Timer(5.0, _fire)'
+    printf '%s\n' 'loop.add_signal_handler(signal.SIGINT, _h)'
+    printf '%s\n' 'self.loop.add_reader(fd, _on_readable)'
+    printf '%s\n' 'loop.add_writer(fd, _on_writable)'
+    # Boundary negatives -- the reject paths execute too.
+    printf '%s\n' 'mysignal.signal(x)'
+    printf '%s\n' 't2 = Timer(5.0, fn)'
 } >"$LIFEDIR/runner.py"
 
 # JS/TS: spawn/execFile, .terminate(), fs.openSync handle, addEventListener +

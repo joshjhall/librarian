@@ -473,6 +473,192 @@ test_unpaired_listener() {
     list="$(make_list "$d/l" "$d/dsl.js")"
     assert_fires "$list" unpaired-listener "Listener/timer registered without visible removal" \
         "lifecycle: generic .on() fires (pinned FP; pass-2 dismisses)"
+
+    # Python registration forms (#841), each isolated for the same reason as the
+    # JS and Rust alternatives above: the label is shared, so a composite fixture
+    # would keep passing while all but one alternative rotted.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'signal.signal(signal.SIGTERM, _handler)' >"$d/sig.py"
+    list="$(make_list "$d/l" "$d/sig.py")"
+    assert_fires "$list" unpaired-listener "Listener/timer registered without visible removal" \
+        "lifecycle: Python signal.signal fires"
+
+    d="$(fresh_dir)"
+    command printf '%s\n' 'atexit.register(_cleanup)' >"$d/exit.py"
+    list="$(make_list "$d/l" "$d/exit.py")"
+    assert_fires "$list" unpaired-listener "Listener/timer registered without visible removal" \
+        "lifecycle: Python atexit.register fires"
+
+    d="$(fresh_dir)"
+    command printf '%s\n' 't = threading.Timer(5.0, _fire)' >"$d/timer.py"
+    list="$(make_list "$d/l" "$d/timer.py")"
+    assert_fires "$list" unpaired-listener "Listener/timer registered without visible removal" \
+        "lifecycle: Python threading.Timer fires"
+
+    d="$(fresh_dir)"
+    command printf '%s\n' 'loop.add_signal_handler(signal.SIGINT, _h)' >"$d/aio.py"
+    list="$(make_list "$d/l" "$d/aio.py")"
+    assert_fires "$list" unpaired-listener "Listener/timer registered without visible removal" \
+        "lifecycle: Python add_signal_handler fires"
+
+    d="$(fresh_dir)"
+    command printf '%s\n' 'loop.add_reader(fd, _on_readable)' >"$d/reader.py"
+    list="$(make_list "$d/l" "$d/reader.py")"
+    assert_fires "$list" unpaired-listener "Listener/timer registered without visible removal" \
+        "lifecycle: Python add_reader fires"
+
+    d="$(fresh_dir)"
+    command printf '%s\n' 'loop.add_writer(fd, _on_writable)' >"$d/writer.py"
+    list="$(make_list "$d/l" "$d/writer.py")"
+    assert_fires "$list" unpaired-listener "Listener/timer registered without visible removal" \
+        "lifecycle: Python add_writer fires"
+
+    # BOTH boundary edges, because one cannot fail on the other's bug (#839's
+    # lesson: an identifier-ENDS-with fixture passed throughout while an
+    # identifier-STARTS-with defect shipped).
+    #
+    # LEADING edge -- an identifier character before the token.
+    d="$(fresh_dir)"
+    command printf '%s\n%s\n' 'mysignal.signal(x)' 'xadd_reader(fd)' >"$d/lead.py"
+    list="$(make_list "$d/l" "$d/lead.py")"
+    assert_silent "$list" unpaired-listener \
+        "lifecycle: Python listener leading-boundary negative (mysignal.signal / xadd_reader)"
+
+    # TRAILING edge. `signal.signalx(` is written at LINE START on purpose: the
+    # leading boundary is satisfied there (`^`), so this line can only be
+    # rejected by the required `(` immediately following the token -- which is
+    # what makes it a test of the trailing edge rather than a second test of the
+    # leading one. A dotted `designal.signalx(` would NOT do: the leading class
+    # already rejects it, so it would pass even with the trailing terminator
+    # removed. The two edges must be probed by lines that only ONE of them can
+    # reject (#839's lesson, applied to the other boundary).
+    d="$(fresh_dir)"
+    command printf '%s\n' 'signal.signalx(y)' >"$d/trail.py"
+    list="$(make_list "$d/l" "$d/trail.py")"
+    assert_silent "$list" unpaired-listener \
+        "lifecycle: Python listener trailing-boundary negative (signal.signalx at line start)"
+
+    # TRAILING edge, SECOND alternation half. The `signal.signalx` case above
+    # only exercises the first half; both halves carry their own copy of the
+    # `[[:space:]]*\(` terminator, so a future edit touching only this one
+    # would otherwise be unpinned -- the same one-fixture-per-half rule the
+    # qualified-form fixtures above exist for.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'add_readerx(fd)' >"$d/trail2.py"
+    list="$(make_list "$d/l" "$d/trail2.py")"
+    assert_silent "$list" unpaired-listener \
+        "lifecycle: Python listener trailing-boundary negative, second half (add_readerx at line start)"
+
+    # The bare-Timer exclusion, separately: `threading.Timer` is matched but a
+    # bare `Timer(` is not (measured too generic for this certainty tier).
+    d="$(fresh_dir)"
+    command printf '%s\n' 't = Timer(5.0, fn)' >"$d/bare.py"
+    list="$(make_list "$d/l" "$d/bare.py")"
+    assert_silent "$list" unpaired-listener \
+        "lifecycle: Python bare Timer( is excluded (only threading.Timer matches)"
+
+    # The boundary class ADMITS `.`, so a QUALIFIED registration still fires.
+    # This is the fixture the boundary mutation asked for: an earlier draft
+    # excluded `.` from the class to reject `mysignal.signal(` -- which the
+    # identifier boundary above already rejects on its own -- and the exclusion
+    # silenced these instead. Without this fixture that false negative is
+    # invisible, because every other listener fixture is written unqualified.
+    # ONE FIXTURE PER ALTERNATION HALF, for the isolation reason stated at the
+    # top of this function -- and it is not hypothetical here. A first draft put
+    # both lines in one file; the boundary mutation then left `mod.threading`
+    # silent while `self.loop.add_reader` (the OTHER half, unmutated) still
+    # emitted the shared label, so assert_fires passed and the fixture proved
+    # nothing.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'mod.threading.Timer(1, fn)' >"$d/qual1.py"
+    list="$(make_list "$d/l" "$d/qual1.py")"
+    assert_fires "$list" unpaired-listener "Listener/timer registered without visible removal" \
+        "lifecycle: Python QUALIFIED registration fires (mod.threading.Timer)"
+
+    d="$(fresh_dir)"
+    command printf '%s\n' 'self.loop.add_reader(fd, cb)' >"$d/qual2.py"
+    list="$(make_list "$d/l" "$d/qual2.py")"
+    assert_fires "$list" unpaired-listener "Listener/timer registered without visible removal" \
+        "lifecycle: Python QUALIFIED registration fires (self.loop.add_reader)"
+
+    # NON-ASCII BOUNDARY -- the UTF-8 behaviour is pinned; the C-locale gap is
+    # named as a KNOWN LIMITATION rather than asserted away (#841).
+    #
+    # THE LOCALE IS THE POINT, so these run the scanners under `env -i` with an
+    # explicit locale rather than inheriting the suite's. An earlier version ran
+    # ambient and passed while a bug was live: the box's LANG=C.UTF-8 meant the
+    # C-locale path was never exercised at all.
+    #
+    # The leading boundary is POSIX `grep -w` (see emit_rows_word in
+    # patterns.sh). Under a UTF-8 locale it agrees with the python twin exactly,
+    # on BOTH shapes below -- a multibyte LETTER prefix (rejected: it is part of
+    # the identifier) and multibyte PUNCTUATION (accepted: a real boundary).
+    # Under a strict `C` locale `-w` decides word-ness bytewise and the LETTER
+    # case diverges; that gap is pinned separately below.
+    d="$(fresh_dir)"
+    command printf 'caf\303\251add_reader(fd)\n' >"$d/nonascii.py"
+    list="$(make_list "$d/l" "$d/nonascii.py")"
+
+    _na_sh="$(/usr/bin/env -i LANG=C.UTF-8 LC_ALL=C.UTF-8 "PATH=$PATH" \
+        PATTERNS_FORCE_BASH=1 "$REAL_BASH" "$SK/patterns.sh" "$list" 2>/dev/null |
+        command awk -F '\t' '$3 == "unpaired-listener"')"
+    assert_output_empty "$_na_sh" \
+        "lifecycle: non-ASCII IDENTIFIER boundary silent in bash under a UTF-8 locale"
+    if [ "$HAVE_PY" -eq 1 ]; then
+        _na_py="$(/usr/bin/env -i LANG=C.UTF-8 LC_ALL=C.UTF-8 "PATH=$PATH" \
+            python3 "$SK/patterns.py" "$list" 2>/dev/null |
+            command awk -F '\t' '$3 == "unpaired-listener"')"
+        assert_output_empty "$_na_py" \
+            "lifecycle: non-ASCII IDENTIFIER boundary silent in python (agrees under UTF-8)"
+    fi
+
+    # KNOWN LIMITATION, pinned so a locale change SURFACES here instead of
+    # silently widening the gap. Under `LC_ALL=C` the same line fires in bash
+    # and not in python -- a false positive on what is REAL CODE, since PEP 3131
+    # permits non-ASCII identifiers, so `caf<e-acute>add_reader` compiles. This
+    # is asserted as the CURRENT behaviour, not as desirable: if a future change
+    # makes the two agree under C, this assertion SHOULD fail and be revisited.
+    _na_sh_c="$(/usr/bin/env -i LANG=C LC_ALL=C "PATH=$PATH" \
+        PATTERNS_FORCE_BASH=1 "$REAL_BASH" "$SK/patterns.sh" "$list" 2>/dev/null |
+        command awk -F '\t' '$3 == "unpaired-listener"')"
+    assert_contains "$_na_sh_c" "Listener/timer registered without visible removal" \
+        "lifecycle: KNOWN GAP -- non-ASCII identifier fires in bash under LC_ALL=C (python does not)"
+
+    # Multibyte PUNCTUATION abutting a call is a REAL boundary, and unlike the
+    # identifier case the two runtimes agree on it under both locales. This is
+    # what the earlier high-byte bracket class got wrong (it silenced bash here),
+    # so it is pinned in both directions.
+    d="$(fresh_dir)"
+    command printf '\342\200\224add_reader(fd)\n' >"$d/emdash.py"
+    list="$(make_list "$d/l" "$d/emdash.py")"
+    for _loc in C C.UTF-8; do
+        _em_sh="$(/usr/bin/env -i "LANG=$_loc" "LC_ALL=$_loc" "PATH=$PATH" \
+            PATTERNS_FORCE_BASH=1 "$REAL_BASH" "$SK/patterns.sh" "$list" 2>/dev/null |
+            command awk -F '\t' '$3 == "unpaired-listener"')"
+        assert_contains "$_em_sh" "Listener/timer registered without visible removal" \
+            "lifecycle: multibyte PUNCTUATION boundary fires in bash under LC_ALL=$_loc"
+    done
+
+    # `-w` alone would match a bare mention with no call, so the paren test is
+    # re-imposed separately in emit_rows_word. This pins that it still applies.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'add_reader = 5' >"$d/nocall.py"
+    list="$(make_list "$d/l" "$d/nocall.py")"
+    assert_silent "$list" unpaired-listener \
+        "lifecycle: a bare mention with no call does not fire (the -w paren guard)"
+
+    # ONE row, not two, for a line matching BOTH halves of the alternation --
+    # the property that keeps the single-emit_rows spelling honest. Asserted on
+    # the row COUNT because assert_fires only proves at least one row.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'signal.signal(a) and atexit.register(b)' >"$d/both.py"
+    list="$(make_list "$d/l" "$d/both.py")"
+    assert_equals "1" "$(emit_rows sh "$list" unpaired-listener | command wc -l | command tr -d ' ')" \
+        "lifecycle: Python line matching both alternation halves emits ONE row (bash)"
+    if [ "$HAVE_PY" -eq 1 ]; then
+        assert_equals "1" "$(emit_rows py "$list" unpaired-listener | command wc -l | command tr -d ' ')" \
+            "lifecycle: Python line matching both alternation halves emits ONE row (python)"
+    fi
 }
 
 # ============================================================================
@@ -612,7 +798,7 @@ test_evidence_truncation_parity() {
 run_test test_unreaped_subprocess "check-lifecycle: swift/py/js/go subprocess spawn arms + word-boundary negative"
 run_test test_terminate_without_kill "check-lifecycle: .terminate() + os.Interrupt terminate arms"
 run_test test_unclosed_handle "check-lifecycle: py/go/js handle assignment fires, scoped with-open stays silent"
-run_test test_unpaired_listener "check-lifecycle: JS addEventListener/setInterval/.on + Swift addObserver"
+run_test test_unpaired_listener "check-lifecycle: JS/Swift/Rust/Python registration arms + Python boundary and single-row negatives"
 run_test test_ruled_out_false_positives "check-lifecycle: draining pipe-reader + cleared dict negative fixtures (issue FPs)"
 run_test test_test_file_and_skip "check-lifecycle: wholesale test-file skip + segment anchoring + SKIP_GLOBS"
 run_test test_test_dir_does_not_skip_source "check-lifecycle: a test_*-named DIRECTORY does not skip the source inside it (#836)"

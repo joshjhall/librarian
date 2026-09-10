@@ -95,6 +95,23 @@ Swift already resolves in this scanner's lexical model (the `swift` key in
 or `/*` is silent. Both directions were probed rather than reasoned about, and
 both are now fixture-pinned.
 
+**The Python row was audited the same way in Phase 4 (#841) and likewise needed
+no change.** The question the phase was asked to settle is whether these arms
+consult the lexical model post-Phase-1 or merely assume `#` is the right guess.
+Measured, both runtimes: `py` resolves in `EXT_LANG` and in `COMMENT_RE`
+(`^[ \t]*#`, byte-identical to the normative `loc_engine` entry), and both
+`insecure-crypto` and the OWASP family are gated on `lang and not
+is_comment(lang, line)` rather than on a hardcoded marker. Probed in both
+directions on a `.py` fixture: a real `password = "…"` and a bare `md5(` fire,
+while the identical lines behind a leading `#` are silent.
+
+One limitation is declared rather than fixed: a Python **docstring** is not
+modeled as a comment, so code-like prose inside `"""…"""` is scanned as code
+and can produce a `hardcoded-secret` or `insecure-crypto` row. That decision, its
+measured cost, and why the docstring must stay visible are recorded once in
+`check-code-health/contract.md` § *Python docstrings are NOT modeled as
+comments*.
+
 Its `injection-risk` cell stays `—` deliberately. Swift has no SQL-building
 idiom comparable to a Python f-string, a Ruby `#{}` interpolation or Rust's
 `format!` family — the sibling arms this column implements. Swift string

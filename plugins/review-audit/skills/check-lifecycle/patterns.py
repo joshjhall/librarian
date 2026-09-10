@@ -120,6 +120,68 @@ def scan_file(path: str, lines: list[str]) -> None:
                 emit(path, idx, "terminate-without-kill", L_TERMINATE, line)
             if re.search(r"=\s*open\s*\(", line):
                 emit(path, idx, "unclosed-handle", L_HANDLE, line)
+            # Registration sites (#841). Python has no DOM-style
+            # addEventListener; the long-lived registrations are a signal
+            # handler, an interpreter-exit hook, a timer thread, and an asyncio
+            # loop callback -- each outlives the statement and wants a matching
+            # teardown (signal.SIG_DFL, atexit.unregister, .cancel(),
+            # remove_signal_handler/remove_reader).
+            #
+            # `threading.Timer` is matched though the 3.12 stdlib itself never
+            # calls it (measured 0, against 17 signal.signal / 11
+            # atexit.register / 4 add_signal_handler / 2 add_reader): it is the
+            # canonical Python timer idiom, and the stdlib not using its own
+            # convenience wrapper says nothing about application code. A BARE
+            # `Timer(` is deliberately NOT matched -- too generic to carry this
+            # category's confidence.
+            #
+            # The leading boundary is `[^\w]` and deliberately ADMITS `.`.
+            # An earlier draft excluded `.` too, on the theory that
+            # `mysignal.signal(` would otherwise match on its attribute-access
+            # tail. Measured: it does not -- the `y` of `mysignal` already fails
+            # `[^\w]`, so the exclusion bought no negative. What it DID buy was
+            # a false NEGATIVE, silencing the qualified forms that are true
+            # positives -- a dotted-qualified `mod.threading.Timer` or
+            # `self.loop.add_reader` call. Both runtimes therefore spell it
+            # `[^\w]` / `[^[:alnum:]_]`, and the negative fixtures pin the
+            # boundary that actually does the work.
+            #
+            # NON-ASCII: do NOT add `re.ASCII` here. Python's `\w` is
+            # Unicode-aware regardless of the OS locale, which is the behaviour
+            # the bash twin is written to match -- it uses POSIX `grep -w`
+            # after two bracket-class spellings failed (one bytewise under a
+            # `C` locale, one rejected outright by BSD grep). Read the
+            # emit_rows_word comment in the twin before touching either side.
+            #
+            # The twin agrees with this arm exactly under a UTF-8 locale; under
+            # a strict `C` locale it over-fires on a non-ASCII IDENTIFIER
+            # prefix, a documented and fixture-pinned limitation. `re.ASCII`
+            # here would "fix" that by breaking this side instead.
+            #
+            # An earlier draft of this comment asserted the two agreed "under C
+            # and C.UTF-8". That was measured with `LC_ALL=C` alone while the
+            # ambient `LANG=C.UTF-8` still applied, so the C case was never
+            # exercised -- the claim was false and hid a real bug. Measure
+            # locale behaviour with `env -i`, never by setting one locale
+            # variable over an inherited environment.
+            #
+            # Note the idiom names above are written WITHOUT a trailing
+            # paren on purpose. This scanner has no lexical gating -- every
+            # detector is language-specific, so an unmodeled file is skipped
+            # rather than mis-scanned, and the price is that a COMMENT in a
+            # modeled file is read like code. Spelling a call form in this
+            # prose would make the file emit a row about its own comment.
+            #
+            # ONE re.search over a single alternation, mirroring the bash
+            # twin's single emit_rows -- see there for the measurement showing
+            # a two-pattern split reverses row order under parity.
+            if re.search(
+                r"(^|[^\w])(signal\.signal|atexit\.register"
+                r"|threading\.Timer)\s*\("
+                r"|(^|[^\w])(add_signal_handler|add_reader|add_writer)\s*\(",
+                line,
+            ):
+                emit(path, idx, "unpaired-listener", L_LISTENER, line)
         elif ext in ("js", "ts", "jsx", "tsx", "mjs", "cjs"):
             if re.search(
                 r"\b(spawn|spawnSync|exec|execFile|execFileSync|execSync)\s*\(", line

@@ -27,7 +27,7 @@ confirm or dismiss, not as auto-fixable definite defects.
 | `unreaped-subprocess`    | Subprocess spawn site with no obvious reap — Swift `Process()`, Python `Popen(` / `subprocess.Popen(`, Node `spawn/spawnSync/exec/execFile/execFileSync/execSync(`, Go `exec.Command(` |
 | `terminate-without-kill` | A `.terminate()` (Swift/Python/JS) / `os.Interrupt` (Go) send site — flagged so the LLM can confirm there is no SIGKILL escalation and no final wait |
 | `unclosed-handle`        | A file/socket/pipe acquired in **assignment** form (Python `x = open(`, Swift `= FileHandle(`, Go `os.Open(` / `os.Create(`, Node `= fs.openSync/createReadStream/createWriteStream(`). The assignment anchor structurally excludes only the *same-line* scoped form (Python `with open() as f:` has no `= open(`). A **following-line** `defer f.Close()` / `try-finally` close is NOT visible to a single-line regex, so a defer-closed Go/JS handle IS still flagged as a MEDIUM candidate — the LLM pass-2 confirms the paired close and dismisses it. |
-| `unpaired-listener`      | A registration site — JS `addEventListener` / `setInterval` / `.on(`, Swift `addObserver` / `scheduledTimer` — flagged so the LLM can confirm a matching remove/off/invalidate/clear exists |
+| `unpaired-listener`      | A registration site — JS `addEventListener` / `setInterval` / `.on(`, Swift `addObserver` / `scheduledTimer`, Python `signal.signal` / `atexit.register` / `threading.Timer` / `add_signal_handler` / `add_reader` / `add_writer`, Rust `TcpListener::bind` / `UnixListener::bind` / `signal::unix::signal` — flagged so the LLM can confirm a matching remove/off/invalidate/clear exists |
 
 ## Pass 2 — LLM Analysis
 

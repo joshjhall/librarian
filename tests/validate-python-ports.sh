@@ -173,6 +173,13 @@ print(re.search(r"^\s*console\.(log|debug)\(", line))
 print("command grep -niE -- 'it.s worth noting that'")
 print("a genuine debug print")
 print("grep -vE no end-of-options marker here")
+# check-lifecycle's Python unpaired-listener arm (#841). Without a registration
+# idiom here the whole-corpus parity comparison for that category compares two
+# SILENCES and passes vacuously -- the same gap this corpus already closed for
+# .mjs/.cjs (#568), .sh (#598) and Rust (#838). Both alternation halves are
+# represented, since they are separate branches in both runtimes.
+signal.signal(signal.SIGTERM, _handler)
+loop.add_reader(fd, _on_readable)
 EOF
 command printf 'gh = "%s"\n' "$GH_TOK" >>"$FIXDIR/app.py"
 

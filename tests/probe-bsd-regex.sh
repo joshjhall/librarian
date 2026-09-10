@@ -250,6 +250,53 @@ info "BRE \\| alternation" "$V" "SUPPORTED on GNU = alternation"
 probe_grep V 'foo' 'f.o' -P
 info "grep -P (PCRE)" "$V" # lint-allow-gnu-regex: report label, not a pattern
 
+# --- REQUIRE: the listener arm's word boundary (#841) -------------------------
+
+hdr "Listener word boundary (the #841 question)"
+
+# check-lifecycle's Python unpaired-listener arm needs a leading word boundary
+# behaving like its python twin's `\w`, which is Unicode-aware regardless of the
+# OS locale. Two bracket spellings were tried and BOTH failed:
+#
+#   `[^[:alnum:]_]`          -- portable, but bytewise under a strict `C`
+#                               locale, so a multibyte letter's trailing byte
+#                               satisfies it and the arm fires where python does
+#                               not.
+#   `[^[:alnum:]_\200-\377]` -- correct on GNU grep, and BSD grep REJECTS the
+#                               pattern outright (exit >1) because the raw byte
+#                               range is invalid under its collation. THAT is
+#                               what these rows caught, on this job, after every
+#                               GNU-side check passed.
+#
+# The arm now uses POSIX `grep -w`: a FLAG rather than a regex construct, so it
+# sidesteps the dialect question entirely -- the same reasoning the `\b` rows
+# above record. These probes assert it behaves here, on the BSD userland the
+# bash fallback exists for.
+#
+# REQUIRE, not info: the scanner's py/sh parity depends on the answer.
+
+_LW_TOKEN='(signal\.signal|atexit\.register|add_reader)'
+
+# A real registration matches under -w.
+probe_grep V 'loop.add_reader(fd)' "$_LW_TOKEN" -Ew
+require "grep -w matches a real registration token" "$V"
+
+# An identifier that merely ENDS with the token does not (leading boundary).
+probe_grep_rejects V 'xadd_reader(fd)' "$_LW_TOKEN" -Ew
+require "grep -w rejects an identifier-prefixed token" "$V"
+
+# ...nor one that merely BEGINS with it (trailing boundary). Both directions,
+# per the #839 lesson that an ends-with fixture cannot fail on a starts-with bug.
+probe_grep_rejects V 'add_readerx(fd)' "$_LW_TOKEN" -Ew
+require "grep -w rejects an identifier-suffixed token" "$V"
+
+# INFO: the multibyte identifier case, which is the arm's documented C-locale
+# limitation. Under a UTF-8 locale grep should REJECT this (the letter is part
+# of the identifier, matching python); UNSUPPORTED here is the correct reading.
+probe_grep V "$(command printf 'caf\303\251add_reader(fd)')" "$_LW_TOKEN" -Ew
+info "grep -w vs a multibyte-letter prefix" "$V" \
+    "UNSUPPORTED = agrees with python; SUPPORTED = the documented C-locale gap"
+
 # --- verdict -----------------------------------------------------------------
 
 hdr "Verdict"

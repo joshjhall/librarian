@@ -464,7 +464,61 @@ each other once 1 is in.
    `tests/**/*.mjs` document their exports with `//` instead). The
    `check-code-health` rows on those files were already firing before the
    change, via the debug arms that already covered the extensions.
-4. **Phase 4 — Python** ([#841](https://github.com/joshjhall/librarian/issues/841)). Audit and fill, same shape as Phase 3.
+4. **Phase 4 — Python** ([#841](https://github.com/joshjhall/librarian/issues/841)) — **landed**. The inverse of Phase 3: the
+   issue named three items and the audit confirmed **all three as stated**, with
+   no fourth. Python's four matrix rows were already accurate, and
+   `check-security`'s Python arms already consulted the lexical model — verified
+   by probing both directions in both runtimes rather than by reading the source.
+   **An audit that finds the matrices correct is a result, not a wasted phase**;
+   Phase 3's four-gaps outcome is not the expected one.
+
+   **The one real gap was `check-lifecycle`'s `unpaired-listener`**, absent for
+   Python in both runtimes. Filled, keyed on registration idioms chosen by
+   measured rate over the 3.12 stdlib — the *opposite*, sparse profile to the
+   `let _ =` Phase 1 refused, which is what justified shipping at MEDIUM rather
+   than deferring. The rates, the `threading.Timer`-in / bare-`Timer(`-out call,
+   and the single-alternation parity constraint are in
+   `check-lifecycle/contract.md`.
+
+   **The docstring question, answered: NO — line-prefix is sufficient**, for
+   these scanners and for `loc_engine.COMMENT_RE` alike. The short reason: a
+   `"""…"""` block is a string literal, not a comment, and
+   `check-docs-missing-api` keys on `"""` as Python's **doc marker** — so a model
+   that hid docstrings would make that arm report every documented symbol as
+   undocumented. The full decision, its three grounds and its measured cost live
+   in `check-code-health/contract.md` § *Python docstrings are NOT modeled as
+   comments*; read that before proposing a block-comment dimension.
+
+   One methodological note belongs here rather than there: **measure a docstring
+   claim with `ast`, not with a regex.** The first pass used a quote-pairing
+   regex and reported six in-docstring rows; all six were artifacts of
+   mispairing quotes inside the one file that *defines* a docstring regex.
+   Widening the corrected check to any multi-line string then surfaced a real
+   neighbour — 3 `tech-debt-marker` rows inside multi-line **regex literals**.
+   Hence the phase's headline is "zero **docstring** rows", never "zero string
+   rows": two different claims, only the narrower one true.
+
+   **Two lessons from the mutation round, both about the fixtures rather than the
+   arm.** They are the reusable part of this phase:
+
+   - **A boundary comment asserted a property the code did not have.** The arm's
+     leading class was first written `[^\w.]`, excluding `.` on the stated
+     theory that `mysignal.signal(` would otherwise match on its attribute-access
+     tail. Mutating the `.` away produced *no* test failure, which is what
+     exposed the claim: the plain `[^\w]` already rejects that line. What the
+     exclusion actually did was silence the **qualified** forms, which are true
+     positives. A false rationale had been protecting a false negative, and only
+     the mutation could tell the difference — #542/#498's shape reached through a
+     regex. Detail: `check-lifecycle/contract.md`.
+   - **The fixture written to pin that true positive was itself vacuous at
+     first.** It put both qualified forms in ONE file; the two idioms sit in
+     different halves of the alternation and share one evidence label, so
+     re-applying the mutation left one silent while the other still emitted the
+     label — `assert_fires` passed and the fixture proved nothing. Split per
+     half, the same mutation goes red. The composite-fixture trap the function's
+     own header warns about, hit anyway while writing the fixture *for* a
+     mutation: **a fixture is not load-bearing until a mutation has actually
+     turned it red.**
 5. **Phase 5 — Bash** ([#842](https://github.com/joshjhall/librarian/issues/842)). Full arms; currently `check-docs-missing-api` only.
    Closes #622.
 
