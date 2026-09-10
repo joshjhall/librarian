@@ -324,6 +324,12 @@ behavior is noted inline per check; environment variables referenced here
    > command whose instructions direct it. See `ship-protocol.md`
    > § *Workflow authority* (#637); do not re-derive the permission question.
 
+   > **Register this harness as background work first** (#890). The fan-out
+   > outlives the turn that starts it — measured 2.7 min and 8.7 min between the
+   > `Workflow` call and the next top-level record — so an observer reads this
+   > golem as `⚠ idle at prompt` while it reviews. `golem-work.sh register
+   > workflow` before, `complete` after; recipe in `golem/background-work.md`.
+
    <!-- contract: args-keys-pre-pr-cycle1 -->
 
    ```text

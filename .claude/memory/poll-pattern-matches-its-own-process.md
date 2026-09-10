@@ -39,3 +39,29 @@ Sibling shapes where a check accidentally includes itself:
 Different mechanism from [[idle-detector-false-positive-own-monitors]] (a
 detector misreading a pane), same family: the observer contaminating its own
 measurement — cf. [[observer-resolves-its-own-cwd-not-the-subjects]].
+
+## Recurred 2026-09-10, from the memory itself
+
+Written into a `/workflow:ship-issue` run **while this memory was in the index**,
+with `bash tests/run-all.sh` as the pattern — the same command the example above
+already names. Reading the index line ("a wait-loop matches the WAITER") was not
+enough to stop me writing the shape; I only caught it by printing what the
+pattern actually matched:
+
+```bash
+pgrep -af "bash tests/run-all.sh"    # -> the real suite AND 3 waiter wrappers
+```
+
+**Make that print the habit.** Never audit a wait predicate by re-reading it —
+it reads fine, which is the whole problem. Run the matcher and look at the rows.
+
+**The fix that cannot self-match: wait on the PID, not on a pattern.**
+
+```bash
+pid=$(pgrep -f "bash tests/run-all.sh" | head -1)   # resolve ONCE, before waiting
+until [ ! -d "/proc/$pid" ]; do sleep 15; done
+```
+
+A pid is an identity, not a string, so no wrapper can carry it into the match.
+Better still, when you start the job yourself, use `run_in_background` and let
+the harness notify you — then there is no poll to get wrong.

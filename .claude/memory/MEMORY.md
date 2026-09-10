@@ -30,6 +30,7 @@
 ## How I get things wrong (applies to every task)
 
 - [Comments assert intent, not code](comment-asserts-intent-not-code.md) — the comment claims what the code lacks, and HIDES the defect (#542/#498)
+- [Doc claims a consumer that never adopted](doc-claims-a-consumer-that-never-adopted.md) — a header naming its consumers reads as integration evidence; grep from the CONSUMER side, per call site (#890)
 - [A comment can assert a SAFETY property](comment-asserts-a-safety-property.md) — "safe because the twin does Z" is a testable claim about the twin; measure it or it pre-marks the gap as safe
 - [An issue's symbol inventory needs re-measuring](issue-symbol-inventory-needs-remeasuring.md) — the table counts NAMES and has drifted; grep declarations, diff bodies
 - [Gate header claims an unimplemented check](gate-header-claims-an-unimplemented-check.md) — grep for the enforcing code; a rule written before it was testable stays prose

@@ -255,7 +255,9 @@ mode, run these safety checks in order:
    `blocking` findings in a loop that stops on the convergence predicate and is
    capped by `REVIEW_MAX_CYCLES` (#596), collect `deferrable`
    for filing after delivery. Option 2 runs it **before the push to main** (the
-   three-dot diff empties post-push).
+   three-dot diff empties post-push). **Register the harness as background
+   work** (#890) — it outlives its turn, so an unregistered run reads as an idle
+   golem: `golem/background-work.md`.
 
    <!-- contract: args-keys-skill-summary -->
 

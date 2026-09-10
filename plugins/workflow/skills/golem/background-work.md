@@ -60,6 +60,11 @@ The pid is what lets a **crashed** job be reaped in seconds instead of waiting o
 the hour-long age bound. Optional, but always pass it for a backgrounded Bash task
 where the harness reports the pid.
 
+`--pid`, `--max-age` and `--golem` are the only flags `register` takes. `--worktree`
+is an **observer** flag (on `count` / `list`, for reading *another* golem's
+registry) and `register` refuses it — a writer registers its own work, so it has
+no subject to point at.
+
 ### The three kinds
 
 | kind | what it covers |
@@ -69,6 +74,23 @@ where the harness reports the pid.
 | `workflow` | a `Workflow` harness fan-out |
 
 These are exactly the three mechanisms that can outlive their turn.
+
+## Where each skill registers
+
+Named concretely, because this file previously *asserted* `ship-issue/` as a
+consumer while `ship-issue/` referenced it zero times (#890) — and all five of
+the measured false-idles happened there.
+
+| skill | site | kind |
+| --- | --- | --- |
+| `ship-issue` | pre-PR review harness (`pre-ship-validation.md` check #6) | `workflow` |
+| `ship-issue` | each cycle of the multi-cycle PR review loop | `workflow` |
+| `ship-issue` | a backgrounded `git push` (runs the pre-push suite) | `bash` + `--pid` |
+| `ship-issue` | the backgrounded `ci-fixer` harness (`ci-review-protocol.md`) | `workflow` |
+| `golem` / `next-issue` | any phase that starts work outliving its turn | per the table above |
+
+`tests/lint-background-work-refs.sh` keeps this from drifting again: a section
+that starts background work must name the registry in the same section.
 
 ## What happens if you forget
 
