@@ -50,19 +50,21 @@ smallest inter-barrier gap. A spawn missing either a `sessionId` or a
 many it placed.
 
 Each spawn gets a `rank` (0 = the spawn that opens the fan-out) and each
-barrier's leader gets `gap_before`, the seconds since that session's previous
-barrier ended.
+barrier's leader gets `gap_before`, the seconds since the previous barrier's
+last member **started** — its first billed turn, which is when it touched the
+cache. A transcript records no completion time, so this is a cache-touch
+instant, not an interval that includes the previous barrier's runtime.
 
-**Sample: n=297 spawns / 119 barriers across 14 sessions, one machine,
+**Sample: n=311 spawns / 124 barriers across 14 sessions, one machine,
 2026-09-09.** #787's sample was n=33. See § Limits.
 
 ### The headline reproduces at 9x the sample
 
-| metric | #787 (n=33) | this report (n=297) |
+| metric | #787 (n=33) | this report (n=311) |
 | --- | ---: | ---: |
 | cache MISS rate | 33% | **36%** |
-| implied shared block | 12,635 | 9,897 |
-| miss penalty per spawn | 14,530 | **11,382 tok-equiv (12x)** |
+| implied shared block | 12,635 | 9,824 |
+| miss penalty per spawn | 14,530 | **11,297 tok-equiv (12x)** |
 
 The 33% was not a small-sample artifact.
 
@@ -72,14 +74,14 @@ Miss rate by position within the fan-out:
 
 | rank | miss / n | rate |
 | ---: | ---: | ---: |
-| **0 (leader)** | 85 / 119 | **71%** |
-| 1 | 13 / 45 | 29% |
-| 2 | 3 / 42 | 7% |
-| 3 | 3 / 38 | 8% |
-| 4 | 2 / 31 | 6% |
-| 5+ | 2 / 22 | 9% |
+| **0 (leader)** | 89 / 124 | **72%** |
+| 1 | 13 / 47 | 28% |
+| 2 | 3 / 44 | 7% |
+| 3 | 3 / 40 | 8% |
+| 4 | 2 / 33 | 6% |
+| 5+ | 2 / 23 | 9% |
 
-**76% of all misses are barrier leaders.** The characteristic barrier reads
+**79% of all misses are barrier leaders.** The characteristic barrier reads
 `Mhhhhh`: the leader writes the block, its siblings read it.
 
 That the siblings read *the leader's* write is directly visible — follower
@@ -105,12 +107,12 @@ below:
 | gap before barrier | leader miss rate |
 | --- | ---: |
 | 0–30s | 56% (10/18) |
-| 30–60s | 50% (8/16) |
+| 30–60s | 53% (9/17) |
 | 60–120s | 56% (5/9) |
 | 120–300s | 67% (6/9) |
-| **300–600s** | **82% (23/28)** |
-| **600s+** | **91% (21/23)** |
-| cold (session's first) | 75% (12/16) |
+| **300–600s** | **80% (24/30)** |
+| **600s+** | **92% (22/24)** |
+| cold (session's first) | 76% (13/17) |
 
 The step past 300s is real and matches the documented TTL. But **~50% of leaders
 already miss at a 30-second gap**, which no TTL explains. So the two hypotheses
@@ -120,23 +122,23 @@ TTL decay that makes failure near-certain past five minutes.
 
 ## Finding 3 — cross-barrier reuse IS possible, so the miss is not structural
 
-**34 of 119 barrier leaders (29%) hit.** If the platform allocated a fresh cache
+**35 of 124 barrier leaders (28%) hit.** If the platform allocated a fresh cache
 entry per barrier by construction, that number would be zero. Reuse across
 barriers demonstrably happens; it is simply unreliable, and it decays with time.
 
 This matters for sizing: the addressable population is not "one unavoidable miss
-per barrier". A perfectly-reusing cache would eliminate essentially all 108
+per barrier". A perfectly-reusing cache would eliminate essentially all 112
 misses, not just the 23 follower ones.
 
 ## Finding 4 — miss attribution
 
 | category | misses | share | cost |
 | --- | ---: | ---: | ---: |
-| leader, gap > TTL | 44 | 41% | 500,790 tok-equiv |
-| leader, gap ≤ TTL | 29 | 27% | 330,066 tok-equiv |
-| follower (within a barrier) | 23 | 21% | 261,777 tok-equiv |
-| leader, session cold start | 12 | 11% | 136,579 tok-equiv |
-| **total** | **108** | | **1,229,212 tok-equiv** |
+| leader, gap >= TTL | 46 | 41% | 519,668 tok-equiv |
+| leader, gap < TTL | 30 | 27% | 338,914 tok-equiv |
+| follower (within a barrier) | 23 | 21% | 259,834 tok-equiv |
+| leader, session cold start | 13 | 12% | 146,863 tok-equiv |
+| **total** | **112** | | **1,265,279 tok-equiv** |
 
 Cold start (H3) is a real floor but the smallest term — #870 was right that the
 observed rate "clearly exceeds" it.
@@ -167,14 +169,14 @@ re-measures it in one command.
 | AC | Status |
 | --- | --- |
 | AC1 — miss timing correlated against cycle boundaries and spawn order, distinguishing TTL from barrier | **Satisfied** — Findings 1–2. The two hypotheses are separated on independent axes (rank within barrier; gap before barrier) and **both** are confirmed operating, which is a third outcome the issue did not anticipate |
-| AC2 — root cause identified with evidence, not inferred from source | **Satisfied** — every claim is a measurement over n=297 transcripts. Finding 5's one inspection-based row (`parallel()` is runtime-injected) is stated with the grep that checks it, precisely because it is not a measurement |
+| AC2 — root cause identified with evidence, not inferred from source | **Satisfied** — every claim is a measurement over n=311 transcripts. Finding 5's one inspection-based row (`parallel()` is runtime-injected) is stated with the grep that checks it, precisely because it is not a measurement |
 | AC3 — if fixable in this repo, fixed with before/after miss rate | **Not applicable, with evidence** — Finding 5. The fan-out primitive is runtime-injected and the prompt prefix is already maximally stable; there is no in-repo lever to change |
 | AC4 — if NOT fixable here, documented as such in `docs/verification/` | **Satisfied** — this file |
 | AC5 — miss rate re-measured after any change; delta recorded | **Satisfied; delta nil by construction** — no change in this PR alters spawn behavior, so no delta is possible. The re-measurement that *did* happen is the 33% → 36% at 9x the sample (§ Method), confirming the original direction. The `timing` subcommand is the deliverable that makes a future re-measurement one command |
 
 ## Limits
 
-- **n=297, one machine.** The corpus is dominated by `dev-core:code-reviewer`
+- **n=311, one machine.** The corpus is dominated by `dev-core:code-reviewer`
   spawns from ship-issue review cycles, so the *barrier shape* measured here is
   that of a 5–7 dimension review fan-out. A different fan-out shape may
   distribute misses differently; the leader/follower asymmetry itself is

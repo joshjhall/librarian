@@ -368,10 +368,17 @@ def build_barriers(spawns: list[dict]) -> list[list[dict]]:
     would fabricate exactly the signal this report exists to measure.
 
     Each spawn gains `rank` (0 = the barrier's leader) and each barrier's leader
-    gains `gap_before`: seconds since the END of that session's previous
-    barrier, or None when it is the session's first (a cold start, which has no
-    prior entry to reuse and so belongs in its own category rather than in the
-    largest gap bucket).
+    gains `gap_before`: seconds since the previous barrier's last member
+    **started** — i.e. since that spawn's first billed turn, which is when it
+    touched the cache. It is deliberately NOT the previous barrier's completion
+    time: a transcript records only each spawn's first billed turn, so no end
+    timestamp exists to use, and the cache-touch instant is the quantity a TTL
+    question actually wants. Do not read this as including the previous
+    barrier's runtime.
+
+    `gap_before` is None when the barrier is the session's first — a cold start,
+    which has no prior entry to reuse and so belongs in its own category rather
+    than in the largest gap bucket.
     """
     ordered = [s for s in spawns if s.get("session") and s.get("started")]
     ordered.sort(key=lambda s: (s["session"], s["started"]))
@@ -503,10 +510,15 @@ def cmd_timing(spawns: list[dict]) -> None:
                 categories["follower (within a barrier)"] += 1
             elif spawn["gap_before"] is None:
                 categories["leader, session cold start"] += 1
-            elif spawn["gap_before"] > CACHE_TTL_SECONDS:
-                categories["leader, gap > TTL"] += 1
+            # `>=`, not `>`, to match the bucket table above, whose half-open
+            # `low <= gap < high` intervals put a gap of exactly
+            # CACHE_TTL_SECONDS in the "300-600s" row. A strict `>` here read
+            # that same spawn as in-TTL, so one report disagreed with itself at
+            # the boundary — and this tool exists to be hand-checkable.
+            elif spawn["gap_before"] >= CACHE_TTL_SECONDS:
+                categories["leader, gap >= TTL"] += 1
             else:
-                categories["leader, gap <= TTL"] += 1
+                categories["leader, gap < TTL"] += 1
 
     total_misses = sum(categories.values())
     print("\nmiss attribution:")
