@@ -107,6 +107,9 @@
 #                            pane_is_fork, lines (default 8)
 #   GOLEM_PANE_ERROR_LINES   pane scrollback window for pane_is_api_error's #446
 #                            death read, lines (default 40)
+#   GOLEM_PANE_SCROLLBACK_LINES
+#                            scrollback DEPTH captured for the multi-question
+#                            form's glyph scan ONLY, lines (default 100) (#1010)
 #
 # Never blocks a golem and never hangs on a missing feed/tmux: errors are
 # swallowed and a snapshot mode always exits 0. The `--stream*` loops carry NO
@@ -181,6 +184,41 @@ pane_footer_lines="${GOLEM_PANE_FOOTER_LINES:-8}"
 # footer the gate/turn-end matchers anchor to — so pane_is_api_error scans a wider
 # tail. Separate tunable so widening it does not loosen the footer matchers.
 pane_error_lines="${GOLEM_PANE_ERROR_LINES:-40}"
+# Scrollback DEPTH for the multi-question form's glyph scan (#1010), and ONLY
+# that scan — every other matcher keeps reading the shared VISIBLE capture. A
+# form whose option text overflows the pane scrolls its tab bar off the TOP,
+# outside any window a tail can reach, so this one matcher takes its own wider
+# `capture-pane -S` read (see pane_is_multi_question_form).
+#
+# MEASURED, NOT GUESSED. Across 152 live captures reproducing the miss (a real
+# two-question modal in a 24-row pane, #1010) the tab bar sat at depth 43 from
+# the bottom — in every one, no other value. 100 therefore covers a modal about
+# twice that tall with margin.
+#
+# DELIBERATELY NOT $pane_error_lines. Reusing that knob would couple two
+# unrelated windows, so a future change to the API-error read would silently
+# retune form detection. It is also too small on the numbers above: 40 < 43, so
+# the measured bar falls outside it. Separate tunable, separate concern — the
+# same reasoning that gave pane_error_lines its own knob apart from
+# pane_footer_lines.
+pane_scrollback_lines="${GOLEM_PANE_SCROLLBACK_LINES:-100}"
+# Validated like heartbeat_interval above, and for a sharper reason: this value is
+# concatenated into the `-S -$n` argument, so a non-numeric or `-`-leading setting
+# builds a malformed token (`--5`, `-abc`) that tmux rejects. The rejection is
+# caught and degrades to the visible-pane fallback — fail-open, never
+# fail-invented — but SILENTLY, so a mistyped knob looks like the widened window
+# simply "not working" and the form goes back to being missed. Snap a bad value
+# back to the default instead.
+#
+# `0` is treated as invalid rather than as "disable the widening", matching every
+# other numeric knob in this file (heartbeat_interval and the four guards below
+# all reject it). Measured: tmux accepts `-S -0` and returns just the visible
+# pane, so a 0 setting would silently restore the #1010 bug — an operator who
+# wants the narrow behavior back is better served by a loud default than by a
+# value that reads as "off" and looks identical to a typo.
+case "$pane_scrollback_lines" in
+    '' | *[!0-9]* | 0) pane_scrollback_lines=100 ;;
+esac
 
 # The turn-end/idle-at-prompt push message (#447). Defined once here because two
 # functions couple on it: panes_snapshot() emits it, and confirm_turn_end()
@@ -649,18 +687,84 @@ pane_is_fork() {
 # load-bearing — a widening that needs its own boundary, not a free one. BSD-safe:
 # a bracket negation, never `\b`.
 #
-# SCOPE — THIS DOES NOT FIX THE FALSE NEGATIVE (#986). The companion failure, a
-# real two-question form going UNLABELLED, is NOT in this regex and no change
-# here can fix it: `tmux capture-pane -p` is invoked without `-S`, so it returns
-# only the VISIBLE pane, and a form whose option text overflows the pane scrolls
-# its tab bar off the TOP — measured absent in 0-of-229 live captures
-# (docs/verification/multi-question-capture-e2e-986.md). A glyph that was never
-# captured cannot be matched by any pattern. Tracked as #1010 — which also records
-# why the fix is NOT a one-line `-S` on the shared capture (all nine matchers are
-# fed by it). Do not "fix" it by loosening the arms below.
+# THE FALSE NEGATIVE WAS FIXED CAPTURE-SIDE, NOT HERE (#1010). A real
+# two-question form could go UNLABELLED because `tmux capture-pane -p` returns
+# only the VISIBLE pane: a form whose option text overflows scrolls its tab bar
+# off the TOP, measured absent in 0-of-229 live captures (#986) and reproduced in
+# 152-of-152 paired captures (#1010). No change to this regex could ever fix
+# that — a glyph that was never captured cannot be matched by any pattern — so
+# the fix is in Guard 3 below, which takes its own wider `-S` read. Do not "fix"
+# anything here by loosening the arms; the arms were never the defect.
+#
+# WHICH MAKES THE `^` ANCHORS ABOVE LOAD-BEARING IN A NEW WAY. Before #1010 the
+# glyph scan saw only the visible pane, so the prose self-trip it guarded against
+# had to be on screen. It now reads SCROLLBACK, where a golem's recently-read
+# file content lives — including this very comment block, the skills prose, and
+# the test fixtures. The anchoring is what keeps that from reading as a widget,
+# and it is measured: the live capture in
+# docs/verification/multi-question-capture-scrollback-e2e-1010.md carries
+# glyph-bearing prose on two lines directly above the genuine bar, and only the
+# bar matches. Removing an anchor turns
+# test_pane_multi_question_form_scrolled_off_top_prose red.
 MULTI_Q_RE='^[[:space:]]*(←[[:space:]]*)?(☐|☒).*(☐|☒|✔[[:space:]]*Submit([^[:alnum:]]|$))|^[[:space:]]*(←[[:space:]]*)?✔[[:space:]]*Submit([^[:alnum:]]|$)|^[[:space:]]*⚠[^`]*not answered all'
+# pane_is_multi_question_form <pane-text> [<session>]
+#
+# The optional SECOND argument is what closes #1010, and it is deliberately
+# optional. Given a session name, Guard 3 — and only Guard 3 — reads its own
+# wider `capture-pane -S` scrollback; Guards 1 and 2 go on reading the caller's
+# already-captured VISIBLE text, as do all eight sibling matchers. So the other
+# matchers are fed bytes identical to before this existed, and their #246/#452
+# anchoring is not loosened by one character.
+#
+# WHY NOT WIDEN THE SHARED CAPTURE. Nine matchers share it. Handing them all
+# scrollback makes every trigger phrase they key on matchable in arbitrary file
+# content a golem happens to be reading — the #246/#452 self-trip class this repo
+# has hit repeatedly. This file's own comments already record an earlier proposal
+# to change the shared capture being rejected on exactly those grounds, with the
+# template followed here: "take a separate local read and feed the matchers that"
+# (see pane_suggestion_suffix). #1010 chose that template over the one-line `-S`.
+#
+# THE CAPTURE DEPTH AND THE SCAN WINDOW ARE THE SAME NUMBER BY CONSTRUCTION: the
+# read asks for $pane_scrollback_lines and the scan covers all of what comes
+# back. There is no second knob to widen and forget, which is the drift that
+# makes a widened window buy nothing.
+#
+# TWO READS, TWO INSTANTS, and a STALE-BAR window. Guards 1 and 2 read the
+# caller's already-captured text; Guard 3 re-reads the live pane a moment later,
+# so the two can observe different screen states. Accepted rather than closed by
+# capturing scrollback once in panes_snapshot, because that would hand the wider
+# text to the CALLER — one refactor away from feeding it to the other eight
+# matchers, which is the whole thing this design exists to avoid. Same shape as
+# pane_suggestion_suffix's documented non-atomicity, one matcher over.
+#
+# BE PRECISE ABOUT THE DIRECTION, because the obvious claim is FALSE. An earlier
+# draft of this comment said the divergence "can only lose a detection, never
+# invent one". Measured, it can invent one: a form the golem ALREADY answered
+# leaves its tab bar in scrollback, so a later ORDINARY fork whose footer passes
+# Guards 1-2 matches that stale bar and is labelled a form. Nothing in the two
+# reads ties the bar to the widget painting the footer — the same independence
+# the #467 line-anchoring note describes, now reachable from further away.
+#
+# Left as-is deliberately, and it is the SAFE direction of the two. Labelling a
+# fork as a form sends the operator to monitor-protocol.md's Path A — present the
+# questions, then `↑/↓`+`Enter` per question. Checked against that protocol rather
+# than assumed: Path A drives the SAME AskUserQuestion widget a single-question
+# fork paints, and the digit the fork broker uses is only a shortcut for the same
+# selection, so Path A resolves a one-question prompt correctly. The operator
+# spends an extra keystroke and reads one question where the label implied
+# several. The converse — a form labelled a fork, which is #1010
+# itself — sends a digit into a two-question widget and submits it
+# half-answered. A false form is a slower gate; a false fork is a wrong
+# decision. Pinned by test_pane_multi_question_form_stale_bar_in_scrollback so
+# the tradeoff is a recorded choice and not an unnoticed regression.
+#
+# FAIL-OPEN TO THE OLD CHECK, NEVER TO A FABRICATED FORM. No session, no tmux, or
+# an empty capture all fall back to scanning the caller's visible text over
+# $pane_error_lines — exactly today's behavior. A detector that could not look
+# wider has learned nothing extra, so it reports what the narrow check reports;
+# it cannot invent a match, and every text-only caller keeps working unchanged.
 pane_is_multi_question_form() {
-    local pane="$1" footer window
+    local pane="$1" sess="${2:-}" footer window wide
     # Guard 1 (footer-anchored): an active run-spinner means the golem is working.
     footer="$("$TAIL" -n "$pane_footer_lines" <<<"$pane")"
     case "$footer" in
@@ -671,10 +775,16 @@ pane_is_multi_question_form() {
         *"Enter to select"*) ;;
         *) return 1 ;;
     esac
-    # Guard 3 (wider window): the tab bar that makes it MULTI-question. Scanned
-    # over $pane_error_lines because it renders above the footer — the scrolled-
-    # out-of-view case that motivated this matcher.
-    window="$("$TAIL" -n "$pane_error_lines" <<<"$pane")"
+    # Guard 3 (wider window): the tab bar that makes it MULTI-question. It renders
+    # ABOVE the footer and — the #1010 case — can sit above the visible pane
+    # entirely, so prefer a scrollback read when the caller named a session.
+    window=""
+    if [ -n "$sess" ] && command -v tmux >/dev/null 2>&1; then
+        wide="$(tmux capture-pane -p -S -"$pane_scrollback_lines" -t "$sess" 2>/dev/null || true)"
+        [ -n "$wide" ] && window="$wide"
+    fi
+    # Fallback (and the no-session path): today's visible-pane tail.
+    [ -z "$window" ] && window="$("$TAIL" -n "$pane_error_lines" <<<"$pane")"
     command printf '%s\n' "$window" | "$GREP" -qE "$MULTI_Q_RE"
 }
 
@@ -1059,7 +1169,7 @@ panes_snapshot() {
             command printf '%s\t%s\n' "$sess" "plan gate — ExitPlanMode awaiting approval"
         elif pane_is_gate "$pane"; then
             command printf '%s\t%s\n' "$sess" "permission gate — awaiting decision"
-        elif pane_is_multi_question_form "$pane"; then
+        elif pane_is_multi_question_form "$pane" "$sess"; then
             command printf '%s\t%s\n' "$sess" "$MULTI_Q_MSG"
         elif pane_is_fork "$pane"; then
             command printf '%s\t%s\n' "$sess" "escalation — awaiting decision (carries options)"

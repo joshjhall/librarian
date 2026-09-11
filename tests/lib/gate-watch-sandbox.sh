@@ -59,6 +59,133 @@ _pane_rc() {
     command echo "$rc"
 }
 
+# _pane_rc_sess <fn> <visible-text> <scrollback-text> — like _pane_rc, but with a
+# stub tmux on PATH and a SESSION NAME passed as the matcher's second argument,
+# so the #1010 scrollback read is exercised.
+#
+# THE TWO TEXTS MUST DIFFER FOR THIS TO TEST ANYTHING. The real divergence under
+# test is that `capture-pane -p` returns only the VISIBLE pane while
+# `capture-pane -p -S -N` reaches scrollback — precisely the gap that let a form's
+# tab bar go uncaptured. A stub answering both reads with one string could not
+# tell a working scrollback read from a matcher that ignores the flag entirely
+# and just re-scans the text it was handed: both would pass. So the stub branches
+# on `-S` and serves a DIFFERENT string for it. Same reasoning as
+# $FAKE_PANE_TEXT_E for the `-e` read (#977), one flag over.
+#
+# Passing an empty <scrollback-text> makes the stub return nothing for the `-S`
+# read, which is how the empty-capture fallback path is reached.
+#
+# Two caller-set knobs drive the remaining paths:
+#   $MQ_STUB_MIN_DEPTH  the stub serves <scrollback-text> only when the DEPTH the
+#                       matcher asked for (`-S -N`) is at least this deep, and
+#                       nothing otherwise. That is what makes
+#                       GOLEM_PANE_SCROLLBACK_LINES observable at all: without it
+#                       the stub answers identically at every depth, so a
+#                       hardcoded window would pass the override assertions.
+#   $MQ_STUB_NO_TMUX    omit the stub entirely and run with a PATH that has no
+#                       tmux, exercising the headless fallback.
+#   $MQ_STUB_SESSION    the session name that OWNS the canned text; the stub
+#                       returns nothing for any other `-t`. Default golem-9,
+#                       which is the session _pane_rc_sess passes. Set it to
+#                       something else to assert that the matcher forwards the
+#                       session it was GIVEN rather than one it assumed.
+_pane_rc_sess() {
+    local fn="$1" text="$2" wide="$3" rc=0
+    local tmp stub_bin real_bash
+    tmp="$(command mktemp -d)" || return 1
+    tmp="$(cd "$tmp" && command pwd -P)" || return 1
+    # shellcheck disable=SC2064
+    trap "command rm -rf '$tmp'" RETURN
+    stub_bin="$tmp/stub-bin"
+    command mkdir -p "$stub_bin"
+    real_bash="$(command -v bash)"
+    command ln -s "$real_bash" "$stub_bin/bash"
+    command cat >"$stub_bin/tmux" <<'TMUX_STUB'
+#!/usr/bin/env bash
+case "$1" in
+    capture-pane)
+        _want_s=""
+        _depth=""
+        _want_t=""
+        _target=""
+        for _a in "$@"; do
+            if [ -n "$_want_s" ] && [ -z "$_depth" ]; then
+                # The argument right after `-S` is the depth, as `-N`.
+                _depth="${_a#-}"
+            fi
+            if [ -n "$_want_t" ] && [ -z "$_target" ]; then
+                _target="$_a"
+            fi
+            [ "$_a" = "-S" ] && _want_s=1
+            [ "$_a" = "-t" ] && _want_t=1
+        done
+        # Honor `-t`: the scrollback text belongs to ONE session, and asking any
+        # other session for it yields nothing. Without this the stub answers
+        # identically whatever `-t` it is handed, so a matcher that forwarded the
+        # WRONG session — a hardcoded literal, an off-by-one in a multi-session
+        # loop — would pass every assertion. $MQ_STUB_SESSION names the session
+        # that owns the text (default golem-9).
+        if [ "$_target" != "${MQ_STUB_SESSION:-golem-9}" ]; then
+            exit 0
+        fi
+        # Reject a malformed `-S` depth the way real tmux does. The matcher
+        # builds that argument by concatenating `-` with the knob, so a
+        # non-numeric or `-`-leading value yields `--5` / `-abc`, which tmux
+        # rejects. A stub that accepted anything could not tell a validated knob
+        # from an unvalidated one — both would serve the text and pass.
+        if [ -n "$_want_s" ] && [ -n "$_depth" ]; then
+            case "$_depth" in
+                '' | *[!0-9]*) exit 1 ;;
+            esac
+            # Depth 0 is the OTHER malformed-knob shape, and it fails differently
+            # from a non-numeric one: `-S -0` is syntactically valid, so tmux
+            # accepts it and returns just the VISIBLE pane (measured on tmux in
+            # this image). Modelling it as an error would be wrong; modelling it
+            # as a normal deep read — which the stub did until #1010 review cycle
+            # 2 — left the validation's `| 0` arm untestable, since the fixture
+            # came back either way. Serve the visible text instead, which is what
+            # a real 0-depth read yields.
+            if [ "$_depth" = "0" ]; then
+                command printf '%s\n' "${FAKE_PANE_TEXT:-}"
+                exit 0
+            fi
+        fi
+        if [ -n "$_want_s" ]; then
+            # Depth-aware: below $MQ_STUB_MIN_DEPTH the scrollback is "not
+            # reached" and the stub returns nothing, so the matcher takes its
+            # fallback. Unset, every depth serves the text.
+            if [ -n "${MQ_STUB_MIN_DEPTH:-}" ] \
+                && [ "${_depth:-0}" -lt "$MQ_STUB_MIN_DEPTH" ] 2>/dev/null; then
+                exit 0
+            fi
+            command printf '%s\n' "${FAKE_PANE_TEXT_S-}"
+            exit 0
+        fi
+        command printf '%s\n' "${FAKE_PANE_TEXT:-}"
+        ;;
+    *) exit 0 ;;
+esac
+TMUX_STUB
+    command chmod +x "$stub_bin/tmux"
+    # $MQ_STUB_NO_TMUX: drop the stub so `command -v tmux` fails, which is the
+    # headless host. The PATH stays hermetic either way.
+    [ -n "${MQ_STUB_NO_TMUX:-}" ] && command rm -f "$stub_bin/tmux"
+    # -uBASH_ENV: the devcontainer's /etc/bash_env resets $PATH for every
+    # non-interactive bash, which would undo the hermetic PATH.
+    (
+        /usr/bin/env -uBASH_ENV PATH="$stub_bin" \
+            FAKE_PANE_TEXT="$text" FAKE_PANE_TEXT_S="$wide" \
+            MQ_STUB_MIN_DEPTH="${MQ_STUB_MIN_DEPTH:-}" \
+            MQ_STUB_SESSION="${MQ_STUB_SESSION:-golem-9}" \
+            GOLEM_PANE_SCROLLBACK_LINES="${GOLEM_PANE_SCROLLBACK_LINES:-}" \
+            "$real_bash" -c '
+                source "$1"
+                "$2" "$3" golem-9
+            ' _ "$GATE_WATCH" "$fn" "$text"
+    ) >/dev/null 2>&1 || rc=$?
+    command echo "$rc"
+}
+
 # _stamp_feed_traces <status-dir> <feed-line>... — for every distinct `golem`
 # value appearing in the given feed lines, drop a `<golem>.json` status-cache file
 # in <status-dir>. This gives each fixture golem a live TRACE so the #446 ghost
@@ -513,6 +640,16 @@ _pane_class() {
 # $FAKE_PANE_TEXT_E) supplies a DIFFERENT pane text for the escape-preserving
 # `-e` read that #977's classifier makes. Unset, it defaults to the same text,
 # so existing callers behave exactly as before.
+#
+# Optional $TMUX_LS overrides the session list (default one `golem-9`), and
+# $PANE_TEXT_S_SESSION names which of them owns the scrollback text — together
+# they let a test run panes_snapshot over TWO live sessions and assert that only
+# the one whose scrollback holds the bar is labelled a form.
+#
+# Optional $PANE_TEXT_S does the same for the wider `-S` SCROLLBACK read that
+# #1010's multi-question glyph scan makes — the read whose whole point is that it
+# returns text the visible capture does not have. Unset, it likewise falls back
+# to the same text, so every pre-#1010 caller is unaffected.
 _run_panes_snapshot_tmux() {
     local pane_text="$1"
     local tmp stub_bin real_bash
@@ -538,11 +675,32 @@ _run_panes_snapshot_tmux() {
     command cat >"$stub_bin/tmux" <<'TMUX_STUB'
 #!/usr/bin/env bash
 case "$1" in
-    ls) command printf '%s\n' "golem-9: 1 windows" ;;
+    ls) command printf '%s\n' "${FAKE_TMUX_LS:-golem-9: 1 windows}" ;;
     capture-pane)
+        _want_t=""
+        _target=""
+        for _a in "$@"; do
+            if [ -n "$_want_t" ] && [ -z "$_target" ]; then
+                _target="$_a"
+            fi
+            [ "$_a" = "-t" ] && _want_t=1
+        done
         for _a in "$@"; do
             if [ "$_a" = "-e" ]; then
                 command printf '%s\n' "${FAKE_PANE_TEXT_E-${FAKE_PANE_TEXT:-}}"
+                exit 0
+            fi
+            if [ "$_a" = "-S" ]; then
+                # Scrollback belongs to ONE session ($FAKE_PANE_TEXT_S_SESSION,
+                # default golem-9). Any other session's wide read comes back
+                # empty, so panes_snapshot's loop is pinned to forward the
+                # session it is iterating rather than a stale or hardcoded one —
+                # which a single-session harness could never catch (#1010
+                # review cycle 2).
+                if [ "$_target" != "${FAKE_PANE_TEXT_S_SESSION:-golem-9}" ]; then
+                    exit 0
+                fi
+                command printf '%s\n' "${FAKE_PANE_TEXT_S-${FAKE_PANE_TEXT:-}}"
                 exit 0
             fi
         done
@@ -560,6 +718,9 @@ TMUX_STUB
             /usr/bin/env -uBASH_ENV PATH="$stub_bin" \
                 FAKE_PANE_TEXT="$pane_text" \
                 FAKE_PANE_TEXT_E="${PANE_TEXT_E-$pane_text}" \
+                FAKE_PANE_TEXT_S="${PANE_TEXT_S-$pane_text}" \
+                FAKE_PANE_TEXT_S_SESSION="${PANE_TEXT_S_SESSION:-golem-9}" \
+                FAKE_TMUX_LS="${TMUX_LS:-golem-9: 1 windows}" \
                 "$real_bash" "$GATE_WATCH" --once-panes
     ) >"$tmp/out" 2>/dev/null && PANES_RC=0 || PANES_RC=$?
     PANES_OUT="$(command cat "$tmp/out")"

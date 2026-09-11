@@ -403,6 +403,334 @@ test_pane_multi_question_form_false_negative_two_question_bar() {
         "panes_snapshot emits the form label for a two-question bar (#986)"
 }
 
+# #1010 — THE SCROLLED-OFF-TOP CASE. Named for it deliberately, to separate it
+# from the #986 regex cases above: those are about what the PATTERN matches, this
+# is about what the CAPTURE contains. `tmux capture-pane -p` returns only the
+# VISIBLE pane, so a form whose option text overflows the pane height scrolls its
+# `☐/☒ … ✔ Submit` tab bar off the TOP, where no window a `tail` can take will
+# ever reach it. Every regex necessarily misses; the fix is Guard 3's own `-S`
+# read.
+#
+# THE FIXTURES BELOW ARE REAL CAPTURED PANES (AC 4), not hand-written chrome.
+# That constraint is not decorative: #986 reached a FALSE conclusion twice from
+# hand-written fixtures, because an invented chrome stack copied the WORKING
+# session's status bar, which a live modal does not paint. These two strings are
+# `capture-pane -p` and `capture-pane -p -S -120` of the same instant in
+# golem-1010 (24-row pane), taken while a genuine two-question AskUserQuestion
+# modal was up. 152 of 180 paired snapshots reproduced this exact shape; the bar
+# sat at depth 43 from the bottom in every one of them —
+# docs/verification/multi-question-capture-scrollback-e2e-1010.md.
+#
+# Depth 43 is also why the existing 40-line $pane_error_lines window could not
+# have been reused as the scrollback depth: the measured bar falls three lines
+# outside it.
+#
+# _mq_1010_visible / _mq_1010_scrollback — the captured pair. Built as functions
+# rather than file fixtures so the suite stays self-contained, and the widget
+# lines are assembled from a leading-space-stripped form so this test file itself
+# contains NO line-initial widget shape (a repo-wide scan measures zero, and a
+# fixture that broke that would make this very file self-trip the matcher it
+# tests).
+#
+# ONE DEVIATION FROM VERBATIM, recorded so nobody reads it as invention: the pane
+# wrapped "two-question" mid-word across two rows, and the orphaned fragment trips
+# the repo's `typos` gate. The two rows are rejoined. The fragment carries no
+# glyph and no assertion reads it — what these fixtures are FOR is the glyph line
+# and its position relative to the prose, both of which are untouched.
+_mq_1010_visible() {
+    command printf '%s\n' \
+        "     needs its own negative fixtures." \
+        "  2. Widen the shared capture with -S, re-verify all nine" \
+        "     Add \`-S -N\` to the shared \`capture-pane\` in panes_snapshot and the liveness" \
+        "     reader, feeding scrollback to every matcher. Simplest diff by far, but it" \
+        "  4. Type something." \
+        "  5. Chat about this" \
+        "" \
+        "Enter to select · Tab/Arrow keys to navigate · Esc to cancel"
+}
+# The same pane read with scrollback. Carries, in capture order: glyph-bearing
+# PROSE (the two lines a golem reading this repo's own files produces), then the
+# genuine tab bar, then the modal body. The prose sits ABOVE the bar exactly as
+# captured — which is what makes this one fixture serve as both the positive case
+# and the self-trip case.
+_mq_1010_scrollback() {
+    command printf '%s\n' \
+        "  ⎿  invoked with no \`-S\`, so it returns only the **visible** pane. A two-question" \
+        "     form with real option text is taller than 24 rows, so the \`☐/☒ … ✔ Sub" \
+        "     … +59 lines (ctrl+o to expand)" \
+        "  fixture the ACs require." \
+        "←  ☐ Capture fix  ☐ Window size  ✔ Submit  →" \
+        "" \
+        "│ The tab bar is outside the captured pane entirely, so no regex can reach it." \
+        "  4. Type something." \
+        "  5. Chat about this" \
+        "" \
+        "Enter to select · Tab/Arrow keys to navigate · Esc to cancel"
+}
+
+test_pane_multi_question_form_scrolled_off_top() {
+    local visible scrollback
+    visible="$(_mq_1010_visible)"
+    scrollback="$(_mq_1010_scrollback)"
+
+    # THE BUG, REPRODUCED. Text-only (no session) is precisely the pre-#1010 code
+    # path, and on the real captured pane it MISSES. This assertion is what makes
+    # the next one meaningful: without it a green suite could not tell a working
+    # scrollback read from a fixture that was always going to match.
+    assert_equals "1" "$(_pane_rc pane_is_multi_question_form "$visible")" \
+        "The real captured VISIBLE pane misses the form (#1010, the bug)"
+
+    # THE FIX. Same visible text, plus a session whose scrollback holds the bar.
+    assert_equals "0" \
+        "$(_pane_rc_sess pane_is_multi_question_form "$visible" "$scrollback")" \
+        "With the scrollback read, the same pane IS labelled a multi-question form (#1010)"
+
+    # The counterfactual that makes the harm concrete: the visible pane matches
+    # pane_is_fork, so before the fix the operator was told this two-question form
+    # was an ordinary single-question escalation and brokered it with a digit.
+    assert_equals "0" "$(_pane_rc pane_is_fork "$visible")" \
+        "...and the visible pane reads as a plain fork, which is the mislabel (#1010)"
+
+    # End-to-end through the real dispatch chain: the form label must win.
+    PANE_TEXT_S="$scrollback" _run_panes_snapshot_tmux "$visible"
+    assert_contains "$PANES_OUT" "golem-9"$'\t'"escalation (multi-question form) — forward-order only, never a digit" \
+        "panes_snapshot emits the form label for a scrolled-off-top form (#1010)"
+    assert_not_contains "$PANES_OUT" "escalation — awaiting decision (carries options)" \
+        "panes_snapshot no longer emits the plain fork label for it (#1010)"
+}
+
+# THE NEGATIVE THAT #1010 NEWLY REQUIRES. Before this issue the glyph scan saw
+# only the visible pane, so prose had to be ON SCREEN to self-trip it. It now
+# reads SCROLLBACK — where a golem's recently-read file content lives — so
+# MULTI_Q_RE's `^` anchoring became load-bearing in a way the existing self-trip
+# fixtures (written against the visible pane) do not cover.
+#
+# Every fixture below is real text: the two prose lines from the live capture,
+# and lines from escalation-protocol.md, monitor-protocol.md and
+# golem-gate-watch.sh's own comment block — the files a golem actually reads
+# while working this area. Each is placed in SCROLLBACK under an ordinary
+# single-question fork. Removing an anchor from MULTI_Q_RE turns this red.
+test_pane_multi_question_form_scrolled_off_top_prose() {
+    local fork prose
+    fork="What scope should this take?"$'\n'"Enter to select · ↑/↓ to navigate"
+
+    # The captured prose lines, WITHOUT the genuine bar that followed them.
+    prose="$(command printf '%s\n' \
+        "  ⎿  invoked with no \`-S\`, so it returns only the **visible** pane. A two-question" \
+        "     form with real option text is taller than 24 rows, so the \`☐/☒ … ✔ Sub" \
+        "  ... more file content")"
+    assert_equals "1" \
+        "$(_pane_rc_sess pane_is_multi_question_form "$fork" "$prose")" \
+        "Captured glyph-bearing prose in SCROLLBACK does not fake a form (#1010)"
+
+    # Skills prose, copied from escalation-protocol.md / monitor-protocol.md.
+    local skills
+    skills="$(command printf '%s\n' \
+        "  a form carrying 2+ questions renders as a tabbed widget (☐/☒ per question, a ✔ Submit tab)" \
+        "  answer forward-order with ↑/↓+Enter and submit only at all-☒" \
+        "  ... more file content")"
+    assert_equals "1" \
+        "$(_pane_rc_sess pane_is_multi_question_form "$fork" "$skills")" \
+        "Skills prose describing the widget, read into SCROLLBACK, is not a form (#1010)"
+
+    # The unanswered-questions warning quoted mid-sentence, as monitor-protocol.md
+    # carries it. The warning arm needs its own scrollback negative — the checkbox
+    # arm's immunity above says nothing about it.
+    local warn
+    warn="$(command printf '%s\n' \
+        '- **The review screen offers `Submit` while questions are unanswered** ("⚠ You' \
+        '  have not answered all questions"). One stray Enter submits a form.')"
+    assert_equals "1" \
+        "$(_pane_rc_sess pane_is_multi_question_form "$fork" "$warn")" \
+        "The warning quoted mid-sentence in SCROLLBACK is not a form (#1010)"
+
+    # ...and the pane is still correctly labelled the plain fork it actually is,
+    # so the guard did not trade a mislabel for a dropped gate.
+    PANE_TEXT_S="$skills" _run_panes_snapshot_tmux "$fork"
+    assert_contains "$PANES_OUT" "golem-9"$'\t'"escalation — awaiting decision (carries options)" \
+        "panes_snapshot still labels it a plain fork despite the scrollback prose (#1010)"
+    assert_not_contains "$PANES_OUT" "multi-question form" \
+        "panes_snapshot does not mislabel scrollback prose as a form (#1010)"
+}
+
+# $pane_scrollback_lines: the DEPTH asked of `capture-pane -S`, pinned exactly and
+# both ways, mirroring the discipline #459 established for the footer window and
+# #467 for the error window.
+#
+# The knob is exercised through the STUB, which echoes back whatever it is given —
+# so what this pins is the `${GOLEM_PANE_SCROLLBACK_LINES:-100}` wiring reaching
+# the `-S` argument, via a stub that returns the bar only when the requested depth
+# is deep enough. A hardcoded 100, or a typo'd variable name, leaves the override
+# silently unexercised — the same gap #467 found in the error window.
+test_pane_multi_question_form_scrollback_window() {
+    local fork bar
+    fork="What scope should this take?"$'\n'"Enter to select"
+    bar="←  ☐ Capture fix  ☐ Window size  ✔ Submit  →"
+
+    # Default depth: the stub serves the bar, so the form is detected.
+    assert_equals "0" \
+        "$(_pane_rc_sess pane_is_multi_question_form "$fork" "$bar")" \
+        "The default scrollback depth reaches a bar in scrollback (#1010)"
+
+    # Shrink: a depth too small to reach the bar must NOT detect it. The stub is
+    # depth-aware, returning nothing below the requested threshold.
+    assert_equals "1" \
+        "$(MQ_STUB_MIN_DEPTH=50 GOLEM_PANE_SCROLLBACK_LINES=10 \
+            _pane_rc_sess pane_is_multi_question_form "$fork" "$bar")" \
+        "GOLEM_PANE_SCROLLBACK_LINES=10 is too shallow to reach the bar (#1010)"
+
+    # Enlarge: the SAME pane matches once the depth is widened past the threshold,
+    # which is what proves the env var reached the `-S` argument rather than the
+    # matcher failing for an unrelated reason.
+    assert_equals "0" \
+        "$(MQ_STUB_MIN_DEPTH=50 GOLEM_PANE_SCROLLBACK_LINES=200 \
+            _pane_rc_sess pane_is_multi_question_form "$fork" "$bar")" \
+        "GOLEM_PANE_SCROLLBACK_LINES=200 reaches the same bar (#1010)"
+}
+
+# MULTI-SESSION DISPATCH (#1010 review cycle 2). The single-call tests above pin
+# that pane_is_multi_question_form reads the session it is HANDED; this pins that
+# panes_snapshot hands it the right one. The two are different claims, and only
+# this one exercises the loop: with exactly one live session a regression that
+# forwarded a stale, hardcoded or off-by-one `$sess` still reads the only pane
+# there is, so every assertion passes. Two sessions is the smallest fixture that
+# can tell them apart.
+test_panes_snapshot_multi_session_scrollback() {
+    local visible scrollback
+    visible="$(_mq_1010_visible)"
+    scrollback="$(_mq_1010_scrollback)"
+
+    # Two live golems; ONLY golem-8 has the tab bar in its scrollback. Both paint
+    # the same visible footer, so the visible read cannot distinguish them — the
+    # label must follow the scrollback, and therefore the session targeting.
+    TMUX_LS="golem-8: 1 windows"$'\n'"golem-9: 1 windows" \
+        PANE_TEXT_S="$scrollback" PANE_TEXT_S_SESSION="golem-8" \
+        _run_panes_snapshot_tmux "$visible"
+
+    assert_contains "$PANES_OUT" "golem-8"$'\t'"escalation (multi-question form) — forward-order only, never a digit" \
+        "The session whose SCROLLBACK holds the bar is labelled a form (#1010)"
+    assert_contains "$PANES_OUT" "golem-9"$'\t'"escalation — awaiting decision (carries options)" \
+        "Its sibling, with no bar in scrollback, stays a plain fork (#1010)"
+    assert_not_contains "$PANES_OUT" "golem-9"$'\t'"escalation (multi-question form)" \
+        "The form label does not leak onto the sibling session (#1010)"
+}
+
+# THE STALE-BAR WINDOW (#1010 review cycle 2). Guards 1-2 and Guard 3 read the
+# pane at two different instants, and nothing ties the bar Guard 3 finds to the
+# widget that painted the footer Guards 1-2 saw. So a form the golem ALREADY
+# answered leaves its tab bar in scrollback, and a later ORDINARY fork is
+# labelled a form.
+#
+# MEASURED, NOT REASONED: an earlier draft of the comment above this matcher
+# claimed the two-read split "can only lose a detection, never invent one". This
+# fixture is what falsified it. Kept as a pinned, deliberate tradeoff rather than
+# a bug, because it is the SAFE direction — a fork labelled a form routes the
+# operator to the careful broker, while a form labelled a fork (#1010 itself)
+# sends a digit into a two-question widget and half-submits it. If someone later
+# closes this window, this test should CHANGE, not be deleted: it is the record
+# that the asymmetry was chosen.
+test_pane_multi_question_form_stale_bar_in_scrollback() {
+    local fork stale
+    fork="What scope should this take?"$'\n'"Enter to select"
+    # A bar from a form that was answered earlier, still sitting in scrollback.
+    stale="←  ☐ Old  ☐ Form  ✔ Submit  →"$'\n'"  ... later output the golem produced ..."
+
+    assert_equals "0" \
+        "$(_pane_rc_sess pane_is_multi_question_form "$fork" "$stale")" \
+        "A stale tab bar in scrollback DOES label a later fork a form (#1010, known asymmetry)"
+
+    # The same pane read WITHOUT the wider capture is an ordinary fork, which is
+    # what makes this a property of the two-read split rather than of the regex.
+    assert_equals "1" "$(_pane_rc pane_is_multi_question_form "$fork")" \
+        "...while the visible pane alone reads it as the plain fork it is (#1010)"
+}
+
+# THE SESSION MUST BE THE ONE IT WAS GIVEN (#1010 review). Guard 3's whole point
+# is reading the RIGHT pane's scrollback, and until the stub honored `-t` nothing
+# pinned that: a matcher forwarding a hardcoded literal, or the wrong element of a
+# multi-session loop, answered from the same canned text and passed. The stub now
+# owns its text under one session name and returns nothing for any other, so
+# these two assertions bracket the behavior.
+test_pane_multi_question_form_scrollback_session() {
+    local fork bar
+    fork="What scope should this take?"$'\n'"Enter to select"
+    bar="←  ☐ Capture fix  ☐ Window size  ✔ Submit  →"
+
+    # The stub owns the text under the session _pane_rc_sess passes (golem-9).
+    assert_equals "0" \
+        "$(_pane_rc_sess pane_is_multi_question_form "$fork" "$bar")" \
+        "The scrollback read reaches the session it was handed (#1010)"
+
+    # Give the text to a DIFFERENT session: the read must come back empty and the
+    # matcher must fall back, not answer from another pane's scrollback. Reverting
+    # the stub's `-t` branch turns this red while every other assertion stays green.
+    assert_equals "1" \
+        "$(MQ_STUB_SESSION=golem-other \
+            _pane_rc_sess pane_is_multi_question_form "$fork" "$bar")" \
+        "Scrollback belonging to ANOTHER session is not read (#1010 review)"
+}
+
+# A malformed GOLEM_PANE_SCROLLBACK_LINES must not silently disable the widened
+# window (#1010 review). The value is concatenated into `-S -$n`, so a
+# `-`-leading or non-numeric setting builds a token tmux rejects; the rejection
+# degrades to the visible-pane fallback, which is safe but SILENT — the widened
+# read would look like it simply was not working. The knob is validated back to
+# its default instead, so a mistyped value still detects the form.
+test_pane_multi_question_form_scrollback_malformed_knob() {
+    local fork bar i filler deep
+    fork="What scope should this take?"$'\n'"Enter to select"
+    bar="←  ☐ Capture fix  ☐ Window size  ✔ Submit  →"
+
+    # A bar the VISIBLE tail cannot reach, so only the scrollback read can match
+    # it — which is what makes this assert the knob rather than the fallback.
+    filler=""
+    for i in $(seq 1 45); do filler="${filler}  filler line $i"$'\n'; done
+    deep="${bar}"$'\n'"${filler}"
+
+    local bad
+    for bad in "" "abc" "-5" "0"; do
+        assert_equals "0" \
+            "$(GOLEM_PANE_SCROLLBACK_LINES="$bad" \
+                _pane_rc_sess pane_is_multi_question_form "$fork" "$deep")" \
+            "A malformed GOLEM_PANE_SCROLLBACK_LINES ('$bad') still reads scrollback (#1010 review)"
+    done
+}
+
+# FAIL-OPEN, NOT FAIL-CLOSED, AND NEVER FAIL-INVENTED. Three ways the wider read
+# can be unavailable — no session argument, no tmux on PATH, an empty capture —
+# must each reproduce the pre-#1010 visible-pane verdict exactly. A detector that
+# could not look wider has learned nothing extra, so it reports what the narrow
+# check reports: it must not start returning 0 (a fabricated form, which would
+# send the operator to the wrong broker for a gate that is not one), and it must
+# not stop matching a bar that IS visible.
+test_pane_multi_question_form_scrollback_fallback() {
+    local visible_bar fork
+    visible_bar="←  ☒ Follow-up  ☐ Issue repo  ✔ Submit  →"$'\n'"Enter to select"
+    fork="What scope should this take?"$'\n'"Enter to select"
+
+    # (a) Empty capture — the `-S` read returns nothing.
+    assert_equals "0" \
+        "$(_pane_rc_sess pane_is_multi_question_form "$visible_bar" "")" \
+        "An EMPTY scrollback capture falls back to the visible pane, which matches (#1010)"
+    assert_equals "1" \
+        "$(_pane_rc_sess pane_is_multi_question_form "$fork" "")" \
+        "An EMPTY scrollback capture does not fabricate a form from a plain fork (#1010)"
+
+    # (b) No session argument at all — every pre-#1010 text-only caller.
+    assert_equals "0" "$(_pane_rc pane_is_multi_question_form "$visible_bar")" \
+        "A text-only call (no session) still matches a VISIBLE bar (#1010)"
+    assert_equals "1" "$(_pane_rc pane_is_multi_question_form "$fork")" \
+        "A text-only call does not fabricate a form from a plain fork (#1010)"
+
+    # (c) No tmux on PATH — a headless host. The matcher must degrade, not error.
+    assert_equals "1" \
+        "$(MQ_STUB_NO_TMUX=1 _pane_rc_sess pane_is_multi_question_form "$fork" "$visible_bar")" \
+        "With NO tmux the wider read is skipped and the fork stays a fork (#1010)"
+    assert_equals "0" \
+        "$(MQ_STUB_NO_TMUX=1 _pane_rc_sess pane_is_multi_question_form "$visible_bar" "")" \
+        "With NO tmux a VISIBLE bar is still matched from the pane text (#1010)"
+}
+
 # The motivating live failure (#467): DETECTION failed before keystrokes did. On
 # a real two-question form the first capture-pane showed only ONE question — the
 # `☐/☒` tab bar had scrolled ABOVE the 8-line footer window — so an orchestrator
