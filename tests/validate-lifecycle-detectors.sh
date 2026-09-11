@@ -796,6 +796,39 @@ test_bash_lifecycle_arms() {
     assert_fires "$list" unreaped-subprocess "Subprocess spawned without visible reap" \
         "lifecycle: .bash extension reaches the unreaped-subprocess arm"
 
+    # A backgrounded command whose last token is QUOTED — `curl "$url" &` and
+    # its single-quoted twin. This is most real background jobs, and an earlier
+    # draft's character class excluded the quote characters, so every one of
+    # them was invisible in BOTH runtimes. Parity stayed green throughout: the
+    # shared-defect blind spot this repo keeps filing issues about.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'curl "$url" &' >"$d/dq.sh"
+    list="$(make_list "$d/l" "$d/dq.sh")"
+    assert_fires "$list" unreaped-subprocess "Subprocess spawned without visible reap" \
+        "lifecycle: bash background job ending in a double-quoted arg fires"
+
+    d="$(fresh_dir)"
+    command printf '%s\n' "run_task '5' &" >"$d/sq.sh"
+    list="$(make_list "$d/l" "$d/sq.sh")"
+    assert_fires "$list" unreaped-subprocess "Subprocess spawned without visible reap" \
+        "lifecycle: bash background job ending in a single-quoted arg fires"
+
+    # An inline env-var prefix, and a compound assignment-then-command one-liner.
+    # Both are genuine COMMANDS. The first draft excluded any line that merely
+    # STARTED with `NAME=`, which silenced both while still covering the one
+    # corpus false positive — a proxy that happened to work on its sample.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'FOO=bar long_running_task &' >"$d/envpfx.sh"
+    list="$(make_list "$d/l" "$d/envpfx.sh")"
+    assert_fires "$list" unreaped-subprocess "Subprocess spawned without visible reap" \
+        "lifecycle: bash env-prefixed background job fires (not an assignment)"
+
+    d="$(fresh_dir)"
+    command printf '%s\n' 'x=1; long_task &' >"$d/compound.sh"
+    list="$(make_list "$d/l" "$d/compound.sh")"
+    assert_fires "$list" unreaped-subprocess "Subprocess spawned without visible reap" \
+        "lifecycle: bash assignment-then-command one-liner still fires"
+
     # --- unreaped-subprocess negatives: the three exclusions ---------------
     # `&&` is a control operator. Written WITHOUT a trailing background job so
     # only the && exclusion can keep it silent.
@@ -813,11 +846,13 @@ test_bash_lifecycle_arms() {
     assert_silent "$list" unreaped-subprocess \
         "lifecycle: bash >& fd-dup is not a background job"
 
-    # The ASSIGNMENT exclusion — the sole corpus false positive
-    # (plugins/workflow/hooks/bash-guard.sh:701). Its `&` sits inside a TRAILING
+    # The TRAILING-COMMENT exclusion — the sole corpus false positive
+    # (plugins/workflow/hooks/bash-guard.sh:701). Its `&` sits inside a trailing
     # comment, which is_comment() cannot suppress (it is line-START only), so
-    # excluding assignment-shaped lines is what removes it. This fixture is why
-    # that exclusion exists; mutating it away turns this red.
+    # this exclusion is what removes it. Note what the fixture pins: the line is
+    # silent because the `&` is COMMENTED, not because the line is an
+    # assignment — the four positives above are what keep that distinction
+    # honest. Mutating the exclusion away turns this red.
     d="$(fresh_dir)"
     command printf '%s\n' '_tgt="${_tgt#&}"   # `>&2` fd-dup, not a file — strip &' >"$d/assign.sh"
     list="$(make_list "$d/l" "$d/assign.sh")"
@@ -868,6 +903,17 @@ test_bash_lifecycle_arms() {
     list="$(make_list "$d/l" "$d/trap.sh")"
     assert_silent "$list" unpaired-listener \
         "lifecycle: bash unpaired-listener is — (a trap needs no paired removal)"
+
+    # The issue's second `unclosed-handle` idiom: a temp file with no `trap`.
+    # Refused on the OPPOSITE ground from `exec N>` — not absent but far too
+    # common to be a signal (48 of 123 corpus mktemp callers declare no trap, and
+    # nearly all are correct, most being sourced fragments whose PARENT traps).
+    # This file is exactly that shape, and must stay silent.
+    d="$(fresh_dir)"
+    command printf '%s\n%s\n' 'work="$(mktemp -d)"' 'command cp x "$work/"' >"$d/tmpnotrap.sh"
+    list="$(make_list "$d/l" "$d/tmpnotrap.sh")"
+    assert_silent "$list" unclosed-handle \
+        "lifecycle: bash mktemp without a trap stays silent (— by flood, not absence)"
 }
 
 # ============================================================================

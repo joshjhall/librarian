@@ -424,30 +424,42 @@ while IFS= read -r file; do
             #
             # unreaped-subprocess: a command backgrounded with a trailing `&`.
             # THREE exclusions, each measured necessary against this repo's own
-            # 299-file shell corpus rather than reasoned about:
+            # shell corpus (304 tracked `.sh` files) rather than reasoned about:
             #
             #   `&&`  — a control operator, not a job-control `&`.
             #   `>&`  — an fd-dup (`2>&1`), which is why the class before the
             #           space excludes `>` and `|` as well.
-            #   an ASSIGNMENT-shaped line — `_tgt="${_tgt#&}"`. This one is the
-            #           interesting exclusion: that line's `&` sits inside a
-            #           TRAILING comment, and is_comment() is line-START only,
-            #           so the lexical model cannot suppress it. It was the sole
-            #           false positive in the corpus, and excluding assignments
-            #           is what removes it. A backgrounded job is a COMMAND, so
-            #           the exclusion costs no true positive.
+            #   a TRAILING COMMENT ending in `&` — `… # `>&2` fd-dup … strip &`
+            #           (plugins/workflow/hooks/bash-guard.sh:701), the corpus's
+            #           sole false positive. is_comment() is line-START only, so
+            #           the lexical model cannot suppress a comment that begins
+            #           mid-line; this exclusion is what removes it.
             #
-            # Measured after those exclusions: 6 rows over the non-test corpus,
-            # all genuine background jobs, 0 false positives. Like every other
-            # arm here this is a single-line CANDIDATE for the LLM pass to
-            # confirm against its `wait` — deliberately not a lookahead, since a
-            # reaping `wait` may sit anywhere (a trap, a later loop, a caller).
+            # The comment exclusion keys on the COMMENT, which is the property
+            # that actually makes the line a false positive. An earlier draft
+            # keyed on the line being ASSIGNMENT-shaped instead — a proxy that
+            # happened to cover this one line while silently suppressing every
+            # env-prefixed background job (`FOO=bar task &`) and every compound
+            # one-liner (`x=1; task &`), both genuine COMMANDS. Likewise the
+            # class before the space must NOT exclude the quote characters:
+            # doing so made `curl "$url" &` — a backgrounded job whose last
+            # token is quoted, which is most of them — invisible. Both were
+            # shared across the two runtimes, so parity stayed green while both
+            # halves were wrong; see the fixtures that now pin each shape.
+            #
+            # Measured after those exclusions: 18 rows corpus-wide, all genuine
+            # background jobs, 0 false positives. Like every other arm here this
+            # is a single-line CANDIDATE for the LLM pass to confirm against its
+            # `wait` — deliberately not a lookahead, since a reaping `wait` may
+            # sit anywhere (a trap, a later loop, a caller).
             #
             # The exclusion rides emit_rows_unless because ERE has no negative
             # lookahead. `[ \t]` is spelled as a bracket expression here (not
-            # `\t`, which BSD grep reads literally) — the class before it must
-            # keep excluding the backtick and both quote characters.
-            emit_rows_unless '[^&>|`"'"'"'}][[:space:]]&[[:space:]]*$' "unreaped-subprocess" "$L_SUBPROCESS" "$file" '^[0-9]+:[[:space:]]*[A-Za-z_][A-Za-z0-9_]*='
+            # `\t`, which BSD grep reads literally). This exclusion is NOT
+            # `^`-anchored, so it is indifferent to the `grep -n` prefix the
+            # helper warns about — but read that warning before adding one that
+            # is.
+            emit_rows_unless '[^&>|`}][[:space:]]&[[:space:]]*$' "unreaped-subprocess" "$L_SUBPROCESS" "$file" '[[:space:]]#[^"'"'"']*&[[:space:]]*$'
             # terminate-without-kill: the GRACEFUL send site, matching how the
             # Rust arm above reads this category — flag the SIGTERM, let the
             # pass confirm it escalates. `-15` and `-s TERM` are the same signal

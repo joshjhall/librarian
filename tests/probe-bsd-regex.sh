@@ -180,14 +180,23 @@ require "grep -w rejects a partial word" "$V"
 # the class is what separates a job-control `&` from an fd-dup, and the anchor
 # is what makes the exclusion fire at all (it binds to the line-number prefix
 # otherwise — the divergence that phase measured on the bash runtime only).
-probe_grep V 'command sleep 30 &' '[^&>|`"'"'"'}][[:space:]]&[[:space:]]*$' -E
-require "negated class with quotes/backtick, trailing & (#842)" "$V"
+probe_grep V 'command sleep 30 &' '[^&>|`}][[:space:]]&[[:space:]]*$' -E
+require "negated class with backtick, trailing & (#842)" "$V"
 
-probe_grep_rejects V 'command ls >/dev/null 2>&1' '[^&>|`"'"'"'}][[:space:]]&[[:space:]]*$' -E
+probe_grep V 'curl "$url" &' '[^&>|`}][[:space:]]&[[:space:]]*$' -E
+require "that class ADMITS a quoted final argument (#842)" "$V"
+
+probe_grep_rejects V 'command ls >/dev/null 2>&1' '[^&>|`}][[:space:]]&[[:space:]]*$' -E
 require "that class rejects an fd-dup line (#842)" "$V"
 
-probe_grep V '701:            _tgt="${_tgt#&}"' '^[0-9]+:[[:space:]]*[A-Za-z_][A-Za-z0-9_]*=' -E
-require "grep -n prefix anchor in an exclusion filter (#842)" "$V"
+# The exclusion filter: a trailing COMMENT whose text ends in `&`. Unanchored,
+# so unlike the draft it replaced it does not care about the `grep -n` prefix —
+# but it does need the negated class to survive BSD's bracket parsing intact.
+probe_grep V '            _tgt="${_tgt#&}"   # `>&2` fd-dup — strip &' '[[:space:]]#[^"'"'"']*&[[:space:]]*$' -E
+require "trailing-comment exclusion filter matches (#842)" "$V"
+
+probe_grep_rejects V 'FOO=bar long_running_task &' '[[:space:]]#[^"'"'"']*&[[:space:]]*$' -E
+require "that exclusion leaves an env-prefixed job alone (#842)" "$V"
 
 probe_sed V 'a  b' 's/[[:space:]]+/_/' 'a_b'
 require "[[:space:]] under sed -E" "$V"

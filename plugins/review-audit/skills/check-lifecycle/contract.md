@@ -189,6 +189,18 @@ declines are measurements rather than unwritten arms.
 - **`unclosed-handle` is `—`.** The bash analogue would be `exec 3>file` without
   a closing `exec 3>&-`, and that idiom measures **zero** occurrences across the
   whole corpus. An arm for it would be unfalsifiable by this repo's own evidence.
+  The issue named a **second** idiom for this cell — a temp file created without
+  a `trap … EXIT` to clean it up — and it is refused on the opposite ground, so
+  it is recorded separately rather than folded into the sentence above. It is not
+  absent but **too common to be a signal**: 123 corpus files call `mktemp`, and
+  **48 of them declare no `trap` at all**. Nearly every one of those 48 is
+  structurally fine — most are `.`-sourced test **fragments** whose parent entry
+  point owns the trap (`tests/golem-scripts/10-launch.sh`,
+  `tests/pre-review-gates/98-security.sh` and their siblings), and the rest clean
+  up inline or hand the directory to a caller. A single-line regex cannot see any
+  of that: the `trap` it is looking for is in a **different file**. At a ~39%
+  raw-hit rate whose true positives are indistinguishable without whole-program
+  reasoning, this is a `—` by measurement, like the two above it.
 - **`unpaired-listener` is `—`.** Bash has no in-process registration outliving
   its statement. `trap` is the nearest shape, but a trap is scoped to the shell's
   own lifetime and needs no paired removal, so flagging it would report the

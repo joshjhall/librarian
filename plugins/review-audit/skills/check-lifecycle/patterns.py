@@ -234,26 +234,36 @@ def scan_file(path: str, lines: list[str]) -> None:
             #
             # unreaped-subprocess: a command backgrounded with a trailing `&`.
             # THREE exclusions, each measured necessary against this repo's own
-            # 299-file shell corpus rather than reasoned about:
+            # shell corpus (304 tracked `.sh` files) rather than reasoned about:
             #
             #   `&&`  — a control operator, not a job-control `&`.
             #   `>&`  — an fd-dup (`2>&1`), which is why the class before the
             #           space excludes `>` and `|` as well.
-            #   an ASSIGNMENT-shaped line — `_tgt="${_tgt#&}"`. This one is the
-            #           interesting exclusion: that line's `&` sits inside a
-            #           TRAILING comment, and is_comment() is line-START only,
-            #           so the lexical model cannot suppress it. It was the sole
-            #           false positive in the corpus, and excluding assignments
-            #           is what removes it. A backgrounded job is a COMMAND, so
-            #           the exclusion costs no true positive.
+            #   a TRAILING COMMENT ending in `&` — `… # `>&2` fd-dup … strip &`
+            #           (plugins/workflow/hooks/bash-guard.sh:701), the corpus's
+            #           sole false positive. is_comment() is line-START only, so
+            #           the lexical model cannot suppress a comment that begins
+            #           mid-line; this exclusion is what removes it.
             #
-            # Measured after those exclusions: 6 rows over the non-test corpus,
-            # all genuine background jobs, 0 false positives. Like every other
-            # arm here this is a single-line CANDIDATE for the LLM pass to
-            # confirm against its `wait` — deliberately not a lookahead, since a
-            # reaping `wait` may sit anywhere (a trap, a later loop, a caller).
-            if re.search(r"[^&>|`\"'}][ \t]&[ \t]*$", line) and not re.search(
-                r"^[ \t]*[A-Za-z_][A-Za-z0-9_]*=", line
+            # The comment exclusion keys on the COMMENT, which is the property
+            # that actually makes the line a false positive. An earlier draft
+            # keyed on the line being ASSIGNMENT-shaped instead — a proxy that
+            # happened to cover this one line while silently suppressing every
+            # env-prefixed background job (`FOO=bar task &`) and every compound
+            # one-liner (`x=1; task &`), both genuine COMMANDS. Likewise the
+            # class before the space must NOT exclude the quote characters:
+            # doing so made `curl "$url" &` — a backgrounded job whose last
+            # token is quoted, which is most of them — invisible. Both were
+            # shared across the two runtimes, so parity stayed green while both
+            # halves were wrong; see the fixtures that now pin each shape.
+            #
+            # Measured after those exclusions: 18 rows corpus-wide, all genuine
+            # background jobs, 0 false positives. Like every other arm here this
+            # is a single-line CANDIDATE for the LLM pass to confirm against its
+            # `wait` — deliberately not a lookahead, since a reaping `wait` may
+            # sit anywhere (a trap, a later loop, a caller).
+            if re.search(r"[^&>|`}][ \t]&[ \t]*$", line) and not re.search(
+                r"[ \t]#[^\"']*&[ \t]*$", line
             ):
                 emit(path, idx, "unreaped-subprocess", L_SUBPROCESS, line)
             # terminate-without-kill: the GRACEFUL send site, matching how the

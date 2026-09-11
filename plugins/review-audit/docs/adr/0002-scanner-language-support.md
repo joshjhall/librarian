@@ -535,6 +535,7 @@ each other once 1 is in.
    | unquoted `$` into `eval` | security (CRITICAL) | 1 | refused |
    | SQL string + expansion | security (CRITICAL) | 32, ~all FP | refused |
    | `exec N>` unclosed | lifecycle (MEDIUM) | 0 | `—`, real absence |
+   | temp file, no `trap` | lifecycle (MEDIUM) | 48 of 123, ~all FP | `—`, unreachable |
    | trailing `&`, no `wait` | lifecycle (MEDIUM) | 6, 0 FP | **shipped** |
    | `kill -TERM` | lifecycle (MEDIUM) | 4 | **shipped** |
 
@@ -550,6 +551,15 @@ each other once 1 is in.
    **The single `eval` hit is a test fixture inside a markdown heredoc.** Worth
    stating because a raw count of 1 looks shippable until the hit is inspected;
    the safe quoted form matches 52 times in the same corpus.
+
+   **Two of the refusals are refusals for opposite reasons, and the table above
+   would read as one verdict if it did not say so.** `exec N>` is declined
+   because the idiom is **absent** (0 hits — nothing to detect). The trap-less
+   temp file is declined because it is **everywhere and unreachable**: 48 of the
+   123 `mktemp` callers declare no `trap`, and nearly all are correct anyway —
+   most are `.`-sourced test fragments whose **parent** owns the trap. A
+   single-line regex is looking for a statement in a different file. *A zero and
+   a flood are both `—`, and recording only the verdict loses which one it was.*
 
    **`check-security` needed no code change — the third consecutive phase to find
    its subject already modeled.** Bash resolves there by four independent paths
