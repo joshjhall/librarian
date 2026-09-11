@@ -85,3 +85,9 @@ stdout_is_output:
   # corpus whose results are all under the floor each pin exit 3), so this
   # suppression cannot hide a silent-failure path here either.
   - "plugins/workflow/scripts/token-attribute.py"
+  # Its two sibling modules (#788). The CLI is a thin entry point; `emit` and
+  # every refusal message live in these, so after the split they carry the
+  # print family the three entries above describe. Same structural fact, same
+  # separately-asserted exit-3 paths — the rows simply moved files.
+  - "plugins/workflow/scripts/token_attribute_engine.py"
+  - "plugins/workflow/scripts/token_attribute_reports.py"

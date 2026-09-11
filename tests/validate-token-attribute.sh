@@ -779,6 +779,97 @@ test_gh_noun_verb_is_resolved_on_the_verb() {
     assert_equals "2" "$(row_field "	mutate	" 4)" "gh pr merge / gh pr create are mutations"
 }
 
+# --- cycle-2 findings: the two arms no earlier fixture reached -------------
+
+test_until_without_since_is_rejected() {
+    # CYCLE 2, BLOCKING. `Window.declared` is true for EITHER boundary (it gates
+    # the warning), but only --since supplies a verbatim window_start. So
+    # `--until` alone suppressed the warning AND fell back to the earliest stamp
+    # seen — a key that silently claims to be a real join key, which is exactly
+    # the shape cycle 1 was filed to eliminate. Every existing --until fixture
+    # pairs it with --since, so nothing reached this arm.
+    run_ta debt "$MULTI" --until 2026-08-26T00:00:00Z
+    assert_equals "2" "$RC" "--until without --since is a usage error, not a half-window"
+    assert_contains "$OUT" "needs a --since" "and says what is missing"
+    # The failure it replaces: exit 0, no warning, descriptive key.
+    assert_not_contains "$OUT" "window_start	model" "it emits no table at all"
+}
+
+test_value_taking_flags_do_not_eat_the_subcommand() {
+    # CYCLE 2, BLOCKING. The operand scan filtered flags but not their VALUES,
+    # so `git -C some/dir log` left `some/dir` as the first operand, matched no
+    # read subcommand, and classified a log as a MUTATION. Measured across
+    # `git -C`, `gh -R` and `npm -w` — and this repo's own scripts use `-C`
+    # constantly, so the miscount lands on the read share in the direction that
+    # UNDERSTATES investigation.
+    local vf="$WORKDIR/valueflags"
+    command mkdir -p "$vf/proj"
+    command printf '{"type":"assistant","sessionId":"v1","timestamp":"2026-08-23T09:00:00.000Z","message":{"id":"vf1","role":"assistant","model":"claude-opus-5","content":[{"type":"tool_use","id":"v_a","name":"Bash","input":{"command":"git -C some/dir log --oneline"}},{"type":"tool_use","id":"v_b","name":"Bash","input":{"command":"gh -R owner/repo pr view 1"}},{"type":"tool_use","id":"v_c","name":"Bash","input":{"command":"git --git-dir=/tmp/.git log"}},{"type":"tool_use","id":"v_d","name":"Bash","input":{"command":"git -C /tmp push origin main"}}],"usage":{"input_tokens":1,"cache_read_input_tokens":10,"cache_creation_input_tokens":0,"output_tokens":1}}}\n' \
+        >"$vf/proj/session-v.jsonl"
+
+    run_ta bash-class "$vf"
+    assert_equals "0" "$RC" "the value-flag corpus reports"
+    # Three reads: the flag's value must not be mistaken for the subcommand,
+    # whether it is separate (`-C dir`, `-R owner/repo`) or inline (`--git-dir=`).
+    assert_equals "3" "$(row_field "	read	" 4)" \
+        "a flag's value is skipped, not read as the subcommand"
+    # And the guard must not over-consume: `git -C /tmp push` is still a
+    # mutation, so skipping cannot have swallowed the real verb.
+    assert_equals "1" "$(row_field "	mutate	" 4)" \
+        "skipping a flag value does not swallow the real subcommand"
+}
+
+test_prefix_honours_the_window() {
+    # CYCLE 2, deferrable-but-cheap. cmd_prefix filters with a `break` on the
+    # first billed turn rather than the shared list comprehension every other
+    # report uses, and no fixture passed --since to `prefix` — so its window
+    # arm was the one structurally-different filter with no coverage.
+    local pw="$WORKDIR/prefix-window"
+    command mkdir -p "$pw/proj/sess/subagents/wf"
+    command printf '{"type":"assistant","sessionId":"o1","timestamp":"2026-08-20T09:00:00.000Z","message":{"id":"pw1","role":"assistant","model":"claude-opus-5","content":[{"type":"text","text":"old"}],"usage":{"input_tokens":2,"cache_read_input_tokens":11000,"cache_creation_input_tokens":0,"output_tokens":5}}}\n' \
+        >"$pw/proj/sess/subagents/wf/agent-old.jsonl"
+    command printf '{"type":"assistant","sessionId":"n1","timestamp":"2026-08-25T09:00:00.000Z","message":{"id":"pw2","role":"assistant","model":"claude-opus-5","content":[{"type":"text","text":"new"}],"usage":{"input_tokens":2,"cache_read_input_tokens":22000,"cache_creation_input_tokens":0,"output_tokens":5}}}\n' \
+        >"$pw/proj/sess/subagents/wf/agent-new.jsonl"
+
+    run_ta prefix "$pw" --since 2026-08-24T00:00:00Z --until 2026-08-26T00:00:00Z
+    assert_equals "0" "$RC" "a windowed prefix run reports"
+    assert_equals "1" "$(row_field "claude-opus-5" 3)" \
+        "only the in-window spawn is counted"
+    # The in-window spawn is the 22002-token one; counting the out-of-window one
+    # would move this number, so it pins WHICH spawn survived rather than merely
+    # how many.
+    assert_equals "22002" "$(row_field "claude-opus-5" 4)" \
+        "and it is the in-window spawn, not the older one"
+    # Both spawns unscoped, so the filter is what excluded it — not the corpus.
+    run_ta prefix "$pw"
+    assert_equals "2" "$(row_field "claude-opus-5" 3)" \
+        "both spawns are present when no window is declared"
+}
+
+test_tab_bearing_field_cannot_shift_columns() {
+    # The join is POSITIONAL, and `attachments`' vocabulary is deliberately OPEN
+    # — the type string comes straight from transcript JSON. A tab in it splits
+    # the row, so every later column is read as a different field and the row
+    # still looks well-formed. Escaping is centralized in emit(); this pins it.
+    local tabf="$WORKDIR/tabfield"
+    command mkdir -p "$tabf/proj"
+    {
+        command printf '{"type":"attachment","sessionId":"t1","timestamp":"2026-08-23T09:00:00.000Z","attachment":{"type":"evil\\tname","text":"x"}}\n'
+        # A billed turn too: cmd_attachments walks turns, so an attachment-only
+        # transcript takes the exit-3 arm and never reaches the escaping.
+        command printf '{"type":"assistant","sessionId":"t1","timestamp":"2026-08-23T09:00:01.000Z","message":{"id":"t1","role":"assistant","model":"claude-opus-5","content":[{"type":"text","text":"x"}],"usage":{"input_tokens":1,"cache_read_input_tokens":100,"cache_creation_input_tokens":0,"output_tokens":5}}}\n'
+    } >"$tabf/proj/session-t.jsonl"
+
+    run_ta attachments "$tabf"
+    assert_equals "0" "$RC" "a tab-bearing attachment type reports"
+    # Every row must have exactly the declared number of columns.
+    local widths
+    widths="$(command printf '%s\n' "$OUT" | command grep -v '^#' |
+        command awk -F'\t' '{print NF}' | command sort -u | command tr '\n' ' ')"
+    assert_equals "7 " "$widths" "the embedded tab does not add a column"
+    assert_contains "$OUT" "evil name" "and the value survives with the tab neutralized"
+}
+
 # --- the shim's 77 sentinel --------------------------------------------------
 
 test_shim_reports_77_without_python() {
@@ -903,6 +994,10 @@ run_test test_empty_decile_is_a_sentinel_not_a_zero "an empty decile is a sentin
 run_test test_percentile_does_not_collapse_p90_onto_the_maximum "p90 does not collapse onto the maximum at n=10"
 run_test test_gh_npm_and_ruff_subcommands_are_resolved "gh/npm/ruff subcommands resolve read vs mutate"
 run_test test_gh_noun_verb_is_resolved_on_the_verb "gh noun-verb resolves on the VERB, not the noun"
+run_test test_until_without_since_is_rejected "--until without --since is rejected (cycle 2)"
+run_test test_value_taking_flags_do_not_eat_the_subcommand "a flag value is not read as the subcommand (cycle 2)"
+run_test test_prefix_honours_the_window "prefix honours --since/--until (cycle 2)"
+run_test test_tab_bearing_field_cannot_shift_columns "an embedded tab cannot shift TSV columns"
 run_test test_shim_reports_77_without_python "the shim exits 77 when python3 is absent"
 run_test test_shim_reports_77_on_old_python "the shim exits 77 when python3 is too old"
 run_test test_shim_diagnoses_a_missing_tool_correctly "the shim diagnoses a missing .py distinctly"

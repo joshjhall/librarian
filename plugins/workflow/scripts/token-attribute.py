@@ -176,6 +176,21 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 2
+    # --until ALONE is a usage error, not a half-declared window. `declared` is
+    # true for either boundary (it gates the warning), but only --since supplies
+    # a verbatim window_start — so `--until` on its own suppressed the warning
+    # while still emitting the earliest-stamp fallback: a key that silently
+    # claims to be a real join key. That is the exact shape cycle 1 was filed to
+    # eliminate, reachable through the one flag combination no fixture covered.
+    # Rejecting it is the fail-loud reading, and it matches --until's own help.
+    if until is not None and since is None:
+        print(
+            "token-attribute: --until needs a --since to anchor window_start.\n"
+            "Without one the emitted key would be the earliest stamp SEEN, "
+            "which joins against no gateway window.",
+            file=sys.stderr,
+        )
+        return 2
     if since is not None and until is not None and until <= since:
         print(
             f"token-attribute: --until ({args.until}) is not after "

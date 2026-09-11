@@ -201,7 +201,7 @@ def cmd_floor(root: pathlib.Path, tz: datetime.tzinfo, window: Window) -> int:
                 start_key,
                 model,
                 kind,
-                FLOOR_COMPONENTS[kind].replace("\t", " "),
+                FLOOR_COMPONENTS[kind],
                 entry["count"],
                 entry["tokens"],
                 share,

@@ -93,6 +93,24 @@ SHELL_PREFIXES = frozenset("command builtin exec time nohup sudo env".split())
 # looking at the second word. Without this `git log` and `git push` land in the
 # same bucket, and git is by far the most common head word in this corpus -- so
 # collapsing it would dominate the very ratio being measured.
+# Flags that CONSUME the next bare word, per head command. Without these the
+# operand scan takes a flag's VALUE for the subcommand: `git -C some/dir log`
+# filters out `-C`, leaves `some/dir` as the first operand, finds it in no read
+# list, and classifies a log as a mutation. Measured: `git -C /tmp status` and
+# `gh -R o/r pr view` both read as mutations, and this repo's own scripts use
+# `-C` constantly, so the miscount would land on the read share the 49%/67%
+# finding quotes -- in the direction that UNDERSTATES investigation.
+#
+# Only value-taking flags belong here. A bare toggle (`--no-pager`, `--oneline`)
+# is already handled by the startswith("-") filter; adding one here would eat
+# the real subcommand instead.
+VALUE_FLAGS = {
+    "git": frozenset("-C -c --git-dir --work-tree --namespace".split()),
+    "gh": frozenset("-R --repo".split()),
+    "npm": frozenset("-w --workspace --prefix".split()),
+    "ruff": frozenset("--config".split()),
+}
+
 SUBCOMMAND_READ = {
     "git": frozenset(
         "blame branch cat-file diff log ls-files rev-parse show status".split()
@@ -395,7 +413,24 @@ def classify_bash(command: str) -> str:
             head = words[0].split("/")[-1]
             sub = SUBCOMMAND_READ.get(head)
             if sub is not None:
-                operands = [w for w in words[1:] if not w.startswith("-")]
+                # Walk rather than filter: a value-taking flag must consume the
+                # word after it, or that word is mistaken for the subcommand.
+                value_flags = VALUE_FLAGS.get(head, frozenset())
+                operands = []
+                rest = words[1:]
+                idx = 0
+                while idx < len(rest):
+                    word = rest[idx]
+                    if word in value_flags:
+                        idx += 2  # skip the flag AND its value
+                        continue
+                    if word.startswith("-"):
+                        # `-C/path` and `--git-dir=x` carry their value inline,
+                        # so they consume nothing extra.
+                        idx += 1
+                        continue
+                    operands.append(word)
+                    idx += 1
                 arg = operands[0] if operands else ""
                 if head == "gh" and arg in GH_NOUNS:
                     # Noun-then-verb: the verb carries the meaning. A bare
@@ -419,6 +454,24 @@ def classify_bash(command: str) -> str:
 
 
 # --- output -------------------------------------------------------------------
+
+
+def _tsv_safe(field: object) -> str:
+    """Render one field, with the delimiters that would corrupt the row removed.
+
+    Several columns are read VERBATIM from transcript JSON -- `model`, a tool
+    `name`, and `attachments`' deliberately OPEN attachment-type vocabulary. A
+    tab or newline in any of them splits the row into extra columns or extra
+    rows, and this contract's join is POSITIONAL, so a shifted column is read as
+    a different field entirely rather than failing. cmd_floor already sanitized
+    its fixed-vocabulary label; centralizing it here covers the fields that
+    actually take untrusted input instead.
+
+    An empty field collapses under a reader's field split the same way, so it
+    becomes the `-` sentinel used elsewhere for an unknown value.
+    """
+    text = str(field).replace("\t", " ").replace("\r", " ").replace("\n", " ")
+    return text if text else "-"
 
 
 def emit(columns: list[str], rows: list[list], title: str, window: "Window") -> None:
@@ -445,7 +498,7 @@ def emit(columns: list[str], rows: list[list], title: str, window: "Window") -> 
         )
     print("# columns: " + "\t".join(columns))
     for row in rows:
-        print("\t".join(str(field) for field in row))
+        print("\t".join(_tsv_safe(field) for field in row))
 
 
 def _window_start(turns: list[dict], window: "Window") -> str:
