@@ -931,10 +931,15 @@ import json, re, subprocess, sys
 src = open(sys.argv[1]).read()
 bad = 0
 for payload in re.findall(r"command printf '(\{[^']*)'", src):
-    if "%" in payload:
-        continue
+    # A payload carrying %s/%02d is assembled at runtime from shell variables.
+    # Skipping those would leave 11 of 41 unchecked — a blind spot inside the
+    # very guard written to remove one — so feed printf placeholder arguments
+    # instead. The substituted VALUE is irrelevant here; what is being checked
+    # is that the surrounding literal carries no raw control character.
+    slots = payload.count("%") - 2 * payload.count("%%")
+    args = ["1"] * max(0, slots)
     rendered = subprocess.run(
-        ["printf", payload], capture_output=True, text=True
+        ["printf", payload, *args], capture_output=True, text=True
     ).stdout
     for line in rendered.splitlines():
         if not line.strip() or "truncated" in line:
