@@ -235,3 +235,97 @@ test_worktree_rm_named_merge_gate_does_not_leak_into_issue_mode() {
     branches="$(sb_git "$sb" branch --list "feature/issue-77")"
     assert_equals "" "$branches" "the issue branch is gone"
 }
+
+# --- review-cycle regressions (#1005 review) ---------------------------------
+
+# The DIRECTORY-NAME spelling must behave exactly like the bare number.
+#
+# `issue-42` is what `ls .worktrees/` prints, so it is the spelling an operator
+# reaches for — and it matched the name arm, where `wt` resolves to the SAME
+# directory. That coincidence hid three divergences: `sess` became
+# `golem-issue-42` (so the real tmux session was never killed), the REAPED event
+# carried the wrong GOLEM_ID, and branch teardown took the name-mode merge gate
+# — which KEEPS a squash-merged golem branch, the precise case issue mode's
+# unconditional delete exists for.
+#
+# The fixture commits inside the worktree so the branch is genuinely unmerged:
+# under the old behavior that printed "kept branch … NOT merged" on an ordinary
+# teardown, which is what this asserts against.
+test_worktree_rm_named_issue_prefix_routes_to_issue_mode() {
+    local sb branches
+    new_sandbox sb
+    run_in "$sb" "$WT_NEW" 42
+    assert_exit 0 "$RUN_RC" "worktree-new succeeds"
+    command printf 'golem work\n' >"$sb/.worktrees/issue-42/w.txt"
+    sb_git "$sb/.worktrees/issue-42" add w.txt
+    sb_git "$sb/.worktrees/issue-42" -c commit.gpgsign=false commit -qm w 2>/dev/null
+
+    run_in "$sb" "$WT_RM" "issue-42"
+    assert_exit 0 "$RUN_RC" "the directory-name spelling tears down"
+    assert_contains "$RUN_OUT" "removed worktree" "reports the worktree removal"
+    assert_contains "$RUN_OUT" "deleted branch" \
+        "deletes unconditionally like issue mode, NOT via the name-mode merge gate"
+    assert_not_contains "$RUN_OUT" "kept branch" "never applies the merge gate to a golem branch"
+
+    branches="$(sb_git "$sb" branch --list "feature/issue-42")"
+    assert_equals "" "$branches" "the golem branch is gone"
+}
+
+# The merge gate must measure the BRANCH, not a same-named tag.
+#
+# `git rev-parse` resolves a bare name through its disambiguation order
+# (refs/heads, refs/tags, …), so with both present it can return the TAG's
+# target — measured on git 2.55.0, warning only on the stderr the script sends
+# to /dev/null. The `branch -D` that follows is unambiguous, so the gate would
+# have authorized deleting an UNMERGED branch by measuring a different object.
+#
+# The fixture is the dangerous shape specifically: the tag points at a commit
+# that IS an ancestor of the base ref, while the branch tip is NOT. A gate
+# reading the tag says "merged" and deletes; one reading the branch keeps it.
+test_worktree_rm_named_merge_gate_ignores_a_same_named_tag() {
+    local sb branches base
+    new_sandbox sb
+    base="$(sb_git "$sb" rev-parse HEAD)"
+    make_named_worktree "$sb" "tag-probe" "scratch-x"
+    command printf 'unmerged\n' >"$sb/.worktrees/tag-probe/u.txt"
+    sb_git "$sb/.worktrees/tag-probe" add u.txt
+    sb_git "$sb/.worktrees/tag-probe" -c commit.gpgsign=false commit -qm unmerged 2>/dev/null
+    sb_git "$sb" -c tag.gpgsign=false tag -m t scratch-x "$base" 2>/dev/null
+
+    run_in "$sb" "$WT_RM" "tag-probe"
+    assert_exit 0 "$RUN_RC" "teardown proceeds"
+    assert_contains "$RUN_OUT" "kept branch scratch-x" \
+        "keeps the branch — the gate read refs/heads, not the same-named tag"
+    assert_not_contains "$RUN_OUT" "deleted branch" "never deletes on a tag's authority"
+
+    branches="$(sb_git "$sb" branch --list "scratch-x")"
+    assert_not_empty "$branches" "the unmerged branch SURVIVES despite the ambiguous tag"
+}
+
+# The gate's THIRD arm: neither SHA resolves, so it fails CLOSED.
+#
+# The sandbox pins GOLEM_BASE_REF=HEAD, which is precisely why this arm cannot
+# fire under the other fixtures — it needs a base ref that does not resolve at
+# all. Untested defensive code is the shape this repo files issues about, so it
+# gets a fixture rather than a claim.
+test_worktree_rm_named_unresolvable_base_ref_keeps_branch() {
+    local sb branches out rc=0
+    new_sandbox sb
+    make_named_worktree "$sb" "noref-probe" "tmp/noref-890"
+
+    out="$(cd "$sb" && /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
+        HOME="$sb" TMUX= TMUX_TMPDIR="${SANDBOX_TMUX_DIR:-$sb/.tmux}" \
+        GOLEM_WORKTREE_DIR=.worktrees \
+        GOLEM_STATUS_DIR=.worktrees/.status \
+        GOLEM_BASE_REF=refs/heads/does-not-exist \
+        GOLEM_WORKTREE_LOCAL_FILES="" \
+        "$REAL_BASH" "$WT_RM" "noref-probe" 2>&1)" || rc=$?
+
+    assert_exit 0 "$rc" "teardown still frees the path"
+    assert_contains "$out" "removed worktree" "reports the worktree removal"
+    assert_contains "$out" "could not resolve it against" "names the unresolvable base ref"
+    assert_not_contains "$out" "deleted branch" "fails CLOSED — no deletion on an unreadable gate"
+
+    branches="$(sb_git "$sb" branch --list "tmp/noref-890")"
+    assert_not_empty "$branches" "the branch survives an unresolvable base ref"
+}

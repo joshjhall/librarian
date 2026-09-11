@@ -107,6 +107,23 @@ case "$N" in
 esac
 if [[ "$N" =~ ^[0-9]+$ ]]; then
     wt_mode="issue"
+elif [[ "$N" =~ ^issue-[0-9]+$ ]]; then
+    # THE DIRECTORY-NAME SPELLING IS ISSUE MODE, NOT A NAME (#1005 review).
+    # `issue-42` is what `ls .worktrees/` prints, so it is the spelling an
+    # operator most naturally reaches for — and as a bare name it matched the
+    # name arm below, where `wt` happens to resolve to the SAME directory. That
+    # coincidence is what made it dangerous: teardown appeared to work while
+    # three things silently diverged. `sess` became `golem-issue-42` instead of
+    # `golem-42`, so the real tmux session was never killed (defeating this
+    # script's own stated purpose); the `REAPED:` event was stamped with the
+    # wrong GOLEM_ID, so golem-status.sh never cleared the row; and branch
+    # teardown took the name-mode merge gate, which KEEPS a squash-merged golem
+    # branch — the exact case the issue-mode unconditional delete exists to
+    # handle. Reproduced on git 2.55.0: `worktree-rm.sh issue-42` printed "kept
+    # branch feature/issue-42 — it is NOT merged" on an ordinary teardown.
+    # Normalizing to the number routes every derivation through issue mode.
+    N="${N#issue-}"
+    wt_mode="issue"
 elif [[ "$N" =~ ^[A-Za-z0-9._-]+$ ]]; then
     wt_mode="name"
 else
@@ -961,8 +978,33 @@ if [ -n "$br" ] && [ -n "$(command git branch --list "$br")" ]; then
     br_delete=1
     if [ "$wt_mode" = "name" ]; then
         br_delete=0
-        base_sha="$(command git rev-parse --verify --quiet "$GOLEM_BASE_REF^{commit}" 2>/dev/null || true)"
-        br_sha="$(command git rev-parse --verify --quiet "$br^{commit}" 2>/dev/null || true)"
+        # FULLY-QUALIFY THE BRANCH REF (#1005 review). `git rev-parse` resolves a
+        # BARE name through its disambiguation order (refs/heads, refs/tags, ...),
+        # so a TAG sharing the branch's name wins or loses by git's rules rather
+        # than by ours. Measured on git 2.55.0: with both `refs/heads/scratch-x`
+        # and `refs/tags/scratch-x` present, `scratch-x^{commit}` resolved to the
+        # TAG's target, emitting only `warning: refname 'scratch-x' is ambiguous`
+        # — on the stderr this line sends to /dev/null. The `branch -D` below is
+        # unambiguous (it names the branch namespace), so the SAFETY CHECK would
+        # have been measuring a different object than the one being deleted: a
+        # tag pointing at an ancestor of the base ref would authorize deleting an
+        # UNMERGED branch. `refs/heads/$br` is exact — the branch is already known
+        # to exist, `git branch --list` just matched it.
+        br_sha="$(command git rev-parse --verify --quiet "refs/heads/$br^{commit}" 2>/dev/null || true)"
+        # GOLEM_BASE_REF cannot be qualified the same way: it is deliberately
+        # free-form config (`origin/main` by default, `HEAD` in the test sandbox,
+        # and legitimately a tag or a raw SHA in a consuming repo), so forcing a
+        # namespace onto it would break valid values. Try the two unambiguous
+        # spellings first — remote-tracking, then local branch — and fall back to
+        # the bare form only when neither exists. An ambiguous BASE is also far
+        # less dangerous than an ambiguous branch: it decides what we compare
+        # against, and a wrong answer here lands on the fail-closed side, keeping
+        # the branch rather than deleting it.
+        base_sha=""
+        for base_try in "refs/remotes/$GOLEM_BASE_REF" "refs/heads/$GOLEM_BASE_REF" "$GOLEM_BASE_REF"; do
+            base_sha="$(command git rev-parse --verify --quiet "$base_try^{commit}" 2>/dev/null || true)"
+            [ -z "$base_sha" ] || break
+        done
         if [ -z "$base_sha" ] || [ -z "$br_sha" ]; then
             command echo "worktree-rm: kept branch $br — could not resolve it against $GOLEM_BASE_REF." >&2
             command echo "  Delete it by hand once you have checked it: git branch -D $br" >&2
