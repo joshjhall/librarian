@@ -390,6 +390,18 @@ EOF
 #
 # Content is chosen to reach several arms at once: a TODO marker, a swallowed
 # error (`|| true`), and a function definition.
+#
+# Extended for check-lifecycle's Bash arms (#842). Each SIGTERM spelling is
+# present because they are separate alternation halves — one line covering all
+# three would leave two compared vacuously. The trailing-`&` job appears in six
+# shapes (bare, double- and single-quoted final arg, env-prefixed, compound
+# assignment-then-command, and a `#` inside a quoted arg), with the trailing-
+# comment line as the exclusion.
+#
+# The four non-bare positives are here because the first draft's pattern missed
+# all of them in BOTH runtimes at once, so this gate compared two wrong impls
+# and reported parity. That is the shared-defect blind spot, and the only thing
+# that closes it is a fixture reaching the arm along each shape.
 command cat >"$FIXDIR/tool.sh" <<'EOF'
 #!/usr/bin/env bash
 # TODO: implement
@@ -397,6 +409,16 @@ run_thing() {
     do_work || true
 }
 run_thing
+worker_task &
+curl "$url" &
+run_task '5' &
+FOO=bar long_running_task &
+x=1; long_task &
+run --opt "a # b" &
+command kill -TERM "$pid"
+command kill -15 "$pid"
+command kill -s TERM "$pid"
+_tgt="${_tgt#&}"   # fd-dup, not a file — strip &
 EOF
 
 # Classified-prose fixtures (#724). Both lenses now decide a markdown file's

@@ -44,8 +44,19 @@ category is LLM-side and declares no per-language arms.
 
 <!-- contract: end-check-docs-missing-api-language-support -->
 
-This is the broadest coverage of the four scanners, and the only one that models
-Rust and Bash today.
+This is the broadest coverage of the four scanners. It was the only one that
+modeled Bash when the #622 epic began — the asymmetry Phase 5 (#842) closed.
+
+**The Bash row was re-verified in Phase 5 (#842) and needed no change.** Its arm
+covers `.sh`/`.bash`, keys on `name()` / `function name` with a `_` prefix
+meaning private, and reads `#` as the doc marker. Recorded here so a later reader
+does not mistake the absent diff for an absent audit. Note this scanner's bash
+coverage is narrower than `check-security`'s in one respect: it dispatches on
+extension only, so an **extensionless** script with a `#!/usr/bin/env bash`
+shebang is not scanned. That is a coverage gap rather than a correctness bug (the
+category is language-specific with no fallthrough arm, so an unrecognized path
+yields zero rows and no error), and it is left as-is rather than widened
+mid-phase.
 
 **The Python row's doc marker is why docstrings stay lexically visible (#841).**
 This scanner's Python arm keys on `"""` — it is the *only* thing that

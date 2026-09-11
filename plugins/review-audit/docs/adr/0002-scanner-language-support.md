@@ -519,8 +519,88 @@ each other once 1 is in.
      own header warns about, hit anyway while writing the fixture *for* a
      mutation: **a fixture is not load-bearing until a mutation has actually
      turned it red.**
-5. **Phase 5 — Bash** ([#842](https://github.com/joshjhall/librarian/issues/842)). Full arms; currently `check-docs-missing-api` only.
-   Closes #622.
+5. **Phase 5 — Bash** ([#842](https://github.com/joshjhall/librarian/issues/842)) — **landed**. Closes #622. The issue asked for arms in
+   three scanners; the corpus granted **one**, and the declines are the phase's
+   substance rather than its shortfall.
+
+   **This phase could measure before implementing, and every other phase should
+   want to.** The corpus is this repository — 299 tracked `.sh` files, 119,139
+   lines — so a proposed detector's false-positive rate was a `grep` away rather
+   than an estimate. Results, against each scanner's declared tier:
+
+   | Proposed idiom | Scanner (tier) | Hits | Verdict |
+   | --- | --- | --- | --- |
+   | `\|\| true` | code-health (HIGH) | 1009 | refused |
+   | `set -x` / bare `echo` | code-health (HIGH) | 0 / 238 | refused |
+   | unquoted `$` into `eval` | security (CRITICAL) | 1 | refused |
+   | SQL string + expansion | security (CRITICAL) | 32, ~all FP | refused |
+   | `exec N>` unclosed | lifecycle (MEDIUM) | 0 | `—`, real absence |
+   | temp file, no `trap` | lifecycle (MEDIUM) | 48 of 123, ~all FP | `—`, unreachable |
+   | trailing `&`, no `wait` | lifecycle (MEDIUM) | 6, 0 FP | **shipped** |
+   | `kill -TERM` | lifecycle (MEDIUM) | 4 | **shipped** |
+
+   **`|| true` is Phase 1's `let _ =` reached from another language.** Both are
+   real signals at a *lower* tier and unshippable at HIGH; both scanners lack a
+   per-detector certainty, so the honest verdicts were "wrong tier" or "not yet".
+   Two phases hitting the same wall from two directions is what makes it
+   structural rather than incidental, and it is now filed as
+   [#1003](https://github.com/joshjhall/librarian/issues/1003) —
+   recording *why* a decline is a tier problem is what lets someone revisit it,
+   whereas "not implemented" reads as "not worth it" forever.
+
+   **The single `eval` hit is a test fixture inside a markdown heredoc.** Worth
+   stating because a raw count of 1 looks shippable until the hit is inspected;
+   the safe quoted form matches 52 times in the same corpus.
+
+   **Two of the refusals are refusals for opposite reasons, and the table above
+   would read as one verdict if it did not say so.** `exec N>` is declined
+   because the idiom is **absent** (0 hits — nothing to detect). The trap-less
+   temp file is declined because it is **everywhere and unreachable**: 48 of the
+   123 `mktemp` callers declare no `trap`, and nearly all are correct anyway —
+   most are `.`-sourced test fragments whose **parent** owns the trap. A
+   single-line regex is looking for a statement in a different file. *A zero and
+   a flood are both `—`, and recording only the verdict loses which one it was.*
+
+   **`check-security` needed no code change — the third consecutive phase to find
+   its subject already modeled.** Bash resolves there by four independent paths
+   (extension, hash-family, shell dotfiles, and the shebang resolver). Phase 2's
+   lesson generalizes: **a phase's size is set by what is already modeled, not by
+   the number of governed scanners.** An audit that finds a matrix correct is a
+   result; the phase's cost then goes into fixtures that make the correctness
+   re-checkable, not into a diff.
+
+   **The lexical model cannot see a TRAILING comment, and one arm's correctness
+   depended on that.** `is_comment()` matches line-**start** only, so the corpus's
+   sole false positive — an `&` inside a trailing comment on an assignment line —
+   was unreachable by the comment model and had to be excluded structurally
+   instead. A future arm should not assume the lexical gate covers a mid-line
+   comment; it covers a comment *line*.
+
+   **The parity gate failed to catch this phase's defects three times, in three
+   different ways — and the third is the one worth carrying forward.**
+
+   *Vacuously.* The first draft's exclusion was spelled differently per runtime
+   (bash filters `grep -n` output, whose `NNN:` prefix an `^`-anchored pattern
+   binds to instead of the source line), so it excluded nothing on the bash side
+   only — exactly the asymmetric divergence the gate exists to catch. It did not,
+   because the corpus fixture written to exercise it *lacked a trailing `&`* and
+   reached no arm at all. **Add the corpus line, then prove it reddens; a fixture
+   believed to be non-vacuous is not.**
+
+   *By construction.* The eventual fix made that exclusion **unanchored**, which
+   cannot acquire the bug. Where the rule permits it, prefer the spelling that
+   makes the trap unreachable over the one that documents it.
+
+   *Blindly.* Both defects that survived to review were **shared**: the match
+   class excluded the quote characters (so `curl "$url" &` — most real background
+   jobs — never matched), and the exclusion keyed on assignment shape, a proxy
+   that covered the one corpus false positive while silencing every env-prefixed
+   and compound one-liner. Both were byte-identical in the two runtimes, so
+   parity was *perfect* and *wrong*. **A parity gate answers "do these agree",
+   never "are these right"** — it is structurally incapable of seeing a shared
+   defect, so it must never be the only thing asked. What found these was reading
+   the pattern against shapes no fixture contained; what prevents the next one is
+   that the corpus fixture now carries all six.
 
 Defects found while writing this ADR, filed separately because each needs its own
 mutation-tested fixture:

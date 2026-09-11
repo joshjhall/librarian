@@ -1245,3 +1245,48 @@ test_security_tls_cors_jwt_xxe() {
     assert_fires "$SK_SEC" "$list" xxe-risk "XML parser with external entities enabled" \
         "security: Java XMLConstants fires"
 }
+
+# Bash lexical gating (#842, ADR 0002 Phase 5) — the audit's evidence.
+#
+# check-security arrived at Phase 5 already resolving bash, so the phase's job
+# was to VERIFY rather than to implement. These fixtures are what turn that
+# verification into something a later reader can re-run: the contract's claim
+# ("a real credential fires, the same line behind `#` is silent, an AWS literal
+# fires either way") is asserted here rather than only asserted in prose.
+#
+# The shebang case matters independently: an EXTENSIONLESS script resolves
+# through SHEBANG_LANG, a fourth dispatch path no extension fixture exercises.
+test_security_bash_lexical_gating() {
+    local d list
+
+    # A real credential in a .sh file fires...
+    d="$(fresh_dir)"
+    command printf '%s\n' 'password = "Sup3rSecretValue123"' >"$d/cred.sh"
+    list="$(make_list "$d/l" "$d/cred.sh")"
+    assert_fires "$SK_SEC" "$list" hardcoded-secret "Possible hardcoded credential" \
+        "security: a real credential in a .sh file fires"
+
+    # ...and the identical line behind a leading # is silent (the lexical model
+    # is consulted, not a hardcoded C-family marker).
+    d="$(fresh_dir)"
+    command printf '%s\n' '# password = "Sup3rSecretValue123"' >"$d/comment.sh"
+    list="$(make_list "$d/l" "$d/comment.sh")"
+    assert_silent "$SK_SEC" "$list" hardcoded-secret \
+        "security: a #-commented credential in a .sh file is silent"
+
+    # An extensionless script resolves via its shebang — the fourth dispatch path.
+    d="$(fresh_dir)"
+    command printf '%s\n%s\n' '#!/usr/bin/env bash' '# password = "Sup3rSecretValue123"' >"$d/deploy"
+    list="$(make_list "$d/l" "$d/deploy")"
+    assert_silent "$SK_SEC" "$list" hardcoded-secret \
+        "security: shebang-resolved bash honors the # comment model (extensionless)"
+
+    # The AWS literal is lexical-INDEPENDENT (ADR 0002 § 3), so it fires even
+    # from a comment. This is the control proving the file is scanned at all —
+    # without it, the two silences above could mean "skipped", not "gated".
+    d="$(fresh_dir)"
+    command printf '%s\n' '# AKIA1234567890ABCDEF' >"$d/aws.sh"
+    list="$(make_list "$d/l" "$d/aws.sh")"
+    assert_fires "$SK_SEC" "$list" hardcoded-secret "AWS access key pattern" \
+        "security: an AWS literal fires from a bash comment (lexical-independent)"
+}

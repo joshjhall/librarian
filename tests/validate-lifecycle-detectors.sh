@@ -768,6 +768,164 @@ test_test_dir_does_not_skip_source() {
 }
 
 # ============================================================================
+# Bash arms (#842, ADR 0002 Phase 5) — two modeled categories, two pinned `—`
+# ============================================================================
+# Every positive below sits in its OWN fresh_dir. The evidence label is shared
+# across languages, so a composite file would pass as long as ANY arm still
+# fired — the vacuous-fixture trap Phase 4 hit while writing a fixture FOR a
+# mutation.
+#
+# The negatives are the load-bearing half here: this arm's correctness is almost
+# entirely its exclusions, and each was measured necessary against the repo's own
+# shell corpus rather than reasoned about.
+test_bash_lifecycle_arms() {
+    local d list
+
+    # --- unreaped-subprocess: the backgrounded job -------------------------
+    d="$(fresh_dir)"
+    command printf '%s\n' 'command sleep 30 &' >"$d/bg.sh"
+    list="$(make_list "$d/l" "$d/bg.sh")"
+    assert_fires "$list" unreaped-subprocess "Subprocess spawned without visible reap" \
+        "lifecycle: bash trailing-& background job fires"
+
+    # The .bash extension reaches the same arm (both runtimes dispatch on the
+    # pair, and the bash case must be bracket-classed for the -case-dispatch gate).
+    d="$(fresh_dir)"
+    command printf '%s\n' 'run_worker &' >"$d/bg.bash"
+    list="$(make_list "$d/l" "$d/bg.bash")"
+    assert_fires "$list" unreaped-subprocess "Subprocess spawned without visible reap" \
+        "lifecycle: .bash extension reaches the unreaped-subprocess arm"
+
+    # A backgrounded command whose last token is QUOTED — `curl "$url" &` and
+    # its single-quoted twin. This is most real background jobs, and an earlier
+    # draft's character class excluded the quote characters, so every one of
+    # them was invisible in BOTH runtimes. Parity stayed green throughout: the
+    # shared-defect blind spot this repo keeps filing issues about.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'curl "$url" &' >"$d/dq.sh"
+    list="$(make_list "$d/l" "$d/dq.sh")"
+    assert_fires "$list" unreaped-subprocess "Subprocess spawned without visible reap" \
+        "lifecycle: bash background job ending in a double-quoted arg fires"
+
+    d="$(fresh_dir)"
+    command printf '%s\n' "run_task '5' &" >"$d/sq.sh"
+    list="$(make_list "$d/l" "$d/sq.sh")"
+    assert_fires "$list" unreaped-subprocess "Subprocess spawned without visible reap" \
+        "lifecycle: bash background job ending in a single-quoted arg fires"
+
+    # An inline env-var prefix, and a compound assignment-then-command one-liner.
+    # Both are genuine COMMANDS. The first draft excluded any line that merely
+    # STARTED with `NAME=`, which silenced both while still covering the one
+    # corpus false positive — a proxy that happened to work on its sample.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'FOO=bar long_running_task &' >"$d/envpfx.sh"
+    list="$(make_list "$d/l" "$d/envpfx.sh")"
+    assert_fires "$list" unreaped-subprocess "Subprocess spawned without visible reap" \
+        "lifecycle: bash env-prefixed background job fires (not an assignment)"
+
+    d="$(fresh_dir)"
+    command printf '%s\n' 'x=1; long_task &' >"$d/compound.sh"
+    list="$(make_list "$d/l" "$d/compound.sh")"
+    assert_fires "$list" unreaped-subprocess "Subprocess spawned without visible reap" \
+        "lifecycle: bash assignment-then-command one-liner still fires"
+
+    # --- unreaped-subprocess negatives: the three exclusions ---------------
+    # `&&` is a control operator. Written WITHOUT a trailing background job so
+    # only the && exclusion can keep it silent.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'make build && make test' >"$d/andand.sh"
+    list="$(make_list "$d/l" "$d/andand.sh")"
+    assert_silent "$list" unreaped-subprocess \
+        "lifecycle: bash && control operator is not a background job"
+
+    # `>&` fd-dup. `2>&1` ending the line is the shape that would slip past a
+    # pattern keying on a bare trailing ampersand.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'command ls >/dev/null 2>&1' >"$d/fddup.sh"
+    list="$(make_list "$d/l" "$d/fddup.sh")"
+    assert_silent "$list" unreaped-subprocess \
+        "lifecycle: bash >& fd-dup is not a background job"
+
+    # The TRAILING-COMMENT exclusion — the sole corpus false positive
+    # (plugins/workflow/hooks/bash-guard.sh:701). Its `&` sits inside a trailing
+    # comment, which is_comment() cannot suppress (it is line-START only), so
+    # this exclusion is what removes it. Note what the fixture pins: the line is
+    # silent because the `&` is COMMENTED, not because the line is an
+    # assignment — the four positives above are what keep that distinction
+    # honest. Mutating the exclusion away turns this red.
+    d="$(fresh_dir)"
+    command printf '%s\n' '_tgt="${_tgt#&}"   # `>&2` fd-dup, not a file — strip &' >"$d/assign.sh"
+    list="$(make_list "$d/l" "$d/assign.sh")"
+    assert_silent "$list" unreaped-subprocess \
+        "lifecycle: bash assignment with & in a trailing comment stays silent"
+
+    # A `#` inside a QUOTED ARGUMENT is not a comment, so the exclusion's
+    # `[^"']` middle must keep this a finding. Pins the one thing that stops the
+    # comment exclusion from being written as the simpler `#.*&$`.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'run --opt "a # b" &' >"$d/hashinarg.sh"
+    list="$(make_list "$d/l" "$d/hashinarg.sh")"
+    assert_fires "$list" unreaped-subprocess "Subprocess spawned without visible reap" \
+        "lifecycle: bash # inside a quoted arg is not a comment — job still fires"
+
+    # --- terminate-without-kill: all three SIGTERM spellings ---------------
+    # One fixture per alternation half. They share an evidence label, so a
+    # composite file would keep passing with two of the three mutated away.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'command kill -TERM "$pid"' >"$d/term.sh"
+    list="$(make_list "$d/l" "$d/term.sh")"
+    assert_fires "$list" terminate-without-kill "Terminate without kill escalation" \
+        "lifecycle: bash kill -TERM fires"
+
+    d="$(fresh_dir)"
+    command printf '%s\n' 'command kill -15 "$pid"' >"$d/term15.sh"
+    list="$(make_list "$d/l" "$d/term15.sh")"
+    assert_fires "$list" terminate-without-kill "Terminate without kill escalation" \
+        "lifecycle: bash kill -15 fires"
+
+    d="$(fresh_dir)"
+    command printf '%s\n' 'command kill -s TERM "$pid"' >"$d/termS.sh"
+    list="$(make_list "$d/l" "$d/termS.sh")"
+    assert_fires "$list" terminate-without-kill "Terminate without kill escalation" \
+        "lifecycle: bash kill -s TERM fires"
+
+    # A SIGKILL is the escalation, not the thing missing one — flagging it would
+    # invert the category the way the Rust arm's comment warns about.
+    d="$(fresh_dir)"
+    command printf '%s\n%s\n' 'command kill -KILL "$pid"' 'command kill -9 "$pid"' >"$d/kill.sh"
+    list="$(make_list "$d/l" "$d/kill.sh")"
+    assert_silent "$list" terminate-without-kill \
+        "lifecycle: bash kill -KILL/-9 is the escalation, not a candidate"
+
+    # --- the two `—` cells, pinned ----------------------------------------
+    # An empty column is otherwise unfalsifiable: without these, deleting the
+    # matrix cell and adding an arm would both pass. Same reasoning that pins
+    # Swift's empty `debugger` column.
+    d="$(fresh_dir)"
+    command printf '%s\n%s\n' 'exec 3>"$logfile"' 'exec 4<"$infile"' >"$d/fd.sh"
+    list="$(make_list "$d/l" "$d/fd.sh")"
+    assert_silent "$list" unclosed-handle \
+        "lifecycle: bash unclosed-handle is — (exec N> measures zero in the corpus)"
+
+    d="$(fresh_dir)"
+    command printf '%s\n' 'trap cleanup EXIT' >"$d/trap.sh"
+    list="$(make_list "$d/l" "$d/trap.sh")"
+    assert_silent "$list" unpaired-listener \
+        "lifecycle: bash unpaired-listener is — (a trap needs no paired removal)"
+
+    # The issue's second `unclosed-handle` idiom: a temp file with no `trap`.
+    # Refused on the OPPOSITE ground from `exec N>` — not absent but far too
+    # common to be a signal (48 of 123 corpus mktemp callers declare no trap, and
+    # nearly all are correct, most being sourced fragments whose PARENT traps).
+    # This file is exactly that shape, and must stay silent.
+    d="$(fresh_dir)"
+    command printf '%s\n%s\n' 'work="$(mktemp -d)"' 'command cp x "$work/"' >"$d/tmpnotrap.sh"
+    list="$(make_list "$d/l" "$d/tmpnotrap.sh")"
+    assert_silent "$list" unclosed-handle \
+        "lifecycle: bash mktemp without a trap stays silent (— by flood, not absence)"
+}
+
+# ============================================================================
 # Evidence truncation parity — >80-char multibyte line, bash == python
 # ============================================================================
 # Drives emit()'s EVIDENCE_CAP=80 CHARACTER truncation and the bash
@@ -802,6 +960,7 @@ run_test test_unpaired_listener "check-lifecycle: JS/Swift/Rust/Python registrat
 run_test test_ruled_out_false_positives "check-lifecycle: draining pipe-reader + cleared dict negative fixtures (issue FPs)"
 run_test test_test_file_and_skip "check-lifecycle: wholesale test-file skip + segment anchoring + SKIP_GLOBS"
 run_test test_test_dir_does_not_skip_source "check-lifecycle: a test_*-named DIRECTORY does not skip the source inside it (#836)"
+run_test test_bash_lifecycle_arms "check-lifecycle: bash subprocess/terminate arms, the three exclusions, and the two pinned — cells (#842)"
 run_test test_evidence_truncation_parity "check-lifecycle: >80-char multibyte evidence truncation parity (bash==python)"
 
 generate_report

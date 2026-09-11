@@ -47,6 +47,7 @@ per-language dispatch to declare.
 | TypeScript | ts, tsx         | M                   | M                      | M               | M                 |
 | Go         | go              | M                   | M                      | M               | —                 |
 | Rust       | rs              | M                   | M                      | M               | M                 |
+| Bash       | sh, bash        | M                   | M                      | —               | —                 |
 | every other | —               | —                   | —                      | —               | —                 |
 
 <!-- contract: end-check-lifecycle-language-support -->
@@ -165,6 +166,71 @@ every other language's and the reason is worth recording:
 within this scanner's declared tolerance — every row is `MEDIUM`, a candidate the
 LLM pass-2 confirms or dismisses — but it is worth knowing before reading a
 report.
+
+Bash (#842, Phase 5) is `M` for two categories and `—` for two, and the two
+declines are measurements rather than unwritten arms.
+
+- **`unreaped-subprocess`** keys on a trailing `&`. Its correctness is almost
+  entirely its **exclusions**, each measured necessary against this repo's own
+  shell corpus (299 tracked `.sh` files, 119,139 lines — the corpus #842 names,
+  and the language most of this repo's tooling is written in): `&&` is a control
+  operator, `>&` is an fd-dup, and an **assignment-shaped line** is not a command.
+  That last exclusion removed the corpus's only false positive,
+  `plugins/workflow/hooks/bash-guard.sh:701`, whose `&` sits inside a **trailing**
+  comment. `is_comment()` is line-**start** only, so the lexical model cannot
+  suppress a trailing comment — the exclusion, not the comment model, is what
+  makes this arm clean. Measured after exclusions: **6 rows over the non-test
+  corpus, all genuine background jobs, 0 false positives.**
+- **`terminate-without-kill`** matches all three SIGTERM spellings —
+  `kill -TERM`, `kill -15`, `kill -s TERM` — reading the category the way the
+  Rust arm above does: flag the graceful send, let pass-2 confirm the escalation.
+  Measured **4 rows**, all real; the two `bounded-run.sh` sites that *do*
+  escalate to `-KILL` still emit, correctly, as MEDIUM candidates.
+- **`unclosed-handle` is `—`.** The bash analogue would be `exec 3>file` without
+  a closing `exec 3>&-`, and that idiom measures **zero** occurrences across the
+  whole corpus. An arm for it would be unfalsifiable by this repo's own evidence.
+  The issue named a **second** idiom for this cell — a temp file created without
+  a `trap … EXIT` to clean it up — and it is refused on the opposite ground, so
+  it is recorded separately rather than folded into the sentence above. It is not
+  absent but **too common to be a signal**: 123 corpus files call `mktemp`, and
+  **48 of them declare no `trap` at all**. Nearly every one of those 48 is
+  structurally fine — most are `.`-sourced test **fragments** whose parent entry
+  point owns the trap (`tests/golem-scripts/10-launch.sh`,
+  `tests/pre-review-gates/98-security.sh` and their siblings), and the rest clean
+  up inline or hand the directory to a caller. A single-line regex cannot see any
+  of that: the `trap` it is looking for is in a **different file**. At a ~39%
+  raw-hit rate whose true positives are indistinguishable without whole-program
+  reasoning, this is a `—` by measurement, like the two above it.
+- **`unpaired-listener` is `—`.** Bash has no in-process registration outliving
+  its statement. `trap` is the nearest shape, but a trap is scoped to the shell's
+  own lifetime and needs no paired removal, so flagging it would report the
+  correct idiom as the defect.
+
+Both `—` cells are pinned by **silence fixtures**. An empty column is otherwise
+unfalsifiable — deleting the cell and adding an arm would both pass — the same
+reasoning that pins Swift's empty `debugger` column in `check-code-health`.
+
+**The phase's parity lesson arrived twice, and the second time was the sharper
+one.** First as a *divergence*: bash filters the output of `grep -n`, which
+carries a `NNN:` prefix, so a `^`-anchored exclusion written for the source line
+binds to the **line number** and silently stops excluding — measured on the bash
+runtime only. The rule is recorded at `emit_rows_unless`'s definition for the
+next caller; the exclusion here sidesteps it by being **unanchored**, which is
+the better fix where the rule permits one.
+
+Then as a *shared defect*, which the parity gate cannot see at all. Both arms of
+this detector were wrong **identically** — the match class excluded the quote
+characters, so a backgrounded job ending in a quoted argument (most of them)
+never matched, and the exclusion keyed on the line being assignment-shaped, a
+proxy that covered the one corpus false positive while suppressing every
+env-prefixed and compound-one-liner job. Two impls agreeing is not two impls
+being right, and `validate-python-ports.sh` stayed green throughout. What caught
+it was reading the pattern against shapes the fixtures did not contain — the
+corpus fixture now carries all six.
+
+The `grep -v` stage is deliberately not `-q`: a `-q` exits on first match and
+SIGPIPEs the upstream writer, which under this file's `pipefail` reports 141 and
+inverts the result.
 
 ## Finding Format
 

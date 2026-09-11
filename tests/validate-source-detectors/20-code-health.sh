@@ -656,3 +656,39 @@ test_health_stdout_repo_cleaned_up() {
             "health: the python impl leaves no temp match-repo behind (#686)"
     fi
 }
+
+# Bash refusals (#842, ADR 0002 Phase 5) — the three `—` cells, pinned.
+#
+# check-code-health emits at HIGH (>= 0.9), and #842's proposed bash arms were
+# refused on measured rate against this repo's own shell corpus: `|| true` at
+# 1009 hits, `set -x` at 0, bare `echo` at 238 legitimate-output lines. See
+# check-code-health/contract.md for the table and the reasoning.
+#
+# These assertions are what make the refusal falsifiable. Without them, prose
+# says "not implemented" while an implementation would pass every gate — the
+# silence-reads-as-a-pass shape this repo keeps filing issues about. The
+# tech-debt-marker control at the end proves the file IS being scanned, so a
+# silent row here means "no such detector", never "the file was skipped".
+test_health_bash_refusals() {
+    local d list
+
+    d="$(fresh_dir)"
+    command printf '%s\n' 'do_work || true' 'cleanup || :' >"$d/swallow.sh"
+    list="$(make_list "$d/l" "$d/swallow.sh")"
+    assert_silent "$SK_HEALTH" "$list" empty-handler \
+        "health: bash '|| true' is NOT an empty-handler (refused at HIGH, 1009 corpus hits)"
+
+    d="$(fresh_dir)"
+    command printf '%s\n' 'set -x' 'echo "starting run"' >"$d/dbg.sh"
+    list="$(make_list "$d/l" "$d/dbg.sh")"
+    assert_silent "$SK_HEALTH" "$list" debug-statement \
+        "health: bash 'set -x' / 'echo' are NOT debug statements (a script's stdout is its output)"
+
+    # The control: the same file shape DOES fire the language-agnostic
+    # tech-debt-marker, which is what makes Bash `L` rather than `—`.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'do_work || true  # TODO: handle the failure' >"$d/marker.sh"
+    list="$(make_list "$d/l" "$d/marker.sh")"
+    assert_fires "$SK_HEALTH" "$list" tech-debt-marker "Tech debt marker" \
+        "health: a bash TODO still fires (Bash is L, so the file IS scanned)"
+}

@@ -174,6 +174,40 @@ require "grep -w matches a whole word" "$V"
 probe_grep_rejects V 'def my_func_extra():' 'my_func' -w
 require "grep -w rejects a partial word" "$V"
 
+# check-lifecycle's Bash unreaped-subprocess arm (#842) rides two negated
+# bracket classes, and BSD must parse both the same way GNU does.
+#
+# The MATCH class `[^&>|`}]` holds a backtick, and what it must NOT hold is a
+# quote: excluding the quote characters there made every backgrounded job whose
+# last token is quoted — `curl "$url" &`, most of them — invisible. So both a
+# positive and an admits-a-quoted-arg probe sit below.
+#
+# The EXCLUSION filter `[[:space:]]#[^"']*&[[:space:]]*$` holds both quotes, and
+# there they are load-bearing for the opposite reason: they stop a `#` inside a
+# quoted argument from reading as a comment.
+probe_grep V 'command sleep 30 &' '[^&>|`}][[:space:]]&[[:space:]]*$' -E
+require "negated class with backtick, trailing & (#842)" "$V"
+
+probe_grep V 'curl "$url" &' '[^&>|`}][[:space:]]&[[:space:]]*$' -E
+require "that class ADMITS a quoted final argument (#842)" "$V"
+
+probe_grep_rejects V 'command ls >/dev/null 2>&1' '[^&>|`}][[:space:]]&[[:space:]]*$' -E
+require "that class rejects an fd-dup line (#842)" "$V"
+
+# The exclusion in use: a trailing COMMENT whose text ends in `&`. It is
+# unanchored, so unlike the draft it replaced it is indifferent to the `grep -n`
+# prefix emit_rows_unless feeds it.
+probe_grep V '            _tgt="${_tgt#&}"   # `>&2` fd-dup — strip &' '[[:space:]]#[^"'"'"']*&[[:space:]]*$' -E
+require "trailing-comment exclusion filter matches (#842)" "$V"
+
+probe_grep_rejects V 'FOO=bar long_running_task &' '[[:space:]]#[^"'"'"']*&[[:space:]]*$' -E
+require "that exclusion leaves an env-prefixed job alone (#842)" "$V"
+
+# And the class's own reason for existing: a `#` INSIDE a quoted argument is not
+# a comment, so the exclusion must not fire here.
+probe_grep_rejects V 'run --opt "a # b" &' '[[:space:]]#[^"'"'"']*&[[:space:]]*$' -E
+require "that exclusion ignores a # inside a quoted arg (#842)" "$V"
+
 probe_sed V 'a  b' 's/[[:space:]]+/_/' 'a_b'
 require "[[:space:]] under sed -E" "$V"
 

@@ -52,6 +52,7 @@
 - [Sync script clobbers a nested region](sync-script-clobbers-nested-region.md) — a wholesale region copy deletes the INNER region's sentinels; sync only after resolving
 - [Redirect order leaks the diagnostic](redirect-order-leaks-the-diagnostic.md) — `>>"$f" 2>/dev/null` still prints; absorbed failure, unabsorbed noise
 - [grep -q under pipefail inverts a match](grep-q-under-pipefail-inverts-a-match.md) — SIGPIPE makes a SUCCESSFUL match report FAILURE, but only past the 64KB pipe buffer (#928)
+- [Anchor binds to the grep -n prefix](anchor-binds-to-grep-n-prefix.md) — a `^` exclusion over `-n` output matches the LINE NUMBER; silently stops excluding, on one runtime only
 - [A combined label call partially applies](combined-label-call-partially-applies.md) — gh applies the REMOVE then fails the add; "failed" leaves NO label, not the old one (#921)
 - [Background exit code is the wrapper's](background-task-exit-code-is-the-wrappers.md) — a task-notification's "exit code 0" hid a red suite AND a blocked push; read the log's own verdict (#921, #699)
 - [Execute the workflow step, don't grep it](execute-the-workflow-step-dont-grep-it.md) — a `run:` block's regressions are re-orderings every grep survives
@@ -89,7 +90,7 @@
 - [Empty TSV column collapses under read](empty-tsv-column-collapses-under-read.md) — consecutive tabs merge, shifting every later field left; emit a `-` sentinel and assert the LAST field
 - [Observer resolves its own cwd](observer-resolves-its-own-cwd-not-the-subjects.md) — a helper run BY one actor ABOUT another must derive paths from the SUBJECT arg; wrong path yields empty, which reads as "nothing here"
 - [Derived key hides the gate it guards](derived-key-hides-the-gate-it-guards.md) — `ext` is of the PATH, the gate is about the NAME; a dotted DIRECTORY diverges and parity is blind
-- [Parity gate hides a shared defect](parity-gate-hides-shared-defect.md) — both impls wrong the same way passes green; same-output ≠ same-intent (#684)
+- [Parity gate hides a shared defect](parity-gate-hides-shared-defect.md) — both impls wrong the same way passes green; read the pattern against shapes NO fixture contains (#684, #842)
 - [Parity is blind to exit-code divergence](parity-blind-to-exit-code-divergence.md) — a refusal path emits nothing in BOTH impls; assert the exit code, not just stdout (#816)
 - [A byte tool can't strip multi-byte](byte-tool-cannot-strip-multibyte.md) — `tr` passes U+202E that Python's isprintable() strips; enumerate literal UTF-8, never `\xNN` (#816)
 - [A config value is not a pattern](config-value-is-not-a-pattern.md) — `notes[1].md` never matches itself via fnmatch/case; try literal equality FIRST (#669)

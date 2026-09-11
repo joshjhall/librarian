@@ -114,6 +114,31 @@ printf '%s\n' 'proc = subprocess.Popen(["ls"])' >"$LIFEDIR/test_helpers/producti
 # false side only. Sits inside test_helpers/ so one path drives both halves.
 printf '%s\n' 'proc = subprocess.Popen(["ls"])' >"$LIFEDIR/test_helpers/test_production.py"
 
+# Bash (#842): the trailing-& background job in six shapes — bare, double- and
+# single-quoted final argument, env-var-prefixed, compound assignment-then-
+# command, and a `#` inside a quoted argument (not a comment) — plus all three
+# SIGTERM spellings (each a separate alternation half),
+# and the line whose `&` sits in a TRAILING comment, the exclusion that keeps the
+# arm's one corpus false positive out.
+#
+# The four non-bare positives exist because the first draft missed every one of
+# them IDENTICALLY in both runtimes, so this gate compared two wrong impls and
+# stayed green. Parity is blind to a shared defect; only a fixture that reaches
+# the arm can see one.
+{
+    printf '%s\n' 'worker_task &'
+    printf '%s\n' 'command kill -TERM "$pid"'
+    printf '%s\n' 'command kill -15 "$pid"'
+    printf '%s\n' 'command kill -s TERM "$pid"'
+    printf '%s\n' 'curl "$url" &'
+    printf '%s\n' "run_task '5' &"
+    printf '%s\n' 'FOO=bar long_running_task &'
+    printf '%s\n' 'x=1; long_task &'
+    printf '%s\n' 'run --opt "a # b" &'
+    printf '%s\n' '_tgt="${_tgt#&}"   # fd-dup, not a file — strip &'
+    printf '%s\n' 'command ls >/dev/null 2>&1'
+} >"$LIFEDIR/runner.sh"
+
 # SKIP_GLOBS: a *.md carrying a spawn-shaped line drives the whole-file skip arm.
 printf '%s\n' 'Example: `let task = Process()`' >"$LIFEDIR/notes.md"
 
@@ -125,7 +150,8 @@ chmod 000 "$LIFE_UNREAD" 2>/dev/null || true
 LIFE_LIST="$WORKDIR/lifecycle-list.txt"
 : >"$LIFE_LIST"
 for f in "$LIFEDIR"/capture.swift "$LIFEDIR"/runner.py "$LIFEDIR"/worker.js \
-    "$LIFEDIR"/proc.go "$LIFEDIR"/tests/helper.swift "$LIFEDIR"/contest.swift \
+    "$LIFEDIR"/proc.go "$LIFEDIR"/runner.sh \
+    "$LIFEDIR"/tests/helper.swift "$LIFEDIR"/contest.swift \
     "$LIFEDIR"/test_helpers/production.py \
     "$LIFEDIR"/test_helpers/test_production.py \
     "$LIFEDIR"/notes.md "$LIFE_UNREAD"; do

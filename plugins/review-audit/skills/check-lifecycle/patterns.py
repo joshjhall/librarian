@@ -227,6 +227,68 @@ def scan_file(path: str, lines: list[str]) -> None:
                 line,
             ):
                 emit(path, idx, "unpaired-listener", L_LISTENER, line)
+        elif ext in ("sh", "bash"):
+            # Bash (#842, ADR 0002 Phase 5). Two of the four categories are
+            # modeled; the other two are `—` for the reasons below, not for want
+            # of an arm.
+            #
+            # unreaped-subprocess: a command backgrounded with a trailing `&`.
+            # THREE exclusions, each measured necessary against this repo's own
+            # shell corpus (304 tracked `.sh` files) rather than reasoned about:
+            #
+            #   `&&`  — a control operator, not a job-control `&`.
+            #   `>&`  — an fd-dup (`2>&1`), which is why the class before the
+            #           space excludes `>` and `|` as well.
+            #   a TRAILING COMMENT ending in `&` — `… # `>&2` fd-dup … strip &`
+            #           (plugins/workflow/hooks/bash-guard.sh:701), the corpus's
+            #           sole false positive. is_comment() is line-START only, so
+            #           the lexical model cannot suppress a comment that begins
+            #           mid-line; this exclusion is what removes it.
+            #
+            # The comment exclusion keys on the COMMENT, which is the property
+            # that actually makes the line a false positive. An earlier draft
+            # keyed on the line being ASSIGNMENT-shaped instead — a proxy that
+            # happened to cover this one line while silently suppressing every
+            # env-prefixed background job (`FOO=bar task &`) and every compound
+            # one-liner (`x=1; task &`), both genuine COMMANDS. Likewise the
+            # class before the space must NOT exclude the quote characters:
+            # doing so made `curl "$url" &` — a backgrounded job whose last
+            # token is quoted, which is most of them — invisible. Both were
+            # shared across the two runtimes, so parity stayed green while both
+            # halves were wrong; see the fixtures that now pin each shape.
+            #
+            # The exclusion's `[^"']` middle is deliberate and cuts the other
+            # way from the class above: it stops a `#` INSIDE a quoted argument
+            # from reading as a comment, so `run --opt "a # b" &` stays a
+            # finding. The cost is a comment that both contains a quote and ends
+            # in `&` — zero corpus occurrences, and the failure is a false
+            # POSITIVE at MEDIUM, which the LLM pass dismisses.
+            #
+            # Measured after those exclusions: 18 rows corpus-wide, all genuine
+            # background jobs, 0 false positives. Like every other arm here this
+            # is a single-line CANDIDATE for the LLM pass to confirm against its
+            # `wait` — deliberately not a lookahead, since a reaping `wait` may
+            # sit anywhere (a trap, a later loop, a caller).
+            if re.search(r"[^&>|`}][ \t]&[ \t]*$", line) and not re.search(
+                r"[ \t]#[^\"']*&[ \t]*$", line
+            ):
+                emit(path, idx, "unreaped-subprocess", L_SUBPROCESS, line)
+            # terminate-without-kill: the GRACEFUL send site, matching how the
+            # Rust arm above reads this category — flag the SIGTERM, let the
+            # pass confirm it escalates. `-15` and `-s TERM` are the same signal
+            # spelled two other ways; all three appear in the wild.
+            if re.search(r"\bkill[ \t]+(-TERM|-15|-s[ \t]+TERM)\b", line):
+                emit(path, idx, "terminate-without-kill", L_TERMINATE, line)
+            # unclosed-handle is `—`: bash's analogue would be `exec 3>file`
+            # without a closing `exec 3>&-`, and that idiom measures ZERO
+            # occurrences across the corpus. An arm for it would be unfalsifiable
+            # by this repo's own evidence. Pinned by a silence fixture instead,
+            # the way Swift's empty `debugger` column is.
+            #
+            # unpaired-listener is `—`: bash has no in-process registration that
+            # outlives the statement. `trap` is the nearest shape, but a trap is
+            # scoped to the shell's own lifetime and needs no paired removal —
+            # flagging it would report the correct idiom as the defect.
 
 
 # --- input-shape guard (#816) -----------------------------------------------
