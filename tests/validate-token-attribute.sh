@@ -55,6 +55,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 # shellcheck source=tests/lib/harness.sh
 source "$SCRIPT_DIR/lib/harness.sh"
 
+SUITE_FILE="${BASH_SOURCE[0]}"
 TA_PY="$REPO_ROOT/plugins/workflow/scripts/token-attribute.py"
 TA_SH="$REPO_ROOT/plugins/workflow/scripts/token-attribute.sh"
 
@@ -798,24 +799,35 @@ test_until_without_since_is_rejected() {
 test_value_taking_flags_do_not_eat_the_subcommand() {
     # CYCLE 2, BLOCKING. The operand scan filtered flags but not their VALUES,
     # so `git -C some/dir log` left `some/dir` as the first operand, matched no
-    # read subcommand, and classified a log as a MUTATION. Measured across
-    # `git -C`, `gh -R` and `npm -w` — and this repo's own scripts use `-C`
-    # constantly, so the miscount lands on the read share in the direction that
-    # UNDERSTATES investigation.
+    # read subcommand, and classified a log as a MUTATION. This repo's own
+    # scripts use `-C` constantly, so the miscount lands on the read share in
+    # the direction that UNDERSTATES investigation.
+    #
+    # ONE CASE PER VALUE_FLAGS HEAD, which is the point of the list below.
+    # Cycle 3 caught this comment claiming `npm -w` coverage the fixture did not
+    # have — the exact comment-asserts-intent-not-code shape this repo records.
+    # A typo'd `npm`/`ruff` entry (`--Workspace`, say) would have been invisible:
+    # the generic startswith("-") filter absorbs an unmatched flag, so the row
+    # still lands in `read` and nothing fails. Every head is exercised here now,
+    # in both the separate-value and inline-value spellings.
     local vf="$WORKDIR/valueflags"
     command mkdir -p "$vf/proj"
-    command printf '{"type":"assistant","sessionId":"v1","timestamp":"2026-08-23T09:00:00.000Z","message":{"id":"vf1","role":"assistant","model":"claude-opus-5","content":[{"type":"tool_use","id":"v_a","name":"Bash","input":{"command":"git -C some/dir log --oneline"}},{"type":"tool_use","id":"v_b","name":"Bash","input":{"command":"gh -R owner/repo pr view 1"}},{"type":"tool_use","id":"v_c","name":"Bash","input":{"command":"git --git-dir=/tmp/.git log"}},{"type":"tool_use","id":"v_d","name":"Bash","input":{"command":"git -C /tmp push origin main"}}],"usage":{"input_tokens":1,"cache_read_input_tokens":10,"cache_creation_input_tokens":0,"output_tokens":1}}}\n' \
+    command printf '{"type":"assistant","sessionId":"v1","timestamp":"2026-08-23T09:00:00.000Z","message":{"id":"vf1","role":"assistant","model":"claude-opus-5","content":[{"type":"tool_use","id":"v_a","name":"Bash","input":{"command":"git -C some/dir log --oneline"}},{"type":"tool_use","id":"v_b","name":"Bash","input":{"command":"gh -R owner/repo pr view 1"}},{"type":"tool_use","id":"v_c","name":"Bash","input":{"command":"git --git-dir=/tmp/.git log"}},{"type":"tool_use","id":"v_e","name":"Bash","input":{"command":"npm -w pkg ls"}},{"type":"tool_use","id":"v_f","name":"Bash","input":{"command":"npm --prefix /tmp ls"}},{"type":"tool_use","id":"v_g","name":"Bash","input":{"command":"ruff --config pyproject.toml check ."}},{"type":"tool_use","id":"v_d","name":"Bash","input":{"command":"git -C /tmp push origin main"}},{"type":"tool_use","id":"v_h","name":"Bash","input":{"command":"npm -w pkg install left-pad"}}],"usage":{"input_tokens":1,"cache_read_input_tokens":10,"cache_creation_input_tokens":0,"output_tokens":1}}}\n' \
         >"$vf/proj/session-v.jsonl"
 
     run_ta bash-class "$vf"
     assert_equals "0" "$RC" "the value-flag corpus reports"
-    # Three reads: the flag's value must not be mistaken for the subcommand,
-    # whether it is separate (`-C dir`, `-R owner/repo`) or inline (`--git-dir=`).
-    assert_equals "3" "$(row_field "	read	" 4)" \
+    # Six reads, one per VALUE_FLAGS head in both spellings: the flag's value
+    # must not be mistaken for the subcommand, whether separate (`-C dir`,
+    # `-R owner/repo`, `-w pkg`, `--prefix /tmp`, `--config f`) or inline
+    # (`--git-dir=`).
+    assert_equals "6" "$(row_field "	read	" 4)" \
         "a flag's value is skipped, not read as the subcommand"
-    # And the guard must not over-consume: `git -C /tmp push` is still a
-    # mutation, so skipping cannot have swallowed the real verb.
-    assert_equals "1" "$(row_field "	mutate	" 4)" \
+    # And the guard must not over-consume: `git -C /tmp push` and
+    # `npm -w pkg install` are still mutations, so skipping cannot have
+    # swallowed the real verb. Asserted per head, since over-consumption would
+    # be a per-entry bug.
+    assert_equals "2" "$(row_field "	mutate	" 4)" \
         "skipping a flag value does not swallow the real subcommand"
 }
 
@@ -846,6 +858,27 @@ test_prefix_honours_the_window() {
         "both spawns are present when no window is declared"
 }
 
+test_tab_in_model_field_cannot_shift_columns() {
+    # _tsv_safe's docstring names THREE verbatim, untrusted columns it protects
+    # — `model`, a tool `name`, and attachments' open type vocabulary — but only
+    # the third was pinned. `model` is the join key's second column, so a tab
+    # there shifts every field after it while the row still looks well-formed.
+    # Cycle 3 flagged the gap; this closes it on the column that carries the
+    # join.
+    local mt="$WORKDIR/model-tab"
+    command mkdir -p "$mt/proj"
+    command printf '{"type":"assistant","sessionId":"m1","timestamp":"2026-08-23T09:00:00.000Z","message":{"id":"mt1","role":"assistant","model":"evil\\tmodel","content":[{"type":"text","text":"x"}],"usage":{"input_tokens":1,"cache_read_input_tokens":100,"cache_creation_input_tokens":0,"output_tokens":5}}}\n' \
+        >"$mt/proj/session-m.jsonl"
+
+    run_ta growth "$mt"
+    assert_equals "0" "$RC" "a tab-bearing model reports"
+    local widths
+    widths="$(command printf '%s\n' "$OUT" | command grep -v '^#' |
+        command awk -F'\t' '{print NF}' | command sort -u | command tr '\n' ' ')"
+    assert_equals "8 " "$widths" "the embedded tab does not add a column"
+    assert_contains "$OUT" "evil model" "and the model survives with the tab neutralized"
+}
+
 test_tab_bearing_field_cannot_shift_columns() {
     # The join is POSITIONAL, and `attachments`' vocabulary is deliberately OPEN
     # — the type string comes straight from transcript JSON. A tab in it splits
@@ -868,6 +901,54 @@ test_tab_bearing_field_cannot_shift_columns() {
         command awk -F'\t' '{print NF}' | command sort -u | command tr '\n' ' ')"
     assert_equals "7 " "$widths" "the embedded tab does not add a column"
     assert_contains "$OUT" "evil name" "and the value survives with the tab neutralized"
+}
+
+# --- the suite's own validity (third-instance guard) ------------------------
+
+test_every_fixture_payload_is_valid_json() {
+    # THE TRAP THIS SUITE KEEPS HITTING, now a test instead of vigilance.
+    #
+    # A fixture line written with a RAW control character (`\t` rather than
+    # `\\t` inside a single-quoted printf) is INVALID JSON. _iter_records skips
+    # an unparseable line by design — correctly, since a transcript being
+    # written can end mid-line — so the fixture silently carries nothing and the
+    # test passes while never reaching its subject. That is a vacuous test: the
+    # exact "silence reads as a pass" shape this repo keeps filing issues about.
+    #
+    # Measured three times in this suite's own history (the escaping fixture,
+    # then the model-field fixture, then this guard's own first draft), which is
+    # why it is checked rather than remembered.
+    #
+    # Reads THIS file's printf payloads and parses each. Payloads carrying a `%`
+    # substitution are assembled at runtime from shell variables, so they cannot
+    # be parsed standalone and are skipped; the deliberately-truncated
+    # malformed-line fixture is expected to be invalid and is exempted by name.
+    local bad
+    bad="$(
+        python3 - "$SUITE_FILE" <<'PYEOF'
+import json, re, subprocess, sys
+
+src = open(sys.argv[1]).read()
+bad = 0
+for payload in re.findall(r"command printf '(\{[^']*)'", src):
+    if "%" in payload:
+        continue
+    rendered = subprocess.run(
+        ["printf", payload], capture_output=True, text=True
+    ).stdout
+    for line in rendered.splitlines():
+        if not line.strip() or "truncated" in line:
+            continue
+        try:
+            json.loads(line)
+        except ValueError as exc:
+            bad += 1
+            print(f"{line[:80]} -> {exc}")
+print(f"COUNT={bad}")
+PYEOF
+    )"
+    assert_contains "$bad" "COUNT=0" \
+        "every fixture payload is valid JSON (a raw tab makes one vacuous)"
 }
 
 # --- the shim's 77 sentinel --------------------------------------------------
@@ -997,7 +1078,9 @@ run_test test_gh_noun_verb_is_resolved_on_the_verb "gh noun-verb resolves on the
 run_test test_until_without_since_is_rejected "--until without --since is rejected (cycle 2)"
 run_test test_value_taking_flags_do_not_eat_the_subcommand "a flag value is not read as the subcommand (cycle 2)"
 run_test test_prefix_honours_the_window "prefix honours --since/--until (cycle 2)"
+run_test test_tab_in_model_field_cannot_shift_columns "an embedded tab in MODEL cannot shift columns"
 run_test test_tab_bearing_field_cannot_shift_columns "an embedded tab cannot shift TSV columns"
+run_test test_every_fixture_payload_is_valid_json "every fixture payload is valid JSON (no vacuous fixture)"
 run_test test_shim_reports_77_without_python "the shim exits 77 when python3 is absent"
 run_test test_shim_reports_77_on_old_python "the shim exits 77 when python3 is too old"
 run_test test_shim_diagnoses_a_missing_tool_correctly "the shim diagnoses a missing .py distinctly"
