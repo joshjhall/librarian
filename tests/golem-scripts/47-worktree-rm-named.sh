@@ -329,3 +329,170 @@ test_worktree_rm_named_unresolvable_base_ref_keeps_branch() {
     branches="$(sb_git "$sb" branch --list "tmp/noref-890")"
     assert_not_empty "$branches" "the branch survives an unresolvable base ref"
 }
+
+# --- base-ref resolution arms (#1005 review cycle 2) -------------------------
+
+# run_wt_rm_with_base <sandbox> <base-ref> <arg> — invoke worktree-rm.sh with a
+# custom GOLEM_BASE_REF, mirroring run_in's env exactly (#1005 review cycle 2).
+#
+# run_in hardcodes GOLEM_BASE_REF=HEAD, and `HEAD` resolves through NEITHER
+# qualified arm — it matches only the bare fallback. So every fixture above
+# exercises exactly one of the three resolution arms, and the two this fix ADDED
+# were covered by no passing test. That is the silence-reads-as-a-pass shape, so
+# the arms get driven directly.
+#
+# Mirrors run_in's variable set rather than a hand-picked subset: GOLEM_PLUGIN_PROBE
+# and GOLEM_CARGO_CACHE_DIR are included because omitting them lets the script see
+# the REAL host's values, which is how a sandbox stops being hermetic.
+run_wt_rm_with_base() {
+    local dir="$1" base="$2" arg="$3"
+    RUN_RC=0
+    RUN_OUT="$(cd "$dir" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
+            HOME="$dir" \
+            GOLEM_PLUGIN_PROBE="$dir/no-plugin-probe" \
+            TMUX= TMUX_TMPDIR="${SANDBOX_TMUX_DIR:-$dir/.tmux}" \
+            GOLEM_WORKTREE_DIR=.worktrees \
+            GOLEM_STATUS_DIR=.worktrees/.status \
+            GOLEM_BASE_REF="$base" \
+            GOLEM_WORKTREE_LOCAL_FILES="" \
+            GOLEM_CARGO_CACHE_DIR="$dir/no-cargo-cache" \
+            "$REAL_BASH" "$WT_RM" "$arg" 2>&1)" || RUN_RC=$?
+}
+
+# ARM 1 — a bare LOCAL BRANCH name resolves via refs/heads and still gates.
+# The branch under teardown is merged into that base, so a working arm DELETES;
+# an arm that failed to resolve would print "could not resolve" instead, which is
+# what makes this a positive test of the arm rather than of the fallback.
+test_worktree_rm_named_base_ref_resolves_local_branch() {
+    local sb branches
+    new_sandbox sb
+    sb_git "$sb" branch integration 2>/dev/null
+    make_named_worktree "$sb" "lb-probe" "tmp/lb-890"
+
+    run_wt_rm_with_base "$sb" "integration" "lb-probe"
+    assert_exit 0 "$RUN_RC" "teardown succeeds against a local-branch base"
+    assert_contains "$RUN_OUT" "deleted branch tmp/lb-890" \
+        "refs/heads/<base> resolved, so the merged branch was deleted"
+    assert_not_contains "$RUN_OUT" "could not resolve" "the local-branch arm resolved"
+
+    branches="$(sb_git "$sb" branch --list "tmp/lb-890")"
+    assert_equals "" "$branches" "the merged branch is gone"
+}
+
+# ARM 1 vs ARM 2 PRECEDENCE — refs/heads must win over refs/remotes.
+#
+# Cycle 2 flagged the original order (remotes first): `GOLEM_BASE_REF=main` would
+# resolve against a remote literally named `main` before the local branch.
+#
+# THE FIXTURE HAS TO DIVERGE, not merely differ. A first attempt pointed the two
+# refs at different commits but left the probe an ancestor of BOTH — so either
+# arm deleted and the test proved nothing about precedence. Here the local and
+# remote refs sit on genuinely divergent histories from a common seed, and the
+# probe forks from the LOCAL tip: it is merged into refs/heads/pick-me and NOT
+# into refs/remotes/pick-me. Reading the remote says "NOT merged" and keeps the
+# branch; reading refs/heads deletes it. So this assertion flips if the
+# precedence is ever reverted.
+test_worktree_rm_named_base_ref_prefers_local_over_remote() {
+    local sb branches seed local_tip divergent
+    new_sandbox sb
+    seed="$(sb_git "$sb" rev-parse HEAD)"
+
+    # Local line of history, and the local `pick-me` at its tip.
+    command printf 'local work\n' >"$sb/local.txt"
+    sb_git "$sb" add local.txt
+    sb_git "$sb" -c commit.gpgsign=false commit -qm localwork 2>/dev/null
+    local_tip="$(sb_git "$sb" rev-parse HEAD)"
+    sb_git "$sb" branch pick-me "$local_tip" 2>/dev/null
+
+    # A DIVERGENT line from the same seed, and a remote-tracking `pick-me` on it.
+    sb_git "$sb" checkout -q --detach "$seed" 2>/dev/null
+    command printf 'remote work\n' >"$sb/remote.txt"
+    sb_git "$sb" add remote.txt
+    sb_git "$sb" -c commit.gpgsign=false commit -qm remotework 2>/dev/null
+    divergent="$(sb_git "$sb" rev-parse HEAD)"
+    sb_git "$sb" update-ref refs/remotes/pick-me "$divergent" 2>/dev/null
+    sb_git "$sb" checkout -q "$local_tip" 2>/dev/null
+
+    # The probe forks from the LOCAL tip: merged into refs/heads, not refs/remotes.
+    sb_git "$sb" worktree add -q ".worktrees/prec-probe" -b "tmp/prec-890" "$local_tip" 2>/dev/null
+
+    run_wt_rm_with_base "$sb" "pick-me" "prec-probe"
+    assert_exit 0 "$RUN_RC" "teardown completes against the colliding base name"
+    assert_contains "$RUN_OUT" "deleted branch tmp/prec-890" \
+        "refs/heads/pick-me won over the divergent refs/remotes/pick-me"
+    assert_not_contains "$RUN_OUT" "NOT merged" "the local base was the one measured against"
+
+    branches="$(sb_git "$sb" branch --list "tmp/prec-890")"
+    assert_equals "" "$branches" "the branch merged into the LOCAL base is gone"
+}
+
+# ARM 3 — a TAG as GOLEM_BASE_REF resolves via refs/tags.
+# A consuming repo may legitimately pin the base to a release tag. Without this
+# arm such a value reached only the bare fallback; with the ambiguity check now
+# on that fallback, an unqualified tag lookup is exactly the case that must keep
+# working through a NAMED arm rather than by luck.
+test_worktree_rm_named_base_ref_resolves_tag() {
+    local sb branches
+    new_sandbox sb
+    sb_git "$sb" -c tag.gpgsign=false tag -m r v1.0.0 HEAD 2>/dev/null
+    make_named_worktree "$sb" "tagbase-probe" "tmp/tagbase-890"
+
+    run_wt_rm_with_base "$sb" "v1.0.0" "tagbase-probe"
+    assert_exit 0 "$RUN_RC" "teardown succeeds against a tag base"
+    assert_contains "$RUN_OUT" "deleted branch tmp/tagbase-890" \
+        "refs/tags/<base> resolved, so the merged branch was deleted"
+    assert_not_contains "$RUN_OUT" "could not resolve" "the tag arm resolved"
+
+    branches="$(sb_git "$sb" branch --list "tmp/tagbase-890")"
+    assert_equals "" "$branches" "the merged branch is gone"
+}
+
+# AN AMBIGUOUS BARE BASE IS REFUSED, not silently measured against.
+#
+# The comment this replaced CLAIMED a wrong base "lands on the fail-closed side".
+# That is false in general: it holds only when the wrong commit is an ANCESTOR of
+# the true base. So the bare fallback now captures git's `warning: refname ... is
+# ambiguous` and treats an ambiguous base as unresolvable. The fixture makes
+# `collide` name BOTH a branch and a tag, neither reachable by a qualified arm
+# (the qualified spellings are tried first and would each resolve, so the name is
+# put somewhere only the bare form reaches: refs/collide).
+test_worktree_rm_named_ambiguous_base_ref_is_refused() {
+    local sb branches
+    new_sandbox sb
+    sb_git "$sb" update-ref refs/collide HEAD 2>/dev/null
+    sb_git "$sb" update-ref refs/remotes/collide/HEAD HEAD 2>/dev/null
+    make_named_worktree "$sb" "amb-probe" "tmp/amb-890"
+
+    run_wt_rm_with_base "$sb" "collide" "amb-probe"
+    assert_exit 0 "$RUN_RC" "teardown still frees the worktree path"
+    assert_contains "$RUN_OUT" "removed worktree" "the worktree is removed"
+    assert_not_contains "$RUN_OUT" "deleted branch" \
+        "an ambiguous base never authorizes a deletion"
+
+    branches="$(sb_git "$sb" branch --list "tmp/amb-890")"
+    assert_not_empty "$branches" "the branch survives an ambiguous base ref"
+}
+
+# An `issue-<non-digit>` spelling stays in NAME mode.
+# The new elif is anchored `^issue-[0-9]+$`, so `issue-probe` is an ordinary
+# worktree name and must keep name mode's resolve-plus-merge-gate. Without this,
+# a later loosening of that regex to `issue-.*` would silently route scratch
+# worktrees into the unconditional-delete path.
+test_worktree_rm_named_issue_nondigit_stays_in_name_mode() {
+    local sb branches
+    new_sandbox sb
+    make_named_worktree "$sb" "issue-probe" "tmp/issue-probe-890"
+    command printf 'unmerged\n' >"$sb/.worktrees/issue-probe/u.txt"
+    sb_git "$sb/.worktrees/issue-probe" add u.txt
+    sb_git "$sb/.worktrees/issue-probe" -c commit.gpgsign=false commit -qm u 2>/dev/null
+
+    run_in "$sb" "$WT_RM" "issue-probe"
+    assert_exit 0 "$RUN_RC" "teardown completes"
+    assert_contains "$RUN_OUT" "kept branch tmp/issue-probe-890" \
+        "issue-<non-digit> kept NAME mode's merge gate"
+    assert_not_contains "$RUN_OUT" "deleted branch" "no unconditional issue-mode delete"
+
+    branches="$(sb_git "$sb" branch --list "tmp/issue-probe-890")"
+    assert_not_empty "$branches" "the unmerged scratch branch survives"
+}

@@ -991,20 +991,53 @@ if [ -n "$br" ] && [ -n "$(command git branch --list "$br")" ]; then
         # UNMERGED branch. `refs/heads/$br` is exact — the branch is already known
         # to exist, `git branch --list` just matched it.
         br_sha="$(command git rev-parse --verify --quiet "refs/heads/$br^{commit}" 2>/dev/null || true)"
-        # GOLEM_BASE_REF cannot be qualified the same way: it is deliberately
-        # free-form config (`origin/main` by default, `HEAD` in the test sandbox,
-        # and legitimately a tag or a raw SHA in a consuming repo), so forcing a
-        # namespace onto it would break valid values. Try the two unambiguous
-        # spellings first — remote-tracking, then local branch — and fall back to
-        # the bare form only when neither exists. An ambiguous BASE is also far
-        # less dangerous than an ambiguous branch: it decides what we compare
-        # against, and a wrong answer here lands on the fail-closed side, keeping
-        # the branch rather than deleting it.
+        # GOLEM_BASE_REF cannot be qualified to ONE namespace the way `$br` can:
+        # it is deliberately free-form config — `origin/main` by default, `HEAD` in
+        # the test sandbox, and legitimately a tag or a raw SHA in a consuming repo
+        # — so forcing a single prefix onto it would break valid values. Try each
+        # unambiguous spelling in turn instead, most-specific first.
+        #
+        # `refs/heads` BEFORE `refs/remotes` (#1005 review cycle 2): a bare local
+        # branch name is the likelier operator override, and probing the remote
+        # namespace first would resolve `GOLEM_BASE_REF=main` against a remote
+        # literally named `main` if one existed. The default `origin/main` is
+        # unaffected — no local branch is named `origin/main`, so it falls through
+        # to `refs/remotes/origin/main` exactly as before.
+        #
+        # THE BARE FALLBACK IS AMBIGUITY-CHECKED, NOT ASSUMED SAFE. An earlier
+        # version of this comment claimed a wrong base "lands on the fail-closed
+        # side, keeping the branch rather than deleting it." That claim is FALSE in
+        # general and is the kind a reader would trust: it holds only when the
+        # wrongly-resolved commit is an ANCESTOR of the true base. A colliding ref
+        # resolving to a DESCENDANT of the branch tip makes
+        # `merge-base --is-ancestor` report true, authorizing `branch -D` on a
+        # genuinely unmerged branch — the same failure this cycle fixed for `$br`,
+        # merely moved to the other operand. So the bare form is reached only after
+        # every qualified spelling misses, and git's own `warning: refname ... is
+        # ambiguous` is CAPTURED rather than discarded: an ambiguous bare base is
+        # treated as unresolvable, which routes to the "could not resolve" arm and
+        # keeps the branch. Fail closed on the condition, not on a hopeful claim
+        # about it.
         base_sha=""
-        for base_try in "refs/remotes/$GOLEM_BASE_REF" "refs/heads/$GOLEM_BASE_REF" "$GOLEM_BASE_REF"; do
+        for base_try in \
+            "refs/heads/$GOLEM_BASE_REF" \
+            "refs/remotes/$GOLEM_BASE_REF" \
+            "refs/tags/$GOLEM_BASE_REF"; do
             base_sha="$(command git rev-parse --verify --quiet "$base_try^{commit}" 2>/dev/null || true)"
             [ -z "$base_sha" ] || break
         done
+        if [ -z "$base_sha" ]; then
+            # stderr is kept so the ambiguity warning can be SEEN. `--verify` alone
+            # still succeeds on an ambiguous name; only the warning distinguishes it.
+            base_err="$(command git rev-parse --verify "$GOLEM_BASE_REF^{commit}" 2>&1 >/dev/null || true)"
+            base_sha="$(command git rev-parse --verify --quiet "$GOLEM_BASE_REF^{commit}" 2>/dev/null || true)"
+            case "$base_err" in
+                *ambiguous*)
+                    command echo "worktree-rm: '$GOLEM_BASE_REF' is an ambiguous ref; refusing to measure against it." >&2
+                    base_sha=""
+                    ;;
+            esac
+        fi
         if [ -z "$base_sha" ] || [ -z "$br_sha" ]; then
             command echo "worktree-rm: kept branch $br — could not resolve it against $GOLEM_BASE_REF." >&2
             command echo "  Delete it by hand once you have checked it: git branch -D $br" >&2
