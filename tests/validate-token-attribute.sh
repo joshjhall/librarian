@@ -879,6 +879,30 @@ test_tab_in_model_field_cannot_shift_columns() {
     assert_contains "$OUT" "evil model" "and the model survives with the tab neutralized"
 }
 
+test_tab_in_tool_name_cannot_shift_columns() {
+    # The THIRD column _tsv_safe's docstring commits to protecting. A tool
+    # `name` is read straight from a tool_use block with no vocabulary
+    # restriction — an MCP server registers whatever name it likes — so it is
+    # the least controlled of the three. Cycles 3 and 4 closed `model` and the
+    # attachment type; this completes the set, so the docstring's claim is true
+    # of all three rather than of two.
+    local tn="$WORKDIR/tool-name-tab"
+    command mkdir -p "$tn/proj"
+    {
+        command printf '{"type":"assistant","sessionId":"tn1","timestamp":"2026-08-23T09:00:00.000Z","message":{"id":"tn1","role":"assistant","model":"claude-opus-5","content":[{"type":"tool_use","id":"tn_a","name":"evil\\ttool","input":{}}],"usage":{"input_tokens":1,"cache_read_input_tokens":10,"cache_creation_input_tokens":0,"output_tokens":1}}}\n'
+        command printf '{"type":"user","sessionId":"tn1","timestamp":"2026-08-23T09:00:01.000Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tn_a","content":"%s"}]}}\n' \
+            "$(command printf 'q%.0s' $(command seq 1 12000))"
+    } >"$tn/proj/session-tn.jsonl"
+
+    run_ta debt "$tn"
+    assert_equals "0" "$RC" "a tab-bearing tool name reports"
+    local widths
+    widths="$(command printf '%s\n' "$OUT" | command grep -v '^#' |
+        command awk -F'\t' '{print NF}' | command sort -u | command tr '\n' ' ')"
+    assert_equals "7 " "$widths" "the embedded tab does not add a column"
+    assert_contains "$OUT" "evil tool" "and the tool name survives, tab neutralized"
+}
+
 test_tab_bearing_field_cannot_shift_columns() {
     # The join is POSITIONAL, and `attachments`' vocabulary is deliberately OPEN
     # — the type string comes straight from transcript JSON. A tab in it splits
@@ -1084,6 +1108,7 @@ run_test test_until_without_since_is_rejected "--until without --since is reject
 run_test test_value_taking_flags_do_not_eat_the_subcommand "a flag value is not read as the subcommand (cycle 2)"
 run_test test_prefix_honours_the_window "prefix honours --since/--until (cycle 2)"
 run_test test_tab_in_model_field_cannot_shift_columns "an embedded tab in MODEL cannot shift columns"
+run_test test_tab_in_tool_name_cannot_shift_columns "an embedded tab in TOOL NAME cannot shift columns"
 run_test test_tab_bearing_field_cannot_shift_columns "an embedded tab cannot shift TSV columns"
 run_test test_every_fixture_payload_is_valid_json "every fixture payload is valid JSON (no vacuous fixture)"
 run_test test_shim_reports_77_without_python "the shim exits 77 when python3 is absent"
