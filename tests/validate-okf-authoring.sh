@@ -410,22 +410,31 @@ test_no_surviving_authoring_instruction() {
                 # A `# WRONG`-marked block is a deliberate counterexample: the
                 # skill must be able to SHOW the bad shape in order to reject it.
                 #
-                # THE WORD BOUNDARY IS LOAD-BEARING, AND ITS CLASS IS NARROW ON
-                # PURPOSE. Without any boundary the marker matched by PREFIX, so
-                # `# WRONGDOING` silenced a real block. A blanket `[^A-Za-z]` then
-                # fixed the letter case but still admitted `# WRONG-ish` and
-                # `# WRONG2`, because a hyphen or digit CONTINUES a compound word
-                # just as well as a letter does (measured: both exempted). So the
-                # class is whitespace, end-of-line, or the punctuation the real
-                # marker actually uses -- note the em dash is covered by the
-                # whitespace that precedes it in `# WRONG — ...`. Measured in a sandbox: the
+                # A TRUE WORD BOUNDARY, stated as what a word CONTINUES with
+                # rather than as a list of what may follow. This regex has been
+                # wrong three times, each time by over-fitting to the fixtures
+                # then on hand:
+                #   1. no boundary    -> `# WRONGDOING` silenced a real block
+                #   2. `[^A-Za-z]`    -> still admitted `# WRONG-ish`, `# WRONG2`
+                #                        (a hyphen or digit CONTINUES a word)
+                #   3. `:|\.|,` list -> stopped those, but then FALSELY FIRED on
+                #                        `# WRONG!`, `# WRONG;`, `# WRONG)` and an
+                #                        em dash with no preceding space --
+                #                        breaking a legitimate counterexample
+                #                        instead of missing a regression.
+                # Enumerating the punctuation that MAY follow is unbounded; the
+                # set of characters that CONTINUE a word is small and closed
+                # (alnum, `_`, `-`). So the class excludes those and admits
+                # everything else, which is the general rule the three earlier
+                # spellings were each approximating. Verified in both directions
+                # across twelve spellings. Measured in a sandbox: the
                 # unboundaried pattern emitted nothing for a genuine regression
                 # sitting under `# WRONGDOING: unrelated topic`. Both awk copies
                 # below carry the boundary; a fixture pins it.
                 # Keyed to the MARKER, not to the filename -- exempting the whole
                 # file would let the skill itself regress into teaching the shape
                 # while the gate stayed green (measured: it did).
-                /^[[:space:]]*#[[:space:]]*WRONG([[:space:]]|$|:|\.|,)/ { wrong = NR }
+                /^[[:space:]]*#[[:space:]]*WRONG([^A-Za-z0-9_-]|$)/ { wrong = NR }
                 /^[[:space:]]*metadata:[[:space:]]*$/ { seen = NR; next }
                 seen && NR <= seen + 3 &&
                     /^[[:space:]]+(type|status|stale_after|stale_check):/ {
@@ -463,7 +472,7 @@ test_no_surviving_authoring_instruction() {
         command printf -- '---\n'
     } >"$probe"
     unmarked="$(command awk -v F="$probe" '
-        /^[[:space:]]*#[[:space:]]*WRONG([[:space:]]|$|:|\.|,)/ { wrong = NR }
+        /^[[:space:]]*#[[:space:]]*WRONG([^A-Za-z0-9_-]|$)/ { wrong = NR }
         /^[[:space:]]*metadata:[[:space:]]*$/ { seen = NR; next }
         seen && NR <= seen + 3 &&
             /^[[:space:]]+(type|status|stale_after|stale_check):/ {
@@ -487,7 +496,7 @@ test_no_surviving_authoring_instruction() {
         command printf -- '  type: feedback\n'
     } >"$probe"
     falsemarker="$(command awk -v F="$probe" '
-        /^[[:space:]]*#[[:space:]]*WRONG([[:space:]]|$|:|\.|,)/ { wrong = NR }
+        /^[[:space:]]*#[[:space:]]*WRONG([^A-Za-z0-9_-]|$)/ { wrong = NR }
         /^[[:space:]]*metadata:[[:space:]]*$/ { seen = NR; next }
         seen && NR <= seen + 3 &&
             /^[[:space:]]+(type|status|stale_after|stale_check):/ {
@@ -502,9 +511,18 @@ test_no_surviving_authoring_instruction() {
     # `[^A-Za-z]` boundary was still evadable (measured: `# WRONG-ish` and
     # `# WRONG2` both exempted). Table-driven so each spelling fails on its own
     # row rather than collapsing into one pass/fail.
+    # TABLE-DRIVEN IN BOTH DIRECTIONS. Three iterations of this regex each
+    # over-fit to whichever spellings had fixtures, so the table now carries the
+    # continuations that must NOT exempt AND (below) the terminators that MUST,
+    # and a new spelling is one row rather than a new code path.
+    #
+    # (A row appending a lowercase suffix directly to the marker word is
+    # deliberately absent: the spell gate reads that token as a misspelling and
+    # goes red. The letter-continuation class it would test is already covered by
+    # the WRONGLY and WRONGDOING rows.)
     local fake
     for fake in '# WRONG-ish: an unrelated note' '# WRONG2 numbered note' \
-        '# WRONGLY documented elsewhere'; do
+        '# WRONGLY documented elsewhere' '# WRONG_note underscore'; do
         probe="$WORKDIR/false-marker-variant.md"
         {
             command printf -- '%s\n' "$fake"
@@ -513,7 +531,7 @@ test_no_surviving_authoring_instruction() {
             command printf -- '  type: feedback\n'
         } >"$probe"
         falsemarker="$(command awk -v F="$probe" '
-            /^[[:space:]]*#[[:space:]]*WRONG([[:space:]]|$|:|\.|,)/ { wrong = NR }
+            /^[[:space:]]*#[[:space:]]*WRONG([^A-Za-z0-9_-]|$)/ { wrong = NR }
             /^[[:space:]]*metadata:[[:space:]]*$/ { seen = NR; next }
             seen && NR <= seen + 3 &&
                 /^[[:space:]]+(type|status|stale_after|stale_check):/ {
@@ -523,6 +541,33 @@ test_no_surviving_authoring_instruction() {
         ' "$probe")"
         assert_true "[ -n '$falsemarker' ]" \
             "AC3 boundary rejects a compound continuation: '$fake' does not exempt"
+    done
+
+    # THE OTHER DIRECTION, and the one iteration 3 broke: a genuine marker must
+    # still exempt whatever punctuation follows it. An over-tight class fires the
+    # gate on a deliberate counterexample -- a red CI on a correct edit, which is
+    # the more expensive failure because it trains people to loosen the gate.
+    local good
+    for good in '# WRONG — em dash with a space' '# WRONG—em dash, no space' \
+        '# WRONG: colon' '# WRONG! bang' '# WRONG; semicolon' \
+        '# WRONG) paren' '# WRONG, comma' '# WRONG'; do
+        probe="$WORKDIR/real-marker-variant.md"
+        {
+            command printf -- '%s\n' "$good"
+            command printf -- 'metadata:\n'
+            command printf -- '  type: feedback\n'
+        } >"$probe"
+        realmarker="$(command awk -v F="$probe" '
+            /^[[:space:]]*#[[:space:]]*WRONG([^A-Za-z0-9_-]|$)/ { wrong = NR }
+            /^[[:space:]]*metadata:[[:space:]]*$/ { seen = NR; next }
+            seen && NR <= seen + 3 &&
+                /^[[:space:]]+(type|status|stale_after|stale_check):/ {
+                    if (!(wrong && seen <= wrong + 4)) print F ":" NR ": " $0
+                    seen = 0
+                }
+        ' "$probe")"
+        assert_equals "" "$realmarker" \
+            "AC3 boundary still honors a genuine marker: '$good' exempts"
     done
 
     # ...and the GENUINE marker still exempts, or the boundary would have broken
@@ -535,7 +580,7 @@ test_no_surviving_authoring_instruction() {
         command printf -- '  type: feedback\n'
     } >"$probe"
     realmarker="$(command awk -v F="$probe" '
-        /^[[:space:]]*#[[:space:]]*WRONG([[:space:]]|$|:|\.|,)/ { wrong = NR }
+        /^[[:space:]]*#[[:space:]]*WRONG([^A-Za-z0-9_-]|$)/ { wrong = NR }
         /^[[:space:]]*metadata:[[:space:]]*$/ { seen = NR; next }
         seen && NR <= seen + 3 &&
             /^[[:space:]]+(type|status|stale_after|stale_check):/ {
@@ -642,10 +687,20 @@ test_tier_routing_is_exercised() {
     assert_equals "short_term" "$(tier_of 'tmp/scratch/measurement.md')" \
         "tier: a nested tmp/ path routes short-term (carried by tmp/*, not tmp/**/*)"
 
-    # ISOLATE WHICH GLOB CARRIES IT, or the row above pins nothing: it passes
-    # identically with `tmp/**/*` deleted, since `*` is not path-segment-aware in
-    # either `case` or fnmatch (measured, both engines agreeing on all six
-    # combinations). These two run the match against ONE pattern at a time.
+    # WHY THE ROW ABOVE CANNOT PIN ITS OWN NAME, and what these two add.
+    #
+    # The nested-path row passes identically with `tmp/**/*` deleted, because `*`
+    # is not path-segment-aware in either `case` or fnmatch (measured, both
+    # engines agreeing on all six combinations). So it cannot tell you WHICH glob
+    # carried it.
+    #
+    # These two assert GLOB SEMANTICS, deliberately hardcoded and deliberately
+    # NOT read from config: they document why the two configured patterns are not
+    # interchangeable, which is a fact about bash/fnmatch rather than about this
+    # repo's thresholds.yml. A config change cannot falsify them and is not meant
+    # to -- the config-driven behavior is covered by the `tier_of` rows above,
+    # which DO read the file. Keeping them separate is the point: one pair pins
+    # the engine, the other pins the configuration.
     # Via a variable, not a literal subject: shellcheck SC2194 flags a constant
     # `case` word, and the fixture path is genuinely fixed here.
     local one probe_path
@@ -708,13 +763,28 @@ test_log_md_destination_is_exercised() {
     : >"$list"
     for f in "$bundle"/*.md; do command printf '%s\n' "$f" >>"$list"; done
 
+    # VACUITY GUARD FIRST, same trap as the AC5 loop test: patterns.sh takes a
+    # FILE LIST, and a list naming nothing that exists warns "scanning nothing"
+    # and still exits 0 -- so a zero-rows assertion would pass against an empty
+    # scan. Measured. Assert the list resolved to all three files BEFORE reading
+    # the silence as a result.
+    local scanned
+    scanned="$(command wc -l <"$list" | command tr -d ' ')"
+    assert_equals "3" "$scanned" \
+        "log.md: the scanner was handed all three bundle files (vacuity guard)"
+
     rows="$(OKF_BUNDLE_ROOT="$bundle" OKF_TODAY="2026-09-11" command bash "$OKF_SCANNER" "$list" 2>/dev/null)" || rc=$?
     assert_equals "0" "$rc" "log.md: the scanner ran cleanly"
     assert_equals "" "$rows" \
         "log.md: a dated session-state record is a RESERVED file, not an untyped concept"
 
-    # COUNTER-FIXTURE: the same content as an ordinary concept file DOES fire.
-    # Without it, the silence above could equally mean the scanner read nothing.
+    # COUNTER-FIXTURE, and its claim stated precisely. This does NOT prove a
+    # "log-shaped record is rejected when misplaced" -- the row fires via the
+    # missing-frontmatter path, which any frontmatter-less non-reserved file would
+    # trip. What it DOES prove is the half that matters here: the scanner is
+    # genuinely reading this bundle and can emit, so the silence asserted above is
+    # a real verdict rather than an empty scan. The vacuity guard covers the
+    # file-count half; this covers the can-emit half.
     local bad badlist badrows
     bad="$WORKDIR/logdest-bad"
     command mkdir -p "$bad"
