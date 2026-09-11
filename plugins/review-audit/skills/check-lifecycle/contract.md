@@ -210,15 +210,25 @@ Both `—` cells are pinned by **silence fixtures**. An empty column is otherwis
 unfalsifiable — deleting the cell and adding an arm would both pass — the same
 reasoning that pins Swift's empty `debugger` column in `check-code-health`.
 
-**The exclusion is spelled differently in the two runtimes, and that asymmetry is
-the phase's parity lesson.** Python applies its regex per line; bash filters the
-output of `grep -n`, which carries a `NNN:` prefix, so a `^`-anchored exclusion
-written for the source line binds to the **line number** instead and silently
-stops excluding. Measured: the first draft let the one corpus false positive
-through on the **bash runtime only**. The bash spelling therefore anchors
-`^[0-9]+:[[:space:]]*…`, and the helper it rides (`emit_rows_unless`, the inverse
-of Phase 4's `emit_rows_word`) records the requirement at its definition. The
-`grep -v` stage is deliberately not `-q`: a `-q` exits on first match and
+**The phase's parity lesson arrived twice, and the second time was the sharper
+one.** First as a *divergence*: bash filters the output of `grep -n`, which
+carries a `NNN:` prefix, so a `^`-anchored exclusion written for the source line
+binds to the **line number** and silently stops excluding — measured on the bash
+runtime only. The rule is recorded at `emit_rows_unless`'s definition for the
+next caller; the exclusion here sidesteps it by being **unanchored**, which is
+the better fix where the rule permits one.
+
+Then as a *shared defect*, which the parity gate cannot see at all. Both arms of
+this detector were wrong **identically** — the match class excluded the quote
+characters, so a backgrounded job ending in a quoted argument (most of them)
+never matched, and the exclusion keyed on the line being assignment-shaped, a
+proxy that covered the one corpus false positive while suppressing every
+env-prefixed and compound-one-liner job. Two impls agreeing is not two impls
+being right, and `validate-python-ports.sh` stayed green throughout. What caught
+it was reading the pattern against shapes the fixtures did not contain — the
+corpus fixture now carries all five.
+
+The `grep -v` stage is deliberately not `-q`: a `-q` exits on first match and
 SIGPIPEs the upstream writer, which under this file's `pipefail` reports 141 and
 inverts the result.
 

@@ -153,11 +153,14 @@ emit_rows_word() {
 #
 # EXCLUDE is matched against the `-n` OUTPUT, so it sees a `NNN:` line-number
 # prefix that the python twin's per-line regex does not. A caller anchoring with
-# `^` must therefore spell that prefix — the arms below use `^[0-9]+:` — or the
-# anchor binds to the digits and the exclusion silently never fires. Measured:
-# omitting it let the one corpus false positive through on the bash runtime
-# ONLY, which is precisely the asymmetric divergence validate-python-ports.sh
-# exists to catch.
+# `^` must therefore spell that prefix (`^[0-9]+:[[:space:]]*…`) or the anchor
+# binds to the digits and the exclusion silently never fires — on the BASH
+# runtime only, which is exactly the asymmetric divergence
+# validate-python-ports.sh exists to catch. Measured during #842, on a draft
+# exclusion that has since been replaced; no current caller is anchored, so
+# read this as the rule for the next one rather than as a description of the
+# arm below. Prefer an unanchored EXCLUDE where one expresses the rule — it
+# cannot acquire this bug at all.
 emit_rows_unless() {
     command grep -nE -- "$1" "$4" 2>/dev/null |
         command grep -vE -- "$5" |
@@ -446,6 +449,13 @@ while IFS= read -r file; do
             # token is quoted, which is most of them — invisible. Both were
             # shared across the two runtimes, so parity stayed green while both
             # halves were wrong; see the fixtures that now pin each shape.
+            #
+            # The exclusion's `[^"']` middle is deliberate and cuts the other
+            # way from the class above: it stops a `#` INSIDE a quoted argument
+            # from reading as a comment, so `run --opt "a # b" &` stays a
+            # finding. The cost is a comment that both contains a quote and ends
+            # in `&` — zero corpus occurrences, and the failure is a false
+            # POSITIVE at MEDIUM, which the LLM pass dismisses.
             #
             # Measured after those exclusions: 18 rows corpus-wide, all genuine
             # background jobs, 0 false positives. Like every other arm here this

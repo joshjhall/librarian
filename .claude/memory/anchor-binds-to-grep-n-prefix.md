@@ -24,8 +24,11 @@ file. The anchor still matches something, which is why it fails silently rather
 than loudly.
 
 **How to apply:** when adding an exclusion to a `grep -n` pipeline, run both
-runtimes over the real corpus and diff before trusting it. Found in #842, where
-the sole corpus false positive survived on the bash runtime only —
-[[parity-blind-to-exit-code-divergence]] is the sibling shape, and
+runtimes over the real corpus and diff before trusting it. Prefer an
+**unanchored** exclusion where one expresses the rule, since it cannot acquire
+this bug at all. Found in #842, where the sole corpus false positive survived on
+the bash runtime only; that exclusion was later replaced by an unanchored one for
+an unrelated reason, so read this as the rule it is rather than hunting for the
+site — [[parity-blind-to-exit-code-divergence]] is the sibling shape, and
 [[grep-q-under-pipefail-inverts-a-match]] is the other `grep`-stage trap in the
 same pipelines.

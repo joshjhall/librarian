@@ -257,6 +257,13 @@ def scan_file(path: str, lines: list[str]) -> None:
             # shared across the two runtimes, so parity stayed green while both
             # halves were wrong; see the fixtures that now pin each shape.
             #
+            # The exclusion's `[^"']` middle is deliberate and cuts the other
+            # way from the class above: it stops a `#` INSIDE a quoted argument
+            # from reading as a comment, so `run --opt "a # b" &` stays a
+            # finding. The cost is a comment that both contains a quote and ends
+            # in `&` — zero corpus occurrences, and the failure is a false
+            # POSITIVE at MEDIUM, which the LLM pass dismisses.
+            #
             # Measured after those exclusions: 18 rows corpus-wide, all genuine
             # background jobs, 0 false positives. Like every other arm here this
             # is a single-line CANDIDATE for the LLM pass to confirm against its

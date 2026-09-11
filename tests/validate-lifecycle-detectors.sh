@@ -859,6 +859,15 @@ test_bash_lifecycle_arms() {
     assert_silent "$list" unreaped-subprocess \
         "lifecycle: bash assignment with & in a trailing comment stays silent"
 
+    # A `#` inside a QUOTED ARGUMENT is not a comment, so the exclusion's
+    # `[^"']` middle must keep this a finding. Pins the one thing that stops the
+    # comment exclusion from being written as the simpler `#.*&$`.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'run --opt "a # b" &' >"$d/hashinarg.sh"
+    list="$(make_list "$d/l" "$d/hashinarg.sh")"
+    assert_fires "$list" unreaped-subprocess "Subprocess spawned without visible reap" \
+        "lifecycle: bash # inside a quoted arg is not a comment — job still fires"
+
     # --- terminate-without-kill: all three SIGTERM spellings ---------------
     # One fixture per alternation half. They share an evidence label, so a
     # composite file would keep passing with two of the three mutated away.

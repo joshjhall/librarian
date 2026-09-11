@@ -576,15 +576,31 @@ each other once 1 is in.
    instead. A future arm should not assume the lexical gate covers a mid-line
    comment; it covers a comment *line*.
 
-   **The parity gate nearly passed on this phase vacuously, twice over.** The
-   exclusion above is spelled differently in the two runtimes: bash filters
-   `grep -n` output, whose `NNN:` prefix an `^`-anchored pattern binds to instead
-   of the source line, so the first draft excluded nothing on the bash side only.
-   That is precisely the asymmetric divergence `validate-python-ports.sh` exists
-   to catch — and it did not, because the corpus fixture written to exercise it
-   *lacked a trailing `&`* and so reached no arm at all. Only breaking one half
-   deliberately and watching the gate stay green exposed it. **Add the corpus
-   line, then prove it reddens; a fixture believed to be non-vacuous is not.**
+   **The parity gate failed to catch this phase's defects three times, in three
+   different ways — and the third is the one worth carrying forward.**
+
+   *Vacuously.* The first draft's exclusion was spelled differently per runtime
+   (bash filters `grep -n` output, whose `NNN:` prefix an `^`-anchored pattern
+   binds to instead of the source line), so it excluded nothing on the bash side
+   only — exactly the asymmetric divergence the gate exists to catch. It did not,
+   because the corpus fixture written to exercise it *lacked a trailing `&`* and
+   reached no arm at all. **Add the corpus line, then prove it reddens; a fixture
+   believed to be non-vacuous is not.**
+
+   *By construction.* The eventual fix made that exclusion **unanchored**, which
+   cannot acquire the bug. Where the rule permits it, prefer the spelling that
+   makes the trap unreachable over the one that documents it.
+
+   *Blindly.* Both defects that survived to review were **shared**: the match
+   class excluded the quote characters (so `curl "$url" &` — most real background
+   jobs — never matched), and the exclusion keyed on assignment shape, a proxy
+   that covered the one corpus false positive while silencing every env-prefixed
+   and compound one-liner. Both were byte-identical in the two runtimes, so
+   parity was *perfect* and *wrong*. **A parity gate answers "do these agree",
+   never "are these right"** — it is structurally incapable of seeing a shared
+   defect, so it must never be the only thing asked. What found these was reading
+   the pattern against shapes no fixture contained; what prevents the next one is
+   that the corpus fixture now carries all five.
 
 Defects found while writing this ADR, filed separately because each needs its own
 mutation-tested fixture:
