@@ -153,6 +153,7 @@ them as `${CLAUDE_PLUGIN_ROOT}/scripts/<name>.sh`.
 | `GOLEM_WATCH_INTERVAL` | `5` | `--stream*` poll interval (seconds) |
 | `GOLEM_WORK_MAX_AGE` | `3600` | Age-out bound on a background-work registry entry (#949) — deliberately distinct from `GOLEM_STALL_THRESHOLD`; a dead PID is reaped immediately |
 | `GOLEM_STALL_THRESHOLD` | `1200` | Liveness stall window (seconds); also bounds `golem-transcript-liveness.sh`'s `working` verdict (#248) |
+| `GOLEM_PANE_SCROLLBACK_LINES` | `100` | Scrollback depth captured for the multi-question-form glyph scan **only** (#1010); deliberately separate from `GOLEM_PANE_ERROR_LINES` so widening one does not retune the other |
 | `CLAUDE_PROJECTS_DIR` | `$HOME/.claude/projects` | Base dir of per-project session transcripts; `golem-token-scrape.sh` and `golem-transcript-liveness.sh` resolve a golem's transcript under it |
 | `BIFROST_URL` | (unset — **required**) | Bifrost gateway **admin API root** for `token-report.sh`. No default by design: AC5 forbids a hardcoded hostname, and the plausible guess is wrong — `ANTHROPIC_BASE_URL` addresses the _proxy_ path, whose `/api/logs/stats` returns the web UI's HTML with HTTP 200. Unset ⇒ exit `2` (usage), distinct from `77` (unreachable) |
 | `TOKEN_REPORT_TIMEOUT` | `30` | Per-request connect+total timeout (seconds) for `token-report.sh` gateway calls |

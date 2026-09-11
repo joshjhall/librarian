@@ -104,9 +104,19 @@ Note also that **AC 2 as written passes today** — the golem-902 tab bar alread
 matches the current regex when the bar *is* present. A green AC 2 is therefore
 not evidence the false-negative direction is fixed.
 
-The false negative is a **capture-side** defect, tracked as **#1010**. Widening
-`pane_error_lines` cannot fix it: that window (40) already exceeds the 24-row
-pane. The only fix is capturing scrollback — and that is not a one-line change,
+The false negative is a **capture-side** defect, tracked as **#1010** and since
+**fixed** there — `pane_is_multi_question_form` now takes an optional session
+name and issues its own `capture-pane -S` read for its glyph scan alone, leaving
+the other eight matchers on the unchanged visible capture. The reproduction (152
+of 152 paired captures) and the measured bar depth of 43 are in
+`multi-question-capture-scrollback-e2e-1010.md`. The analysis below stands as
+written and is what pointed at the fix.
+
+Widening `pane_error_lines` could not fix it. The reasoning here was that the
+window (40) already exceeds the 24-row pane, so nothing above the pane is
+reachable by a wider tail — correct as to the conclusion. #1010 later measured
+the bar at depth **43**, so that window was too small on the numbers as well.
+The only fix is capturing scrollback — and that is not a one-line change,
 for the reason recorded in #1010: **all nine pane matchers are fed by the same
 capture**, so handing them scrollback re-opens the prose self-trip that the line
 anchoring and footer anchoring exist to prevent. `golem-gate-watch.sh`'s own
