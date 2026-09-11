@@ -1028,8 +1028,42 @@ if [ -n "$br" ] && [ -n "$(command git branch --list "$br")" ]; then
         done
         if [ -z "$base_sha" ]; then
             # stderr is kept so the ambiguity warning can be SEEN. `--verify` alone
-            # still succeeds on an ambiguous name; only the warning distinguishes it.
-            base_err="$(command git rev-parse --verify "$GOLEM_BASE_REF^{commit}" 2>&1 >/dev/null || true)"
+            # still SUCCEEDS on an ambiguous name, returning one of the candidates;
+            # only the warning distinguishes it, so the text is the whole signal.
+            #
+            # `2>&1 >/dev/null` and not `>/dev/null 2>&1` — order is load-bearing.
+            # Redirections apply left to right: the first points stderr at the
+            # current stdout (the capture), the second then sends stdout to
+            # /dev/null, leaving stderr captured. Reversed, stderr would follow
+            # stdout into /dev/null and `base_err` would ALWAYS be empty — the
+            # guard would silently never fire. Verified both spellings.
+            #
+            # TWO PINS, because the warning is the guard's ONLY signal and both
+            # of its preconditions are caller-controlled.
+            #
+            # `-c core.warnAmbiguousRefs=true` (#1005 review cycle 3): that config
+            # defaults to true but is an ordinary user setting, and silencing this
+            # very warning in scripts is exactly why an operator would turn it off.
+            # Measured on git 2.55.0 — with two colliding refs,
+            # `git -c core.warnAmbiguousRefs=false rev-parse --verify 'collide^{commit}'`
+            # exits 0 with EMPTY stderr and still RESOLVES the name. Without the
+            # pin, a `~/.gitconfig` carrying that line would silently reduce this
+            # guard to the "assumed safe" posture the comment above says it
+            # replaced. Env scrubbing does not help: it stops GIT_CONFIG_* from
+            # redirecting which files git reads, not a value legitimately set in
+            # the operator's own config.
+            #
+            # `LC_ALL=C` because the match is on git's ENGLISH text. Note the
+            # measured status: `refname '%s' is ambiguous.` is NOT in git's
+            # translation catalogs today (checked de/fr/es — they carry
+            # `ambiguous object name` and `ambiguous argument`, not this string),
+            # so the pin is defensive rather than load-bearing right now, and it
+            # is deliberately NOT claimed to be covered by a test. It costs
+            # nothing and survives git translating the string later. Same
+            # treatment, for the same reason, that the tmux kill-session dispatch
+            # below gives its strerror match.
+            base_err="$(LC_ALL=C command git -c core.warnAmbiguousRefs=true \
+                rev-parse --verify "$GOLEM_BASE_REF^{commit}" 2>&1 >/dev/null || true)"
             base_sha="$(command git rev-parse --verify --quiet "$GOLEM_BASE_REF^{commit}" 2>/dev/null || true)"
             case "$base_err" in
                 *ambiguous*)

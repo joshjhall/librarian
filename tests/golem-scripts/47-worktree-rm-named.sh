@@ -474,6 +474,48 @@ test_worktree_rm_named_ambiguous_base_ref_is_refused() {
     assert_not_empty "$branches" "the branch survives an ambiguous base ref"
 }
 
+# The ambiguity guard must survive a caller who SILENCED the warning.
+#
+# REPLACES A TAUTOLOGICAL TEST (#1005 review cycle 3). The first version of this
+# case drove the script under `LC_ALL=de_DE.UTF-8` to prove the production
+# `LC_ALL=C` pin was load-bearing. It proved nothing, for two compounding
+# reasons, both measured: `de_DE.UTF-8` is not generated on this host (or on a
+# stock ubuntu-latest runner), so glibc falls back to C and the caller's LC_ALL
+# changes nothing either way; and — the part that kills the idea outright —
+# `refname '%s' is ambiguous.` is NOT in git's translation catalogs at all.
+# de/fr/es carry `ambiguous object name` and `ambiguous argument`, not this
+# string. So removing the LC_ALL=C pin would produce byte-identical output and
+# the assertion would still pass. That is the fixture-cannot-distinguish shape,
+# and a green test asserting nothing is worse than no test.
+#
+# What IS caller-controlled and DOES flip the outcome is `core.warnAmbiguousRefs`.
+# It defaults to true, but it is an ordinary user setting whose entire purpose is
+# silencing this warning in scripts. Measured on git 2.55.0: with it false, a
+# colliding name resolves with EMPTY stderr and exit 0 — the guard's only signal
+# is gone while the danger is not. The script therefore pins it on that probe,
+# and this test plants the hostile config to prove the pin holds.
+test_worktree_rm_named_ambiguity_guard_survives_silenced_warning() {
+    local sb branches
+    new_sandbox sb
+    # The caller's own config silences the warning the guard reads.
+    sb_git "$sb" config core.warnAmbiguousRefs false 2>/dev/null
+    # Place the name where NO qualified arm reaches it, so only the bare fallback
+    # sees it: refs/heads/collide, refs/remotes/collide and refs/tags/collide all
+    # miss, while `collide` itself resolves AND is ambiguous.
+    sb_git "$sb" update-ref refs/collide HEAD 2>/dev/null
+    sb_git "$sb" update-ref refs/remotes/collide/HEAD HEAD 2>/dev/null
+    make_named_worktree "$sb" "silenced-probe" "tmp/silenced-890"
+
+    run_wt_rm_with_base "$sb" "collide" "silenced-probe"
+    assert_exit 0 "$RUN_RC" "teardown completes with the warning silenced"
+    assert_contains "$RUN_OUT" "removed worktree" "the worktree path is still freed"
+    assert_not_contains "$RUN_OUT" "deleted branch" \
+        "the guard still fires when the caller's git config suppressed the warning"
+
+    branches="$(sb_git "$sb" branch --list "tmp/silenced-890")"
+    assert_not_empty "$branches" "the branch survives a silenced ambiguity warning"
+}
+
 # An `issue-<non-digit>` spelling stays in NAME mode.
 # The new elif is anchored `^issue-[0-9]+$`, so `issue-probe` is an ordinary
 # worktree name and must keep name mode's resolve-plus-merge-gate. Without this,

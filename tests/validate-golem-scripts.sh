@@ -316,6 +316,7 @@ run_fragment_test test_worktree_rm_named_base_ref_resolves_local_branch "worktre
 run_fragment_test test_worktree_rm_named_base_ref_prefers_local_over_remote "worktree-rm: refs/heads beats refs/remotes for a colliding base name (#1005 c2)"
 run_fragment_test test_worktree_rm_named_base_ref_resolves_tag "worktree-rm: a tag base resolves via refs/tags (#1005 c2)"
 run_fragment_test test_worktree_rm_named_ambiguous_base_ref_is_refused "worktree-rm: an AMBIGUOUS bare base is refused, never measured against (#1005 c2)"
+run_fragment_test test_worktree_rm_named_ambiguity_guard_survives_silenced_warning "worktree-rm: the ambiguity guard survives core.warnAmbiguousRefs=false (#1005 c3)"
 run_fragment_test test_worktree_rm_named_issue_nondigit_stays_in_name_mode "worktree-rm: issue-<non-digit> stays in NAME mode (#1005 c2)"
 run_fragment_test test_attach_non_integer_exits_2 "golem-attach: non-integer arg exits 2"
 run_fragment_test test_attach_no_session_exits_1 "golem-attach: no session/container exits 1"
