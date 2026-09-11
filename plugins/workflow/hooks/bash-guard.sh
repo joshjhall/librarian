@@ -1209,7 +1209,7 @@ if [ -z "$agent_id" ]; then
     [ -n "$own_git" ] || exit 0
     [ "$tgt_git" != "$own_git" ] || exit 0 # the caller's own worktree: allow
 
-    reason="Blocked destructive git (\`$matched\`) from the MAIN session against the linked worktree \`${target_dir}\` (#662). That worktree belongs to another session (a golem): it is by design full of UNCOMMITTED work, so this command has no recovery path — no reflog entry, no stash, no PR. Read-only inspection (\`git -C ${target_dir} status\`/\`log\`/\`diff\`) is allowed and is what polling should use. To tear the worktree down deliberately, run \`\${CLAUDE_PLUGIN_ROOT}/scripts/worktree-rm.sh <issue-number>\`, which refuses to discard uncommitted work. To reset YOUR OWN tree, run the command without \`-C\` from your own checkout."
+    reason="Blocked destructive git (\`$matched\`) from the MAIN session against the linked worktree \`${target_dir}\` (#662). That worktree belongs to another session (a golem): it is by design full of UNCOMMITTED work, so this command has no recovery path — no reflog entry, no stash, no PR. Read-only inspection (\`git -C ${target_dir} status\`/\`log\`/\`diff\`) is allowed and is what polling should use. To tear the worktree down deliberately, run \`\${CLAUDE_PLUGIN_ROOT}/scripts/worktree-rm.sh <issue-number|worktree-name>\`, which refuses to discard uncommitted work. To reset YOUR OWN tree, run the command without \`-C\` from your own checkout."
     _emit_deny_reason "$reason"
 fi
 

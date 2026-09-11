@@ -114,7 +114,7 @@ them as `${CLAUDE_PLUGIN_ROOT}/scripts/<name>.sh`.
 | Script | Purpose |
 | --- | --- |
 | `worktree-new.sh <N>` | Create a push-ready worktree + branch for issue N |
-| `worktree-rm.sh <N>` | Remove issue N's worktree + branch |
+| `worktree-rm.sh <N\|name>` | Remove a worktree + its branch. An issue number resolves `issue-N` / `<prefix>N`; a bare worktree name (`worktree-rm.sh okf-probe`) resolves the branch from `git worktree list` and deletes it only when merged into `GOLEM_BASE_REF`, so an ad-hoc probe worktree has a supported teardown (#1005). Both modes share the same dirty-tree refusal |
 | `golem-status.sh` | Central golem status table + BLOCKED list (TTY-free) |
 | `golem-attach.sh <N>` | Attach to issue N's golem (worktree tmux or container) |
 | `tracks-runbook.sh render` | Render a banked (`dispatched: false`) track composition as an operator runbook — per-lane launch commands built via `golem-launch.sh print`, serial remainder, staleness flagged. Never dispatches (#673) |
