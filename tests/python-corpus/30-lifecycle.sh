@@ -114,9 +114,10 @@ printf '%s\n' 'proc = subprocess.Popen(["ls"])' >"$LIFEDIR/test_helpers/producti
 # false side only. Sits inside test_helpers/ so one path drives both halves.
 printf '%s\n' 'proc = subprocess.Popen(["ls"])' >"$LIFEDIR/test_helpers/test_production.py"
 
-# Bash (#842): the trailing-& background job in five shapes — bare, double- and
-# single-quoted final argument, env-var-prefixed, and compound assignment-then-
-# command — plus all three SIGTERM spellings (each a separate alternation half),
+# Bash (#842): the trailing-& background job in six shapes — bare, double- and
+# single-quoted final argument, env-var-prefixed, compound assignment-then-
+# command, and a `#` inside a quoted argument (not a comment) — plus all three
+# SIGTERM spellings (each a separate alternation half),
 # and the line whose `&` sits in a TRAILING comment, the exclusion that keeps the
 # arm's one corpus false positive out.
 #
@@ -133,6 +134,7 @@ printf '%s\n' 'proc = subprocess.Popen(["ls"])' >"$LIFEDIR/test_helpers/test_pro
     printf '%s\n' "run_task '5' &"
     printf '%s\n' 'FOO=bar long_running_task &'
     printf '%s\n' 'x=1; long_task &'
+    printf '%s\n' 'run --opt "a # b" &'
     printf '%s\n' '_tgt="${_tgt#&}"   # fd-dup, not a file — strip &'
     printf '%s\n' 'command ls >/dev/null 2>&1'
 } >"$LIFEDIR/runner.sh"

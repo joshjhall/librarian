@@ -226,7 +226,7 @@ proxy that covered the one corpus false positive while suppressing every
 env-prefixed and compound-one-liner job. Two impls agreeing is not two impls
 being right, and `validate-python-ports.sh` stayed green throughout. What caught
 it was reading the pattern against shapes the fixtures did not contain — the
-corpus fixture now carries all five.
+corpus fixture now carries all six.
 
 The `grep -v` stage is deliberately not `-q`: a `-q` exits on first match and
 SIGPIPEs the upstream writer, which under this file's `pipefail` reports 141 and

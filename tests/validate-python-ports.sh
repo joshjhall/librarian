@@ -393,9 +393,10 @@ EOF
 #
 # Extended for check-lifecycle's Bash arms (#842). Each SIGTERM spelling is
 # present because they are separate alternation halves — one line covering all
-# three would leave two compared vacuously. The trailing-`&` job appears in five
-# shapes (bare, double- and single-quoted final arg, env-prefixed, and compound
-# assignment-then-command), with the trailing-comment line as the exclusion.
+# three would leave two compared vacuously. The trailing-`&` job appears in six
+# shapes (bare, double- and single-quoted final arg, env-prefixed, compound
+# assignment-then-command, and a `#` inside a quoted arg), with the trailing-
+# comment line as the exclusion.
 #
 # The four non-bare positives are here because the first draft's pattern missed
 # all of them in BOTH runtimes at once, so this gate compared two wrong impls
@@ -413,6 +414,7 @@ curl "$url" &
 run_task '5' &
 FOO=bar long_running_task &
 x=1; long_task &
+run --opt "a # b" &
 command kill -TERM "$pid"
 command kill -15 "$pid"
 command kill -s TERM "$pid"

@@ -203,6 +203,11 @@ require "trailing-comment exclusion filter matches (#842)" "$V"
 probe_grep_rejects V 'FOO=bar long_running_task &' '[[:space:]]#[^"'"'"']*&[[:space:]]*$' -E
 require "that exclusion leaves an env-prefixed job alone (#842)" "$V"
 
+# And the class's own reason for existing: a `#` INSIDE a quoted argument is not
+# a comment, so the exclusion must not fire here.
+probe_grep_rejects V 'run --opt "a # b" &' '[[:space:]]#[^"'"'"']*&[[:space:]]*$' -E
+require "that exclusion ignores a # inside a quoted arg (#842)" "$V"
+
 probe_sed V 'a  b' 's/[[:space:]]+/_/' 'a_b'
 require "[[:space:]] under sed -E" "$V"
 

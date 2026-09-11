@@ -600,7 +600,7 @@ each other once 1 is in.
    never "are these right"** — it is structurally incapable of seeing a shared
    defect, so it must never be the only thing asked. What found these was reading
    the pattern against shapes no fixture contained; what prevents the next one is
-   that the corpus fixture now carries all five.
+   that the corpus fixture now carries all six.
 
 Defects found while writing this ADR, filed separately because each needs its own
 mutation-tested fixture:
