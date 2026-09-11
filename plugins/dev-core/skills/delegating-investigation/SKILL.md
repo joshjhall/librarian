@@ -41,10 +41,19 @@ command rather than an afternoon (#788):
 
 ```bash
 # the break-even's left side: what a spawn costs
-plugins/workflow/scripts/token-attribute.sh prefix --tz UTC
+plugins/workflow/scripts/token-attribute.sh prefix \
+  --since 2026-08-23T00:00:00Z --until 2026-08-24T00:00:00Z
 # its right side: which tool's results carry the re-read debt
-plugins/workflow/scripts/token-attribute.sh debt --tz UTC
+plugins/workflow/scripts/token-attribute.sh debt \
+  --since 2026-08-23T00:00:00Z --until 2026-08-24T00:00:00Z
 ```
+
+**Always pass a window.** Without `--since`/`--until` the scan covers every
+transcript under `~/.claude/projects` — months of history — so the emitted
+`window_start` is your oldest transcript and joins against no gateway window at
+all. Pass the same boundaries you gave `token-report.sh window`, and the rows
+line up. (An unscoped run still works and says so in a `# WARNING:` line; it is
+for eyeballing a distribution, not for a before/after.)
 
 `debt` is the source of "Bash results carry 76% of all re-read debt" — it ranks
 by `result_tokens x turns_resident`, the same product this skill's rule uses, so

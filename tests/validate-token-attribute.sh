@@ -107,6 +107,19 @@ row_field() {
         command awk -F'\t' -v n="$2" '{print $n}'
 }
 
+# decile_field N FIELD — the FIELD of the row whose decile column (3) is N.
+#
+# A bare `row_field "<TAB>5<TAB>"` is ambiguous here and silently matched the
+# WRONG row: decile 1 also carries a literal 5 (its output_tokens), and grep
+# returns the first hit. That is the empty-TSV-column failure mode in a
+# different dress — a selector that looks specific, matches something else, and
+# reports a plausible number. Anchor on the column instead of the value.
+decile_field() {
+    command printf '%s\n' "$OUT" |
+        command grep -v '^#' |
+        command awk -F'\t' -v d="$1" -v n="$2" '$3 == d {print $n; exit}'
+}
+
 # --- TRAP 2 + TRAP 1: one message.id, three lines, different blocks ----------
 #
 # The shape that makes both traps visible at once, and the shape no real
@@ -166,8 +179,8 @@ test_usage_is_not_summed_per_line() {
     assert_equals "0" "$RC" "growth reports on the duplicate-id corpus"
 
     local output_tokens turns
-    output_tokens="$(row_field "	1	" 6)"
-    turns="$(row_field "	1	" 4)"
+    output_tokens="$(decile_field 1 6)"
+    turns="$(decile_field 1 4)"
 
     assert_equals "1" "$turns" "three lines of one id are ONE turn, not three"
     assert_equals "900" "$output_tokens" "usage is read once per id, not summed per line"
@@ -235,7 +248,7 @@ test_naive_timestamp_is_normalized_to_utc() {
     assert_equals "0" "$RC" "a naive stamp under an explicit --tz reports"
 
     local window
-    window="$(row_field "	1	" 1)"
+    window="$(decile_field 1 1)"
     # THE ASSERTION (AC5): the emitted window_start is UTC, and under UTC-4 that
     # is the NEXT day. A naive local reading would emit 2026-08-23T22:30.
     assert_contains "$window" "2026-08-24T02:30:00" "a naive stamp is converted to UTC"
@@ -255,10 +268,10 @@ test_same_instant_reads_identically_under_either_spelling() {
 
     run_ta growth "$aware" --tz America/New_York
     local aware_window
-    aware_window="$(row_field "	1	" 1)"
+    aware_window="$(decile_field 1 1)"
     run_ta growth "$TZF" --tz America/New_York
     local naive_window
-    naive_window="$(row_field "	1	" 1)"
+    naive_window="$(decile_field 1 1)"
     assert_equals "$aware_window" "$naive_window" \
         "an aware stamp and its naive local spelling land on the same instant"
 }
@@ -471,7 +484,7 @@ test_malformed_lines_are_tolerated() {
     } >"$broken/proj/session.jsonl"
     run_ta growth "$broken"
     assert_equals "0" "$RC" "a truncated line does not abort the run"
-    assert_equals "42" "$(row_field "	1	" 6)" "the good record is still counted exactly"
+    assert_equals "42" "$(decile_field 1 6)" "the good record is still counted exactly"
 }
 
 test_string_content_is_not_dropped() {
@@ -483,7 +496,7 @@ test_string_content_is_not_dropped() {
         >"$strc/proj/session.jsonl"
     run_ta growth "$strc"
     assert_equals "0" "$RC" "a string-content turn reports"
-    assert_equals "1" "$(row_field "	1	" 4)" "and is counted as a turn"
+    assert_equals "1" "$(decile_field 1 4)" "and is counted as a turn"
 }
 
 test_spawn_transcripts_are_excluded_from_main_session_reads() {
@@ -539,6 +552,231 @@ test_default_subcommand_is_debt() {
     out="$(python3 "$TA_PY" --root "$CONTRACT" 2>&1)"
     set -e
     assert_contains "$out" "token-attribute debt" "the default subcommand is debt"
+}
+
+# --- the join contract: window scoping and per-model separation (review c1) --
+#
+# Review cycle 1 found the join this tool advertises did not work: window_start
+# was min() over the WHOLE scanned corpus and model was the single most-common
+# one, stamped onto every row. Under the documented usage (no --root, no window)
+# that makes window_start the operator's oldest transcript — matching no gateway
+# window — and silently attributes every other model's volume to the majority
+# model. Both halves are fixed; these cases are what stop them coming back.
+
+# Two models, two sessions, two days. Every property below needs all three axes:
+# a single-model or single-day fixture cannot tell a collapse from a correct
+# reading, which is exactly why the defect survived cycle 0.
+MULTI="$WORKDIR/multi"
+command mkdir -p "$MULTI/projA" "$MULTI/projB"
+{
+    command printf '{"type":"assistant","sessionId":"mA","timestamp":"2026-08-20T09:00:00.000Z","message":{"id":"ma1","role":"assistant","model":"model-alpha","content":[{"type":"tool_use","id":"m_a","name":"Bash","input":{"command":"grep -rn x ."}}],"usage":{"input_tokens":5,"cache_read_input_tokens":1000,"cache_creation_input_tokens":0,"output_tokens":10}}}\n'
+    command printf '{"type":"user","sessionId":"mA","timestamp":"2026-08-20T09:00:01.000Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"m_a","content":"%s"}]}}\n' \
+        "$(command printf 'a%.0s' $(command seq 1 12000))"
+} >"$MULTI/projA/session-a.jsonl"
+{
+    command printf '{"type":"assistant","sessionId":"mB","timestamp":"2026-08-25T09:00:00.000Z","message":{"id":"mb1","role":"assistant","model":"model-beta","content":[{"type":"tool_use","id":"m_b","name":"Read","input":{"file_path":"/x"}}],"usage":{"input_tokens":5,"cache_read_input_tokens":2000,"cache_creation_input_tokens":0,"output_tokens":20}}}\n'
+    command printf '{"type":"user","sessionId":"mB","timestamp":"2026-08-25T09:00:01.000Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"m_b","content":"%s"}]}}\n' \
+        "$(command printf 'b%.0s' $(command seq 1 16000))"
+} >"$MULTI/projB/session-b.jsonl"
+
+test_models_are_not_collapsed_onto_the_majority() {
+    # THE REGRESSION. Two models, each with its own tool and its own volume.
+    # The old code emitted ONE model name for both rows; correct behavior keys
+    # every row to the model of the turn that produced it.
+    run_ta debt "$MULTI"
+    assert_equals "0" "$RC" "the two-model corpus reports"
+
+    local models
+    models="$(command printf '%s\n' "$OUT" | command grep -v '^#' |
+        command awk -F'\t' '{print $2}' | command sort -u | command tr '\n' ' ')"
+    assert_equals "model-alpha model-beta " "$models" \
+        "each model appears as its own row, not collapsed onto the majority"
+    # And the attribution is right, not merely plural: alpha issued the Bash
+    # call, beta the Read. A row pairing a model with the other's tool would
+    # satisfy the count above while still being wrong.
+    assert_contains "$OUT" "model-alpha	Bash" "alpha keeps its own Bash call"
+    assert_contains "$OUT" "model-beta	Read" "beta keeps its own Read call"
+}
+
+test_shares_are_within_a_model_not_across_the_scan() {
+    # Each model contributed exactly one tool, so within-model shares are 100%
+    # each. A cross-model denominator would print roughly 45/55 instead — making
+    # one model's share depend on how much the OTHER model ran.
+    run_ta debt "$MULTI"
+    local alpha_share beta_share
+    alpha_share="$(row_field "model-alpha	Bash" 7)"
+    beta_share="$(row_field "model-beta	Read" 7)"
+    assert_equals "100.0" "$alpha_share" "alpha's only tool is 100% of ALPHA's debt"
+    assert_equals "100.0" "$beta_share" "beta's only tool is 100% of BETA's debt"
+}
+
+test_since_declares_the_window_start() {
+    # The join key must be the DECLARED boundary, verbatim — that is the whole
+    # point of the column. Not the earliest stamp that happens to fall inside it.
+    run_ta debt "$MULTI" --since 2026-08-19T00:00:00Z --until 2026-08-26T00:00:00Z
+    assert_equals "0" "$RC" "a scoped scan reports"
+    local start
+    start="$(row_field "model-alpha" 1)"
+    assert_contains "$start" "2026-08-19T00:00:00" \
+        "window_start is the declared --since, not the earliest stamp seen"
+    assert_not_contains "$start" "2026-08-20" "the first in-window stamp is not the key"
+}
+
+test_window_excludes_out_of_range_turns() {
+    # The filter must actually bite, or --since would be cosmetic: a key that
+    # claims a window over data from outside it is the misattribution this
+    # finding was about, just moved into the time axis.
+    run_ta debt "$MULTI" --since 2026-08-24T00:00:00Z --until 2026-08-26T00:00:00Z
+    assert_equals "0" "$RC" "a narrowed window reports"
+    assert_contains "$OUT" "model-beta" "the in-window model is kept"
+    assert_not_contains "$OUT" "model-alpha" "the out-of-window model is excluded"
+}
+
+test_unscoped_run_says_its_key_is_descriptive() {
+    # An unscoped window_start joins against nothing. Silence would leave a
+    # wrong number reading as right; the warning is the whole mitigation, and it
+    # is a `#` comment so a consumer stripping /^#/ is unaffected.
+    run_ta debt "$MULTI"
+    assert_contains "$OUT" "# WARNING: no --since/--until" \
+        "an unscoped run warns that its window_start is not a declared window"
+    run_ta debt "$MULTI" --since 2026-08-19T00:00:00Z
+    assert_not_contains "$OUT" "# WARNING: no --since" \
+        "a scoped run does not warn"
+}
+
+test_bad_window_arguments_fail_loudly() {
+    # --since is the knob that makes the join work; a typo in it must not
+    # degrade to an unscoped scan that silently emits an unjoinable key.
+    run_ta debt "$MULTI" --since not-a-date
+    assert_equals "2" "$RC" "an unparseable --since exits 2"
+    assert_contains "$OUT" "unparseable --since" "and names the offending flag"
+    run_ta debt "$MULTI" --since 2026-08-25T00:00:00Z --until 2026-08-20T00:00:00Z
+    assert_equals "2" "$RC" "an inverted window exits 2"
+    assert_contains "$OUT" "selects nothing" "and says why it is empty"
+}
+
+# --- growth arithmetic: the headline ratio (review c1, deferrable) -----------
+#
+# Every earlier growth fixture had <= 2 turns, which with GROWTH_BUCKETS=10 puts
+# every turn in decile 1 — so base == mean and growth_vs_first was trivially 1.0
+# in every assertion that touched it. The bucketing and the ratio, i.e. the
+# "3x" this subcommand exists to produce, were unverified. This corpus spans
+# real deciles with a known escalation.
+#
+# 10 turns, input context 1000, 2000, ... 10000 -> one turn per decile, and
+# decile 10's ratio over decile 1 is exactly 10.0.
+GROWTH="$WORKDIR/growth"
+command mkdir -p "$GROWTH/proj"
+: >"$GROWTH/proj/session-g.jsonl"
+_g=1
+while [ "$_g" -le 10 ]; do
+    command printf '{"type":"assistant","sessionId":"g1","timestamp":"2026-08-23T09:%02d:00.000Z","message":{"id":"g%s","role":"assistant","model":"claude-opus-5","content":[{"type":"text","text":"t"}],"usage":{"input_tokens":0,"cache_read_input_tokens":%s,"cache_creation_input_tokens":0,"output_tokens":5}}}\n' \
+        "$_g" "$_g" "$((_g * 1000))" >>"$GROWTH/proj/session-g.jsonl"
+    _g=$((_g + 1))
+done
+unset _g
+
+test_growth_ratio_is_computed_across_real_deciles() {
+    # THE HEADLINE NUMBER. Ten turns, one per decile, escalating 1000..10000.
+    run_ta growth "$GROWTH"
+    assert_equals "0" "$RC" "the ten-turn corpus reports"
+
+    # Decile 1 is the base: mean 1000, ratio 1.0.
+    assert_equals "1000" "$(decile_field 1 5)" "decile 1's mean is its own input"
+    assert_equals "1.0" "$(decile_field 1 8)" "decile 1 is the base, ratio 1.0"
+    # Decile 10 is 10x it — the shape the #784 handoff threshold rests on.
+    assert_equals "10000" "$(decile_field 10 5)" "decile 10's mean is exact"
+    assert_equals "10.0" "$(decile_field 10 8)" "growth_vs_first is the real ratio"
+    # A middle decile too: an off-by-one in `index * BUCKETS // total` that left
+    # both ends right could still shift the interior.
+    assert_equals "5.0" "$(decile_field 5 8)" "an interior decile is placed correctly"
+    # Every decile has exactly one turn — nothing was dropped or double-placed.
+    local placed
+    placed="$(command printf '%s\n' "$OUT" | command grep -v '^#' |
+        command awk -F'\t' '{s += $4} END {print s+0}')"
+    assert_equals "10" "$placed" "all ten turns are placed, each in its own decile"
+}
+
+test_empty_decile_is_a_sentinel_not_a_zero() {
+    # With 2 turns over 10 buckets, 8 deciles hold no data. Emitting 0 for both
+    # mean and ratio makes "no data" indistinguishable from "zero growth" in the
+    # headline column — so an empty decile says `-`, the same spelling
+    # window_start uses for an unknown value.
+    run_ta growth "$THINK"
+    assert_equals "0" "$RC" "a short corpus still reports"
+    local empty_mean empty_ratio
+    empty_mean="$(decile_field 9 5)"
+    empty_ratio="$(decile_field 9 8)"
+    assert_equals "-" "$empty_mean" "an empty decile's mean is the sentinel"
+    assert_equals "-" "$empty_ratio" "an empty decile's ratio is the sentinel"
+    assert_equals "0" "$(decile_field 9 4)" "and its turn count is a real zero"
+}
+
+# --- percentile arithmetic (review c1, deferrable) ---------------------------
+
+test_percentile_does_not_collapse_p90_onto_the_maximum() {
+    # _percentile carries a documented off-by-one hazard: `int(n * fraction)` is
+    # one rank too high and at n=10 collapses p90 onto the MAXIMUM. A p90 equal
+    # to the worst case reads as plausible, so the error hides — and every
+    # earlier prefix fixture had ONE spawn, where median, p90 and max are the
+    # same value and the formula is untestable by construction.
+    local pctl="$WORKDIR/percentile"
+    command mkdir -p "$pctl/proj/sess/subagents/wf"
+    local i
+    for i in 1 2 3 4 5 6 7 8 9 10; do
+        command printf '{"type":"assistant","sessionId":"p%s","timestamp":"2026-08-23T09:%02d:00.000Z","message":{"id":"p%s","role":"assistant","model":"claude-opus-5","content":[{"type":"text","text":"s"}],"usage":{"input_tokens":0,"cache_read_input_tokens":%s,"cache_creation_input_tokens":0,"output_tokens":1}}}\n' \
+            "$i" "$i" "$i" "$((i * 1000))" \
+            >"$pctl/proj/sess/subagents/wf/agent-p$i.jsonl"
+    done
+
+    run_ta prefix "$pctl"
+    assert_equals "0" "$RC" "the ten-spawn corpus reports"
+    assert_equals "10" "$(row_field "claude-opus-5" 3)" "all ten spawns counted"
+    # Nearest-rank over 1000..10000: median (p50) is rank 5 -> 5000.
+    assert_equals "5000" "$(row_field "claude-opus-5" 4)" "median is nearest-rank, not an average"
+    # p90 is rank 9 -> 9000. The off-by-one variant reports 10000 (the max).
+    assert_equals "9000" "$(row_field "claude-opus-5" 5)" "p90 does not collapse onto the maximum"
+    assert_equals "10000" "$(row_field "claude-opus-5" 7)" "the maximum is its own column"
+    assert_equals "1000" "$(row_field "claude-opus-5" 6)" "and the minimum is exact"
+}
+
+# --- subcommand-resolved Bash classification (review c1, deferrable) ---------
+
+test_gh_npm_and_ruff_subcommands_are_resolved() {
+    # SUBCOMMAND_READ carries four heads; only `git` was covered. The others are
+    # the same claim — `gh pr view` reads, `gh pr merge` does not — and an entry
+    # no test exercises is indistinguishable from one that does not work.
+    local subs="$WORKDIR/subcommands"
+    command mkdir -p "$subs/proj"
+    command printf '{"type":"assistant","sessionId":"s1","timestamp":"2026-08-23T09:00:00.000Z","message":{"id":"sc1","role":"assistant","model":"claude-opus-5","content":[{"type":"tool_use","id":"s_a","name":"Bash","input":{"command":"gh pr view 12"}},{"type":"tool_use","id":"s_b","name":"Bash","input":{"command":"gh pr merge 12"}},{"type":"tool_use","id":"s_c","name":"Bash","input":{"command":"npm ls"}},{"type":"tool_use","id":"s_d","name":"Bash","input":{"command":"npm install left-pad"}},{"type":"tool_use","id":"s_e","name":"Bash","input":{"command":"ruff check ."}},{"type":"tool_use","id":"s_f","name":"Bash","input":{"command":"ruff format ."}}],"usage":{"input_tokens":1,"cache_read_input_tokens":10,"cache_creation_input_tokens":0,"output_tokens":1}}}\n' \
+        >"$subs/proj/session-s.jsonl"
+
+    run_ta bash-class "$subs"
+    assert_equals "0" "$RC" "the subcommand corpus reports"
+    # Three reads (gh pr view, npm ls, ruff check) and three mutations
+    # (gh pr merge, npm install, ruff format). Head-word-only classification
+    # would put all six in one bucket.
+    assert_equals "3" "$(row_field "	read	" 4)" "view/ls/check resolve as reads"
+    assert_equals "3" "$(row_field "	mutate	" 4)" "merge/install/format resolve as mutations"
+}
+
+test_gh_noun_verb_is_resolved_on_the_verb() {
+    # `gh` is NOUN-then-VERB, so the meaning is in the SECOND operand: an
+    # earlier draft listed the nouns (`pr`, `issue`) as read subcommands and
+    # classified `gh pr merge` — a remote state change — as investigation. That
+    # inflates the read share the 49%/67% finding quotes, in the direction that
+    # makes delegation look cheaper than it is.
+    local ghf="$WORKDIR/gh-nounverb"
+    command mkdir -p "$ghf/proj"
+    command printf '{"type":"assistant","sessionId":"g1","timestamp":"2026-08-23T09:00:00.000Z","message":{"id":"gh1","role":"assistant","model":"claude-opus-5","content":[{"type":"tool_use","id":"g_a","name":"Bash","input":{"command":"gh pr view 12"}},{"type":"tool_use","id":"g_b","name":"Bash","input":{"command":"gh issue list"}},{"type":"tool_use","id":"g_c","name":"Bash","input":{"command":"gh pr merge 12 --squash"}},{"type":"tool_use","id":"g_d","name":"Bash","input":{"command":"gh pr create --fill"}}],"usage":{"input_tokens":1,"cache_read_input_tokens":10,"cache_creation_input_tokens":0,"output_tokens":1}}}\n' \
+        >"$ghf/proj/session-gh.jsonl"
+
+    run_ta bash-class "$ghf"
+    assert_equals "0" "$RC" "the gh corpus reports"
+    # Same noun (`pr`), opposite verdicts — which is the whole point: a
+    # classifier keying on the noun cannot produce this split at all.
+    assert_equals "2" "$(row_field "	read	" 4)" "gh pr view / gh issue list are reads"
+    assert_equals "2" "$(row_field "	mutate	" 4)" "gh pr merge / gh pr create are mutations"
 }
 
 # --- the shim's 77 sentinel --------------------------------------------------
@@ -654,6 +892,17 @@ run_test test_empty_corpus_exits_three_not_zero "an empty corpus exits 3, not a 
 run_test test_unknown_subcommand_exits_two "an unknown subcommand exits 2"
 run_test test_every_subcommand_is_dispatchable "every declared subcommand is dispatchable"
 run_test test_default_subcommand_is_debt "the default subcommand is debt"
+run_test test_models_are_not_collapsed_onto_the_majority "JOIN: each model keeps its own rows (review c1)"
+run_test test_shares_are_within_a_model_not_across_the_scan "JOIN: shares are within a model, not across the scan"
+run_test test_since_declares_the_window_start "JOIN: --since becomes the emitted window_start"
+run_test test_window_excludes_out_of_range_turns "JOIN: the window filter actually excludes"
+run_test test_unscoped_run_says_its_key_is_descriptive "JOIN: an unscoped run warns its key is descriptive"
+run_test test_bad_window_arguments_fail_loudly "JOIN: a bad window fails loudly, never silently unscoped"
+run_test test_growth_ratio_is_computed_across_real_deciles "growth_vs_first is exact across ten real deciles"
+run_test test_empty_decile_is_a_sentinel_not_a_zero "an empty decile is a sentinel, not a zero"
+run_test test_percentile_does_not_collapse_p90_onto_the_maximum "p90 does not collapse onto the maximum at n=10"
+run_test test_gh_npm_and_ruff_subcommands_are_resolved "gh/npm/ruff subcommands resolve read vs mutate"
+run_test test_gh_noun_verb_is_resolved_on_the_verb "gh noun-verb resolves on the VERB, not the noun"
 run_test test_shim_reports_77_without_python "the shim exits 77 when python3 is absent"
 run_test test_shim_reports_77_on_old_python "the shim exits 77 when python3 is too old"
 run_test test_shim_diagnoses_a_missing_tool_correctly "the shim diagnoses a missing .py distinctly"

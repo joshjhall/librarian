@@ -484,6 +484,29 @@ if [ -f "$TOKEN_ATTR_PY" ]; then
             "$TOKEN_ATTR_PY" "$_tarpt" --root "$TA_ROOT" --tz UTC \
             >/dev/null 2>&1 || true
     done
+    # A DECLARED window -> the --since/--until arms: the window_start override,
+    # the contains() filter, and the suppressed warning. An unscoped run above
+    # covers the other side of each branch.
+    run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
+        "$TOKEN_ATTR_PY" debt --root "$TA_ROOT" --tz UTC \
+        --since 2026-08-23T00:00:00Z --until 2026-08-24T00:00:00Z \
+        >/dev/null 2>&1 || true
+    # A window that excludes everything -> the exit-3 arm reached through the
+    # filter rather than through an empty corpus.
+    run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
+        "$TOKEN_ATTR_PY" debt --root "$TA_ROOT" --tz UTC \
+        --since 2030-01-01T00:00:00Z >/dev/null 2>&1 || true
+    # Malformed and inverted windows -> the two exit-2 validation arms.
+    run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
+        "$TOKEN_ATTR_PY" debt --root "$TA_ROOT" --since not-a-date \
+        >/dev/null 2>&1 || true
+    run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
+        "$TOKEN_ATTR_PY" debt --root "$TA_ROOT" --until not-a-date \
+        >/dev/null 2>&1 || true
+    run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
+        "$TOKEN_ATTR_PY" debt --root "$TA_ROOT" \
+        --since 2026-08-25T00:00:00Z --until 2026-08-20T00:00:00Z \
+        >/dev/null 2>&1 || true
     # A non-UTC zone -> the naive-stamp conversion branch of parse_ts, which a
     # --tz UTC run passes through without converting anything.
     run_coverage run --parallel-mode --source="$PLUGINS_DIR" \

@@ -39,6 +39,11 @@ _dir="${BASH_SOURCE[0]%/*}"
 _here="$(cd "$_dir" && pwd)"
 _py="$_here/token-attribute.py"
 
+# The tool ships as THREE files: this shim exec's the CLI, which imports the
+# engine (transcript reading, where the four traps live) and the reports from
+# underscore-named siblings. Only the CLI is probed below — a missing sibling
+# raises ImportError from python3 itself, naming the file, which is a better
+# diagnosis than anything this shim could synthesize.
 if [ ! -f "$_py" ]; then
     command printf '%s\n' \
         "token-attribute: missing $_py — the plugin install is incomplete." >&2
