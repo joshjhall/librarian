@@ -63,7 +63,7 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 
-from bundle_graph import scan_bundle  # noqa: E402
+from bundle_graph import is_index, read_index_names, scan_bundle  # noqa: E402
 
 EVIDENCE_CAP = 80  # matches truncate_chars 80 in patterns.sh
 
@@ -406,13 +406,38 @@ def scan_log(path: str, lines: list[str]) -> None:
             emit(path, idx, C_RESERVED_STRUCTURE, L_LOG_DATE + ": " + heading, "MEDIUM")
 
 
-def scan_file(path: str, lines: list[str], root: str, pinned: str) -> None:
-    """Route one bundle file to the rules that apply to it."""
+def scan_file(
+    path: str,
+    lines: list[str],
+    root: str,
+    pinned: str,
+    index_names: list[str],
+) -> None:
+    """Route one bundle file to the rules that apply to it.
+
+    ROUTED BY THE CONFIGURED INDEX NAMES, not by the literal `index.md`.
+
+    This used to be `if base == "index.md"`, which meant a bundle whose index is
+    `MEMORY.md` or `index-<topic>.md` — the two names this scanner's OWN
+    `health.index_names` default declares — had every index routed to
+    scan_concept, which demands the frontmatter §8 says an index must NOT carry.
+    Measured on this repo: all 6 baselined okf-unparseable-frontmatter findings
+    were that false positive (MEMORY.md plus five index-*.md); zero were genuine.
+
+    The module disagreed with ITSELF: bundle_graph's health pass already
+    partitions indexes from concepts with exactly this predicate, so MEMORY.md
+    was an index to slice B and a malformed concept to slice A. Reusing
+    is_index() here is what makes the two passes agree — a routing fix, not a new
+    rule, and it keeps RESERVED as the spec's two names only.
+
+    `log.md` stays a literal: §9 makes it a changelog at ANY level, it is
+    reserved by §3.1 rather than configured, and it is not an index.
+    """
     base = path.rsplit("/", 1)[-1]
-    if base == "index.md":
-        scan_index(path, lines, root, pinned)
-    elif base == "log.md":
+    if base == "log.md":
         scan_log(path, lines)
+    elif is_index(base, index_names):
+        scan_index(path, lines, root, pinned)
     else:
         scan_concept(path, lines)
 
@@ -521,6 +546,10 @@ def main(argv: list[str]) -> int:
         return 1
 
     root = bundle_root()
+    # Resolved ONCE, not per file: the routing predicate below reads it for every
+    # path, and re-reading thresholds.yml per file would make the scan's cost
+    # scale with the bundle for no behavioral gain.
+    index_names = read_index_names(_thresholds_path())
     # The CONCRETE bundle directories seen in the file list, in first-seen order.
     # One list may span more than one bundle (a fixture tree, a monorepo), so the
     # graph pass runs once per distinct directory.
@@ -541,7 +570,7 @@ def main(argv: list[str]) -> int:
                 lines = fh.read().splitlines()
         except OSError:
             continue
-        scan_file(path, lines, root, pinned)
+        scan_file(path, lines, root, pinned, index_names)
 
     # Slice B (#669): the whole-bundle graph + health pass. GATED ON THE FILE
     # LIST, but not DRIVEN by it — see scan_bundle()'s docstring. Running it only

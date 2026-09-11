@@ -1122,11 +1122,32 @@ $seen_dir
         esac
     fi
 
-    case "${file##*/}" in
-        index.md) scan_index "$file" ;;
-        log.md) scan_log "$file" ;;
-        *) scan_concept "$file" ;;
-    esac
+    # ROUTE BY THE CONFIGURED INDEX NAMES, not by the literal `index.md`.
+    #
+    # This used to be `case ... index.md)`, which meant a bundle whose index is
+    # `MEMORY.md` or `index-<topic>.md` -- the two names this scanner's OWN
+    # `health.index_names` default declares -- had every one of its indexes
+    # routed to scan_concept, which demands the frontmatter §8 says an index must
+    # NOT carry. Measured on this repo: all 6 baselined
+    # okf-unparseable-frontmatter findings were that false positive (MEMORY.md
+    # plus five index-*.md), and zero were genuine.
+    #
+    # The file disagreed with ITSELF: the slice-B graph pass below already
+    # partitions indexes from concepts with is_index()/read_index_names(), so
+    # MEMORY.md was an index to the graph pass and a malformed concept to the
+    # conformance pass. Reusing the same predicate here is what makes the two
+    # passes agree, and is why this is a routing fix rather than a new rule.
+    #
+    # `log.md` stays a literal: §9 makes it a changelog at ANY level, it is
+    # reserved by §3.1 rather than configured, and it is not an index.
+    _scan_base="${file##*/}"
+    if [ "$_scan_base" = "log.md" ]; then
+        scan_log "$file"
+    elif is_index "$_scan_base" "$(read_index_names)"; then
+        scan_index "$file"
+    else
+        scan_concept "$file"
+    fi
 done <"$FILE_LIST"
 
 # Slice B (#669): GATED ON the file list, not DRIVEN by it. Running the pass only

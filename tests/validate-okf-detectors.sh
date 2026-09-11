@@ -1332,10 +1332,73 @@ test_index_sizing_is_delegated() {
         "okf: check-okf-conformance does not emit its own index-bloat row"
 }
 
+# ============================================================================
+# A CONFIGURED INDEX NAME IS ROUTED AS AN INDEX, NOT AS A CONCEPT (#696).
+#
+# The conformance pass used to route on the LITERAL `index.md`, while the
+# slice-B graph pass partitioned indexes with the CONFIGURABLE
+# health.index_names. So a bundle whose index is `MEMORY.md` or
+# `index-<topic>.md` -- both of them this scanner's own shipped defaults -- had
+# its indexes handed to scan_concept, which demands the frontmatter §8 says an
+# index must NOT carry. One scanner, two disagreeing answers for one file.
+#
+# Measured on this repo before the fix: ALL SIX baselined
+# okf-unparseable-frontmatter findings were this false positive (MEMORY.md plus
+# five index-*.md) and ZERO were genuine, so tests/okf-bundle.baseline dropped
+# 6 -> 0 with the fix.
+#
+# WHY NO EXISTING FIXTURE CAUGHT IT, and what that dictates about this one:
+# every graph fixture asserts through emit_rows, which filters BY CATEGORY. The
+# spurious row was an okf-unparseable-frontmatter emitted while the test was
+# looking at memory-orphan, so a per-category assertion could never see it. This
+# fixture therefore uses assert_no_rows -- UNFILTERED, the whole scanner's output
+# -- because a filtered assertion here would reproduce exactly the blindness that
+# let the defect ship.
+#
+# It also asserts each runtime SEPARATELY (assert_no_rows checks bash and python
+# independently) rather than comparing them to each other: both impls carried
+# this defect identically, which is why validate-python-ports.sh's same-output
+# parity passed it green. Parity cannot be the evidence for a shared defect.
+# ============================================================================
+test_configured_index_name_is_not_a_concept() {
+    local b list
+
+    # MEMORY.md + index-<topic>.md, each carrying NO frontmatter (§8's normal
+    # conformant case), each naming the concept so no orphan row can arise.
+    b="$(fresh_bundle)"
+    command printf -- '# Root\n\n* [Sub](index-topic.md) - a sub-index\n' >"$b/MEMORY.md"
+    command printf -- '# Topic\n\n* [Kept](kept.md) - a thing\n' >"$b/index-topic.md"
+    command printf -- '---\ntype: reference\n---\n\nBody.\n' >"$b/kept.md"
+    list="$(list_bundle "$b")"
+    assert_no_rows "$list" \
+        "okf: a bundle indexed by MEMORY.md + index-*.md produces ZERO findings"
+
+    # The routing follows CONFIG, not a second hardcoded list: under a custom
+    # $OKF_INDEX_NAMES the custom name is the index and MEMORY.md is a concept
+    # (so MEMORY.md, having no frontmatter, now legitimately DOES fire).
+    b="$(fresh_bundle)"
+    command printf -- '# Toc\n\n* [Kept](kept.md) - a thing\n' >"$b/toc.md"
+    command printf -- '---\ntype: reference\n---\n\nBody.\n' >"$b/kept.md"
+    list="$(list_bundle "$b")"
+    OKF_INDEX_NAMES="toc.md" assert_no_rows "$list" \
+        "okf: a repo whose index is toc.md gets ZERO findings by config alone"
+
+    # log.md stays reserved by §3.1 regardless of the index config -- it is a
+    # changelog, never an index, and never a concept.
+    b="$(fresh_bundle)"
+    command printf -- '# Index\n\n* [Kept](kept.md) - a thing\n' >"$b/MEMORY.md"
+    command printf -- '---\ntype: reference\n---\n\nBody.\n' >"$b/kept.md"
+    command printf -- '# Log\n\n## 2026-09-10\n* **Creation**: made a thing.\n' >"$b/log.md"
+    list="$(list_bundle "$b")"
+    assert_no_rows "$list" \
+        "okf: log.md is still reserved (not an index, not a concept) after the routing fix"
+}
+
 run_test test_healthy_bundle_is_silent "check-okf-conformance: a conformant bundle produces ZERO findings"
 run_test test_missing_type "check-okf-conformance: absent / empty / whitespace-only type"
 run_test test_unparseable_frontmatter "check-okf-conformance: absent, unterminated, and malformed frontmatter"
 run_test test_reserved_file_structure "check-okf-conformance: index.md §8 + log.md §9 + reserved-file exemption"
+run_test test_configured_index_name_is_not_a_concept "check-okf-conformance: a CONFIGURED index name routes as an index, not a concept (#696)"
 run_test test_version_drift "check-okf-conformance: drift is LOW at exit 0, and the pin has ONE source"
 run_test test_permissive_conformance "check-okf-conformance: §11 MUST-NOTs stay silent (unknown type, extra keys, broken links)"
 run_test test_bundle_discovery "check-okf-conformance: root override, normalization, precedence, no-bundle exit 0"
