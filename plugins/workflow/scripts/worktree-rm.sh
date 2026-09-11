@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# worktree-rm.sh — post-merge cleanup: remove the issue-N worktree and its
-# branch (clean no-op if absent).
+# worktree-rm.sh — post-merge cleanup: remove a worktree and its branch
+# (clean no-op if absent).
 #
 # Replaces the containers `worktree-rm` just recipe so the golem/worktree flow
 # runs WITHOUT `just`, on host / bare Linux / inside a devcontainer.
@@ -39,7 +39,13 @@
 # bin/sync-host.sh, so it is intentionally NOT carried into this portable
 # script.
 #
-# Usage: worktree-rm.sh <issue-number>
+# Accepts EITHER an issue number (the original contract) OR a bare worktree
+# name (#1005) — `worktree-rm.sh okf-probe`. A name-mode teardown resolves its
+# branch from `git worktree list` rather than the prefix convention, and deletes
+# that branch only when it is merged into GOLEM_BASE_REF. Every refusal above is
+# shared verbatim by both modes, so the name path is not a #662 bypass.
+#
+# Usage: worktree-rm.sh <issue-number|worktree-name>
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(command dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -62,9 +68,51 @@ SCRIPT_DIR="$(cd "$(command dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC2046  # intentional word-split: unset each scrub var by name
 unset $(_git_env_scrub_names)
 
+# TWO MODES, ONE SAFETY PATH (#1005). The argument is either an ISSUE NUMBER
+# (the original contract, byte-identical behavior) or a bare WORKTREE NAME.
+#
+# Why a name mode exists at all: before it, a worktree created under any other
+# name had NO supported teardown path. `worktree-rm.sh okf-probe` refused as a
+# non-number, and the raw `git worktree remove --force` that would otherwise
+# clean it up is DENIED by the #662 bash-guard from the main session. Both
+# refusals are correct in isolation; together they left no door, and the litter
+# (a directory plus a branch no cleanup path would ever delete) was removable by
+# neither the golem that made it nor the orchestrator.
+#
+# NOT fixed on the creation side instead. The issue weighs "refuse to create a
+# worktree whose name cannot later be removed" heavily, but worktree-new.sh
+# ALREADY enforces exactly that with this same `^[0-9]+$` test — the observed
+# worktree came from a raw `git worktree add`, which that script never saw.
+# Hardening a create path that was not used closes nothing.
+#
+# The modes differ ONLY in how `wt` / `br` / `sess` are derived; they converge
+# before the first probe, so the dirty check, the stale-symlink filter, the
+# residue guard, the pre-force re-check and the core.worktree repair are shared
+# VERBATIM rather than re-stated. The safety property is preserved by reusing the
+# code, which is why this is not a #662 bypass.
+#
+# ONE PATH SEGMENT, never a path. `[A-Za-z0-9._-]+` admits no `/`, so the
+# argument cannot escape GOLEM_WORKTREE_DIR — the containment
+# leftover_is_worktree_residue enforces downstream is also enforced at the front
+# door, where the bad input can still be named in an error. `.` and `..` match
+# that class and are excluded explicitly: `$GOLEM_WORKTREE_DIR/..` is the repo
+# root itself and `$GOLEM_WORKTREE_DIR/.` the worktree dir, so either would aim
+# the whole teardown at a directory full of real work.
 N="${1:-}"
-if ! [[ "$N" =~ ^[0-9]+$ ]]; then
-    command echo "worktree-rm: N must be an issue number, got '$N'" >&2
+case "$N" in
+    "" | "." | "..")
+        command echo "worktree-rm: need an issue number or a worktree name, got '$N'" >&2
+        exit 2
+        ;;
+esac
+if [[ "$N" =~ ^[0-9]+$ ]]; then
+    wt_mode="issue"
+elif [[ "$N" =~ ^[A-Za-z0-9._-]+$ ]]; then
+    wt_mode="name"
+else
+    command echo "worktree-rm: '$N' is neither an issue number nor a worktree name." >&2
+    command echo "  A name is one path segment of [A-Za-z0-9._-] — no '/', so teardown" >&2
+    command echo "  cannot be aimed outside the worktree directory." >&2
     exit 2
 fi
 
@@ -275,10 +323,72 @@ $status_out
 EOF
 }
 
+# resolve_worktree_branch <porcelain> <abs-worktree-path> — echo the branch a
+# registered worktree has checked out, or nothing (#1005).
+#
+# Name mode CANNOT derive the branch the way issue mode does. Issue mode owns
+# both ends of the naming convention — worktree-new.sh created `issue-N` on
+# `${GOLEM_BRANCH_PREFIX}N`, so the branch is a pure function of the argument. A
+# scratch worktree was created by whatever made it: the observed one is
+# `okf-probe` on `tmp/okf-probe-890`, where no prefix rule connects the two.
+# Guessing `${GOLEM_BRANCH_PREFIX}okf-probe` would name a branch that does not
+# exist, and the teardown would silently leave the real one behind — precisely
+# the "a branch no cleanup path will ever delete" half of this issue.
+#
+# So the branch is READ from git's own registration. `git worktree list
+# --porcelain` emits stanzas separated by a blank line:
+#
+#     worktree /abs/path
+#     HEAD <sha>
+#     branch refs/heads/tmp/okf-probe-890   <- absent when HEAD is detached
+#
+# Only the `branch` line INSIDE the matching stanza counts, hence the `in_stanza`
+# latch: a flat `grep` for `branch ` would return whichever worktree happened to
+# be listed first. A branch name may itself contain `/` (`tmp/okf-probe-890`), so
+# the prefix is stripped with `${v#refs/heads/}` rather than by taking a last
+# path component.
+#
+# Echoes NOTHING for a detached HEAD, an unregistered leftover directory, or an
+# unmatched path. That is a clean no-op, not an error: those states have no
+# branch to delete, and the caller's `git branch --list` guard already treats an
+# empty name as nothing to do.
+#
+# Parsed in pure bash (no `grep`/`sed`) per project convention — this is the
+# simple-format case read_yaml_list is the worked example for, and it sidesteps
+# both the BSD-regex split and the #928 `grep -q` SIGPIPE inversion outright.
+resolve_worktree_branch() {
+    local porcelain="$1" want="$2" line in_stanza=0
+    while IFS= read -r line; do
+        case "$line" in
+            "worktree "*)
+                if [ "${line#worktree }" = "$want" ]; then
+                    in_stanza=1
+                else
+                    in_stanza=0
+                fi
+                ;;
+            "branch refs/heads/"*)
+                if [ "$in_stanza" -eq 1 ]; then
+                    command echo "${line#branch refs/heads/}"
+                    return 0
+                fi
+                ;;
+        esac
+    done <<EOF
+$porcelain
+EOF
+    return 0
+}
+
 root="$(repo_root)"
 cd "$root"
-wt="$GOLEM_WORKTREE_DIR/issue-$N"
-br="${GOLEM_BRANCH_PREFIX}${N}"
+if [ "$wt_mode" = "issue" ]; then
+    wt="$GOLEM_WORKTREE_DIR/issue-$N"
+    br="${GOLEM_BRANCH_PREFIX}${N}"
+else
+    wt="$GOLEM_WORKTREE_DIR/$N"
+    br="" # resolved from git's registration once the porcelain is captured
+fi
 removed=0
 
 listed=0
@@ -295,6 +405,15 @@ listed=0
 wt_list="$(command git worktree list --porcelain)"
 if command grep -qx "worktree $root/$wt" <<<"$wt_list"; then
     listed=1
+fi
+
+# Name mode resolves its branch from the porcelain just captured, rather than
+# calling `git worktree list` a second time (#1005). Re-running it would read a
+# DIFFERENT moment than the `listed` check above, so a concurrent teardown could
+# leave this script believing the worktree is registered while its branch lookup
+# saw it gone. One capture, both answers.
+if [ "$wt_mode" = "name" ] && [ "$listed" -eq 1 ]; then
+    br="$(resolve_worktree_branch "$wt_list" "$root/$wt")"
 fi
 
 # CHECK BEFORE MUTATING (#813). A failing `git worktree remove` DEREGISTERS the
@@ -819,10 +938,47 @@ if [ "$listed" -eq 1 ]; then
     fi
 fi
 
-if [ -n "$(command git branch --list "$br")" ]; then
-    command git branch -D "$br"
-    command echo "  deleted branch $br"
-    removed=1
+# Branch teardown. `br` is empty in name mode when the worktree was detached,
+# unregistered, or already gone — `git branch --list ""` matches nothing, so that
+# is a clean no-op and needs no separate arm.
+if [ -n "$br" ] && [ -n "$(command git branch --list "$br")" ]; then
+    # ISSUE MODE deletes unconditionally, and must keep doing so. A golem branch
+    # reaches teardown having been SQUASH-merged, which rewrites the commits: git
+    # reports it as unmerged even though its content landed in main. Gating issue
+    # mode on merge-ness would therefore refuse to delete on every ordinary
+    # successful golem teardown — the common path, broken to guard the rare one.
+    # Its safety story is elsewhere and is stronger: the branch had a PR, so its
+    # commits are recoverable from the remote and from the merge.
+    #
+    # NAME MODE has neither. A scratch branch has no PR, no remote, and usually no
+    # reflog an operator would think to look in; `branch -D` on it is the one
+    # genuinely new destructive act this change introduces, so it is the one that
+    # has to earn itself. Delete only what is already merged into GOLEM_BASE_REF;
+    # otherwise remove the worktree (which is what frees the path and unblocks the
+    # operator) and KEEP the branch, saying so loudly enough to act on. Fail
+    # CLOSED, matching the rest of this script: an unresolvable base ref, or any
+    # merge check that cannot run, keeps the branch rather than assuming merged.
+    br_delete=1
+    if [ "$wt_mode" = "name" ]; then
+        br_delete=0
+        base_sha="$(command git rev-parse --verify --quiet "$GOLEM_BASE_REF^{commit}" 2>/dev/null || true)"
+        br_sha="$(command git rev-parse --verify --quiet "$br^{commit}" 2>/dev/null || true)"
+        if [ -z "$base_sha" ] || [ -z "$br_sha" ]; then
+            command echo "worktree-rm: kept branch $br — could not resolve it against $GOLEM_BASE_REF." >&2
+            command echo "  Delete it by hand once you have checked it: git branch -D $br" >&2
+        elif command git merge-base --is-ancestor "$br_sha" "$base_sha" 2>/dev/null; then
+            br_delete=1
+        else
+            command echo "worktree-rm: kept branch $br — it is NOT merged into $GOLEM_BASE_REF." >&2
+            command echo "  The worktree is gone, but the branch still holds those commits." >&2
+            command echo "  Inspect with: git log $GOLEM_BASE_REF..$br" >&2
+        fi
+    fi
+    if [ "$br_delete" -eq 1 ]; then
+        command git branch -D "$br"
+        command echo "  deleted branch $br"
+        removed=1
+    fi
 fi
 
 # tmux_kill_outcome <rc> <stderr> — classify one `tmux kill-session` attempt as
@@ -1046,5 +1202,13 @@ if [ "$removed" -eq 1 ]; then
 fi
 
 if [ "$removed" -eq 0 ]; then
-    command echo "worktree-rm: nothing to remove for issue $N ($wt / $br / $sess absent)"
+    # `br` is empty in name mode when nothing was registered to resolve it from,
+    # and an empty slot in a "these were absent" list reads as a rendering bug.
+    # Name the state instead. Issue mode always has a computed branch name, so
+    # its message is unchanged.
+    if [ "$wt_mode" = "issue" ]; then
+        command echo "worktree-rm: nothing to remove for issue $N ($wt / $br / $sess absent)"
+    else
+        command echo "worktree-rm: nothing to remove for '$N' ($wt / $sess absent; no branch registered)"
+    fi
 fi

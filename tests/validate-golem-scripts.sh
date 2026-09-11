@@ -102,6 +102,7 @@ source_fragments "$SCRIPT_DIR/golem-scripts" \
     30-config-repo-root.sh \
     40-worktree-rm.sh \
     45-worktree-rm-symlink.sh \
+    47-worktree-rm-named.sh \
     50-attach.sh \
     60-status.sh \
     70-status-checkpoint.sh \
@@ -237,7 +238,7 @@ run_fragment_test test_config_repo_root_submodule_superproject_scrubs_tainted_gi
 run_fragment_test test_config_repo_root_submodule_superproject_scrubs_readonly_tainted_git_env "config.sh: repo_root scrubs a READONLY tainted GIT_DIR in the super_root probe inside a submodule (#363, #337, #328)"
 run_fragment_test test_config_repo_root_relative_super_root "config.sh: repo_root absolutizes a relative --show-superproject-working-tree via command pwd (#336)"
 run_fragment_test test_config_git_env_scrub_vars_single_source "config.sh: GIT_ENV_SCRUB_VARS is the single source for the git-env scrub list (#356)"
-run_fragment_test test_worktree_rm_non_integer_exits_2 "worktree-rm: non-integer arg exits 2"
+run_fragment_test test_worktree_rm_non_integer_exits_2 "worktree-rm: an argument that is neither a number nor a name exits 2 (#1005)"
 run_fragment_test test_worktree_rm_absent_is_noop "worktree-rm: absent issue is a clean no-op (exit 0)"
 run_fragment_test test_worktree_rm_round_trip "worktree-rm: round-trip removes worktree + branch"
 run_fragment_test test_worktree_rm_kills_session_despite_has_session_false "worktree-rm: kills golem-N unconditionally despite a racy has-session false (#486)"
@@ -296,6 +297,18 @@ run_fragment_test test_worktree_rm_never_quarantines_a_symlink "worktree-rm: a s
 run_fragment_test test_worktree_rm_attributes_ebadf_to_virtiofs "worktree-rm: the EBADF root cause is attributed to virtiofs, not bindfs (#936)"
 run_fragment_test test_worktree_rm_repairs_stale_core_worktree "worktree-rm: repairs a stale main-repo core.worktree (#258)"
 run_fragment_test test_worktree_rm_preserves_valid_core_worktree "worktree-rm: preserves a valid core.worktree (#258)"
+
+# 47-worktree-rm-named.sh (#1005)
+run_fragment_test test_worktree_rm_named_rejects_path_arguments "worktree-rm: rejects '.', '..' and slashed arguments (#1005)"
+run_fragment_test test_worktree_rm_named_issue_mode_unchanged "worktree-rm: issue mode is unchanged by the name-arg gate (#1005)"
+run_fragment_test test_worktree_rm_named_absent_is_noop "worktree-rm: an absent name is a clean no-op (#1005)"
+run_fragment_test test_worktree_rm_named_round_trip "worktree-rm: name mode removes the worktree + its RESOLVED branch (#1005)"
+run_fragment_test test_worktree_rm_named_detached_head_has_no_branch "worktree-rm: a detached-HEAD worktree tears down with no branch claim (#1005)"
+run_fragment_test test_worktree_rm_named_resolves_the_right_stanza "worktree-rm: the branch comes from the MATCHING porcelain stanza (#1005)"
+run_fragment_test test_worktree_rm_named_refuses_dirty_worktree "worktree-rm: name mode still refuses a dirty worktree (#1005)"
+run_fragment_test test_worktree_rm_named_refuses_untracked_work "worktree-rm: name mode still refuses untracked work (#1005)"
+run_fragment_test test_worktree_rm_named_keeps_an_unmerged_branch "worktree-rm: name mode KEEPS an unmerged branch, loudly (#1005)"
+run_fragment_test test_worktree_rm_named_merge_gate_does_not_leak_into_issue_mode "worktree-rm: the merge gate never applies to issue mode (#1005)"
 run_fragment_test test_attach_non_integer_exits_2 "golem-attach: non-integer arg exits 2"
 run_fragment_test test_attach_no_session_exits_1 "golem-attach: no session/container exits 1"
 run_fragment_test test_status_empty_reports_no_golems "golem-status: empty state reports no active golems"

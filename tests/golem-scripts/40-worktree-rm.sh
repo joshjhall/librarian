@@ -11,13 +11,26 @@
 
 # --- worktree-rm.sh ---------------------------------------------------------
 
-# Non-integer argument → exit 2.
+# An argument that is neither a number nor a usable name → exit 2.
+#
+# REWRITTEN BY #1005, which is a CONTRACT CHANGE, not a regression. This case
+# used to feed `notanumber` and assert exit 2, because every non-numeric argument
+# was rejected. `notanumber` is now a perfectly good worktree name, and the
+# correct answer for it is the absent-worktree no-op (exit 0) — pinned by
+# test_worktree_rm_named_absent_is_noop in 47-worktree-rm-named.sh.
+#
+# So the fixture moves to an argument that CANNOT be a worktree name under either
+# mode. A space is the clearest such shape: it is outside `[A-Za-z0-9._-]`, it is
+# not a traversal (`..` and `/` have their own dedicated cases in the 47
+# fragment), and it keeps this case doing what it has always done — proving the
+# argument gate still has a closed side.
 test_worktree_rm_non_integer_exits_2() {
     local sb
     new_sandbox sb
-    run_in "$sb" "$WT_RM" notanumber
-    assert_exit 2 "$RUN_RC" "worktree-rm with a non-integer arg exits 2"
-    assert_contains "$RUN_OUT" "issue number" "explains an issue number is required"
+    run_in "$sb" "$WT_RM" "not a name"
+    assert_exit 2 "$RUN_RC" "worktree-rm with an unusable argument exits 2"
+    assert_contains "$RUN_OUT" "neither an issue number nor a worktree name" \
+        "explains what the argument must be"
 }
 
 # Absent issue → clean no-op (exit 0) with a "nothing to remove" message.
