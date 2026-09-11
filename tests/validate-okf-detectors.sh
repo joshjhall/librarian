@@ -1441,6 +1441,68 @@ test_configured_index_name_is_not_a_concept() {
         "$b/MEMORY.md" "$b/kept.md" "$b/sub/index.md" "$b/sub/thing.md")"
     assert_silent "$list" okf-unparseable-frontmatter \
         "okf: a nested index.md stays an index at any depth (§3.1 reserves it)"
+
+    # THE ROOT SCOPING MUST HOLD UNDER EVERY SPELLING OF THE ROOT. The routing
+    # predicate calls is_bundle_root_file, which branches on how BUNDLE_ROOT is
+    # written (`$ROOT/*` vs `*/$ROOT/*`, trailing slash, `./` prefix). Fixtures
+    # that only ever use one spelling would pass while a real repo's index is
+    # misclassified under a differently-spelled root -- the same surface
+    # test_bundle_discovery's own alt-spelling loop exists to pin.
+    #
+    # Behavioral, not textual: each spelling runs the REAL scanner and asserts on
+    # its rows. The nested glob-named concept must stay a CONCEPT (no reserved-file
+    # row) under all three.
+    b="$(fresh_bundle)"
+    command mkdir -p "$b/sub"
+    command printf -- '# Root\n\n* [Kept](kept.md) - x\n' >"$b/MEMORY.md"
+    command printf -- '---\ntype: reference\n---\n\nBody.\n' >"$b/kept.md"
+    command printf -- '---\ntype: reference\n---\n\nNested, merely NAMED like an index.\n' \
+        >"$b/sub/index-of-known-issues.md"
+    list="$(make_list "$b/../../../rootspell.txt" \
+        "$b/MEMORY.md" "$b/kept.md" "$b/sub/index-of-known-issues.md")"
+    for alt in "$FIXTURE_ROOT" "./$FIXTURE_ROOT" "$FIXTURE_ROOT/"; do
+        assert_output_empty \
+            "$(OKF_BUNDLE_ROOT="$alt" run_impl sh "$list" |
+                command awk -F '\t' '$3 == "okf-reserved-file-structure"')" \
+            "okf: root spelling '$alt' keeps a nested index-named file a concept (bash)"
+        if [ "$HAVE_PY" -eq 1 ]; then
+            assert_output_empty \
+                "$(OKF_BUNDLE_ROOT="$alt" run_impl py "$list" |
+                    command awk -F '\t' '$3 == "okf-reserved-file-structure"')" \
+                "okf: root spelling '$alt' keeps a nested index-named file a concept (python)"
+        fi
+    done
+
+    # ...and the ROOT-level index is still routed as an index under each spelling
+    # -- the other direction, which the absence assertion above cannot show. A
+    # frontmatter-free MEMORY.md would fire okf-unparseable-frontmatter if it were
+    # ever demoted to a concept, so silence here is the positive signal.
+    for alt in "$FIXTURE_ROOT" "./$FIXTURE_ROOT" "$FIXTURE_ROOT/"; do
+        assert_output_empty \
+            "$(OKF_BUNDLE_ROOT="$alt" run_impl sh "$list" |
+                command awk -F '\t' '$3 == "okf-unparseable-frontmatter"')" \
+            "okf: root spelling '$alt' still routes the ROOT MEMORY.md as an index (bash)"
+    done
+
+    # TWO BUNDLES IN ONE FILE LIST: each configured index must be judged against
+    # ITS OWN root, not the other's. Mirrors test_memory_orphan's two-bundle shape.
+    local b2
+    b="$(fresh_bundle)"
+    b2="$(fresh_bundle)"
+    command mkdir -p "$b/sub"
+    command printf -- '# A\n\n* [Ka](ka.md) - x\n' >"$b/MEMORY.md"
+    command printf -- '---\ntype: reference\n---\n\nBody.\n' >"$b/ka.md"
+    command printf -- '---\ntype: reference\n---\n\nNested concept.\n' \
+        >"$b/sub/index-nested.md"
+    command printf -- '# B\n\n* [Kb](kb.md) - x\n' >"$b2/MEMORY.md"
+    command printf -- '---\ntype: reference\n---\n\nBody.\n' >"$b2/kb.md"
+    list="$(make_list "$b/../../../twobundles.txt" \
+        "$b/MEMORY.md" "$b/ka.md" "$b/sub/index-nested.md" \
+        "$b2/MEMORY.md" "$b2/kb.md")"
+    assert_silent "$list" okf-reserved-file-structure \
+        "okf: two bundles in one list — each index judged against its own root"
+    assert_silent "$list" okf-unparseable-frontmatter \
+        "okf: ...and neither root index is demoted to a concept"
 }
 
 run_test test_healthy_bundle_is_silent "check-okf-conformance: a conformant bundle produces ZERO findings"

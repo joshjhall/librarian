@@ -27,6 +27,13 @@ each test was looking at — so no fixture could see it. And the rows had been
 frozen into a baseline, which reads as "known debt someone triaged", not "the
 detector is wrong".
 
+(This file's own frontmatter nests `type` under `metadata:` — the shape
+[[okf-author]] labels WRONG — *deliberately*. The whole bundle does, and
+[[adding-a-memory-bumps-the-okf-baseline]] directs raising the baseline rather
+than hoisting one file, because a lone conformant file pre-empts the
+migrate-vs-document decision #991 exists to make. #631/#671 convert all of them
+at once.)
+
 **How to apply:** when a scanner has two passes over one corpus, grep for the
 classification in both and make the narrower one call the broader one's helper —
 a hardcoded list beside a configurable sibling is the smell, and the fix is

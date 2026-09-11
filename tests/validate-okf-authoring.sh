@@ -82,6 +82,22 @@ yaml_list() {
             if (line == want ":") { found = 1; next }
             if (found && substr(line, 1, 2) == "- ") {
                 item = substr(line, 3)
+                # STRIP AN INLINE COMMENT, THEN ONE LAYER OF QUOTES, mirroring
+                # bundle_graph.read_config_list exactly. Without this the parser
+                # returned `"*.md"` WITH its quote characters -- a value the real
+                # consumer never sees -- so a parity comparison would be comparing
+                # strings neither runtime uses, and a glob would never match.
+                # Caught by the tier-routing test, which RUNS the globs.
+                h = index(item, " #")
+                if (h > 0) item = substr(item, 1, h - 1)
+                sub(/^[[:space:]]+/, "", item)
+                sub(/[[:space:]]+$/, "", item)
+                q = sprintf("%c%c", 34, 39)
+                while (length(item) > 0 && index(q, substr(item, 1, 1)) > 0)
+                    item = substr(item, 2)
+                while (length(item) > 0 && index(q, substr(item, length(item), 1)) > 0)
+                    item = substr(item, 1, length(item) - 1)
+                sub(/^[[:space:]]+/, "", item)
                 sub(/[[:space:]]+$/, "", item)
                 print item
                 next
@@ -393,10 +409,18 @@ test_no_surviving_authoring_instruction() {
             command awk -v F="$f" '
                 # A `# WRONG`-marked block is a deliberate counterexample: the
                 # skill must be able to SHOW the bad shape in order to reject it.
+                #
+                # THE WORD BOUNDARY IS LOAD-BEARING. Without it the marker matched
+                # by PREFIX, so any comment merely STARTING with those five
+                # letters -- `# WRONGDOING`, `# WRONGLY documented` -- silenced a
+                # real unmarked block 4 lines below it. Measured in a sandbox: the
+                # unboundaried pattern emitted nothing for a genuine regression
+                # sitting under `# WRONGDOING: unrelated topic`. Both awk copies
+                # below carry the boundary; a fixture pins it.
                 # Keyed to the MARKER, not to the filename -- exempting the whole
                 # file would let the skill itself regress into teaching the shape
                 # while the gate stayed green (measured: it did).
-                /^[[:space:]]*#[[:space:]]*WRONG/ { wrong = NR }
+                /^[[:space:]]*#[[:space:]]*WRONG([[:space:]]|$|[^A-Za-z])/ { wrong = NR }
                 /^[[:space:]]*metadata:[[:space:]]*$/ { seen = NR; next }
                 seen && NR <= seen + 3 &&
                     /^[[:space:]]+(type|status|stale_after|stale_check):/ {
@@ -434,7 +458,7 @@ test_no_surviving_authoring_instruction() {
         command printf -- '---\n'
     } >"$probe"
     unmarked="$(command awk -v F="$probe" '
-        /^[[:space:]]*#[[:space:]]*WRONG/ { wrong = NR }
+        /^[[:space:]]*#[[:space:]]*WRONG([[:space:]]|$|[^A-Za-z])/ { wrong = NR }
         /^[[:space:]]*metadata:[[:space:]]*$/ { seen = NR; next }
         seen && NR <= seen + 3 &&
             /^[[:space:]]+(type|status|stale_after|stale_check):/ {
@@ -444,6 +468,51 @@ test_no_surviving_authoring_instruction() {
     ' "$probe")"
     assert_true "[ -n '$unmarked' ]" \
         "AC3 detector fires on an UNMARKED nested block (the exemption is the marker, not the file)"
+
+    # A FALSE MARKER MUST NOT SILENCE A REAL BLOCK. `# WRONGDOING` merely STARTS
+    # with the marker's letters; without a word boundary the exemption matched it
+    # by prefix and muted a genuine regression 4 lines below (measured). This is
+    # the leak fixture for the boundary.
+    local falsemarker
+    probe="$WORKDIR/false-marker.md"
+    {
+        command printf -- '# WRONGDOING: an unrelated comment, not a counterexample\n'
+        command printf -- 'Some prose.\n'
+        command printf -- 'metadata:\n'
+        command printf -- '  type: feedback\n'
+    } >"$probe"
+    falsemarker="$(command awk -v F="$probe" '
+        /^[[:space:]]*#[[:space:]]*WRONG([[:space:]]|$|[^A-Za-z])/ { wrong = NR }
+        /^[[:space:]]*metadata:[[:space:]]*$/ { seen = NR; next }
+        seen && NR <= seen + 3 &&
+            /^[[:space:]]+(type|status|stale_after|stale_check):/ {
+                if (!(wrong && seen <= wrong + 4)) print F ":" NR ": " $0
+                seen = 0
+            }
+    ' "$probe")"
+    assert_true "[ -n '$falsemarker' ]" \
+        "AC3 exemption is word-bounded: '# WRONGDOING' does NOT silence a real nested block"
+
+    # ...and the GENUINE marker still exempts, or the boundary would have broken
+    # the counterexample the skill legitimately needs to show.
+    local realmarker
+    probe="$WORKDIR/real-marker.md"
+    {
+        command printf -- '# WRONG — the concept reads as having no type at all\n'
+        command printf -- 'metadata:\n'
+        command printf -- '  type: feedback\n'
+    } >"$probe"
+    realmarker="$(command awk -v F="$probe" '
+        /^[[:space:]]*#[[:space:]]*WRONG([[:space:]]|$|[^A-Za-z])/ { wrong = NR }
+        /^[[:space:]]*metadata:[[:space:]]*$/ { seen = NR; next }
+        seen && NR <= seen + 3 &&
+            /^[[:space:]]+(type|status|stale_after|stale_check):/ {
+                if (!(wrong && seen <= wrong + 4)) print F ":" NR ": " $0
+                seen = 0
+            }
+    ' "$probe")"
+    assert_equals "" "$realmarker" \
+        "AC3 exemption still honors a GENUINE '# WRONG' marker (boundary did not over-tighten)"
 
     # The plugins tree must not INSTRUCT wikilink authoring. A mention is fine
     # where the text REJECTS the form, DOCUMENTS it as an opt-in config value, or
@@ -476,6 +545,124 @@ test_submodule_exclusion_is_explicit() {
     # scope. If that ever changes, this gate's scope claim needs re-deciding.
     assert_file_contains "$REPO_ROOT/.gitmodules" "update = none" \
         "containers/ is still pinned (the reason the exclusion is legitimate)"
+}
+
+# --- 4b. Tier routing is EXERCISED, not asserted (AC: session-state -> log.md)
+
+# tier_of PATH -- the tier the configured globs assign to a bundle-relative path,
+# applying the documented precedence (short_term FIRST, first match wins).
+#
+# THIS IS THE MECHANICAL HALF OF THE ROUTING AC. Where a fact lands is a glob
+# match on a path, with a stated precedence -- decidable without a model. So it is
+# tested by RUNNING the decision over inputs and asserting the destination, not by
+# grepping the skill for the word "log.md". The judgment half (is THIS fact
+# durable or session state?) is inference-time and is NOT claimed here; see the
+# residual note at the run_test line.
+tier_of() {
+    local rel="$1" pat
+    while IFS= read -r pat; do
+        [ -n "$pat" ] || continue
+        # shellcheck disable=SC2254 # intentional: a configured glob.
+        case "$rel" in
+            $pat)
+                command printf 'short_term'
+                return 0
+                ;;
+        esac
+    done <<EOF
+$(yaml_list short_term "$CONFIG")
+EOF
+    while IFS= read -r pat; do
+        [ -n "$pat" ] || continue
+        # shellcheck disable=SC2254 # intentional: a configured glob.
+        case "$rel" in
+            $pat)
+                command printf 'long_term'
+                return 0
+                ;;
+        esac
+    done <<EOF
+$(yaml_list long_term "$CONFIG")
+EOF
+    command printf 'unmatched'
+}
+
+test_tier_routing_is_exercised() {
+    # Vacuity guard first: an empty config would make every case "unmatched" and
+    # the assertions below would pin nothing.
+    local st lt
+    st="$(yaml_list short_term "$CONFIG")"
+    lt="$(yaml_list long_term "$CONFIG")"
+    assert_true "[ -n '$st' ]" "tiers: short_term globs parse non-empty (vacuity guard)"
+    assert_true "[ -n '$lt' ]" "tiers: long_term globs parse non-empty (vacuity guard)"
+
+    # A session-state artifact BY PATH lands short-term -- the destination the AC
+    # names, decided by running the rule rather than by quoting it.
+    assert_equals "short_term" "$(tier_of 'tmp/next-issue-101.json')" \
+        "tier: a session-state artifact under tmp/ routes short-term"
+    assert_equals "short_term" "$(tier_of 'tmp/scratch/measurement.md')" \
+        "tier: a nested tmp/ path routes short-term (tmp/**/* glob)"
+
+    # A durable lesson lands long-term.
+    assert_equals "long_term" "$(tier_of 'grep-q-under-pipefail-inverts-a-match.md')" \
+        "tier: a lesson-named concept at the root routes long-term"
+
+    # PRECEDENCE IS LOAD-BEARING, and this is the case that proves it. The shipped
+    # globs OVERLAP by construction (`*.md` long-term vs `tmp/*` short-term), so
+    # `tmp/notes.md` matches BOTH. Without the documented short_term-first order
+    # the answer flips, which is exactly the ambiguity the config comment calls
+    # out. Asserting the overlapping input is what makes the order testable.
+    assert_equals "short_term" "$(tier_of 'tmp/notes.md')" \
+        "tier: an OVERLAPPING path resolves short-term (short_term is checked FIRST)"
+}
+
+
+# AC6 -- WHAT THIS DOES AND DOES NOT ASSERT. Read this before strengthening it.
+#
+# The AC asks for "a fixture where the fact is already covered, and the agent
+# updates rather than creating a near-duplicate". That is an INFERENCE-TIME
+# judgment: the rule turns on whether two memories state "the same lesson with the
+# same trigger", which no shell fixture can decide. Slice C hit the identical wall
+# and resolved it the same way -- tests/validate-memory-semantics.sh gates
+# audit-memory's CONTRACT and says outright it "cannot verify that the LLM obeys
+# them".
+#
+# So this asserts a WEAKER BUT REAL property, not a dressed-up presence check: the
+# decision rule is TOTAL. Every case an author can be in -- trigger matches,
+# trigger differs, genuinely ambiguous -- has a stated verdict, so the agent is
+# never left to improvise. An incomplete rule is a live defect class (the
+# ambiguous branch is the one most often missing, and it is where duplicates come
+# from); a missing branch would pass any grep for "Update, or create".
+#
+# WHAT IS NOT COVERED: that the agent, given two real near-duplicates, actually
+# returns `update`. That residual is stated in the PR body rather than implied to
+# be fixed.
+test_update_vs_create_rule_is_total() {
+    local sec
+    sec="$(command awk '
+        $0 == "## 2. Update, or create?" { inside = 1; next }
+        inside && substr($0, 1, 3) == "## " { inside = 0 }
+        inside { print }
+    ' "$AGENT")"
+    local sec_lines
+    sec_lines="$(command printf '%s\n' "$sec" | command wc -l | command tr -d ' ')"
+    assert_true "[ \"$sec_lines\" -gt 5 ]" \
+        "AC6: the update-vs-create section parses non-empty (vacuity guard)"
+
+    # Branch 1 -- same trigger => update.
+    assert_contains "$sec" "same trigger" \
+        "AC6: the UPDATE branch is keyed to the trigger matching"
+    # Branch 2 -- trigger differs => create, stated as its own verdict.
+    assert_contains "$sec" "trigger differs" \
+        "AC6: the CREATE branch is keyed to the trigger differing"
+    # Branch 3 -- the one most often missing. Without a stated tie-break the agent
+    # improvises on exactly the inputs where duplicates are born.
+    assert_contains "$sec" "prefer update" \
+        "AC6: the AMBIGUOUS case has a stated tie-break (no uncovered input)"
+    # And the rule must say a decline is still reported, or a rejected candidate
+    # vanishes and the next session repeats the search.
+    assert_contains "$sec" "still a deliverable" \
+        "AC6: a declined candidate must be reported, not dropped"
 }
 
 # --- 5. The loop closes, exercised (AC5) ----------------------------------
@@ -658,6 +845,14 @@ run_test test_skill_names_the_wrong_shape_explicitly "skill: the nested-metadata
 run_test test_skill_teaches_markdown_links "skill: markdown links per §6.1, and [[name]] named as non-OKF"
 run_test test_skill_states_precedence_over_a_conflicting_directive "skill: it wins over a conflicting injected directive"
 run_test test_skill_teaches_pointer_and_tier "skill: pointer-in-one-index and the tier split"
+# The MECHANICAL half of the session-state routing AC. The judgment half -- whether
+# a given FACT is durable or session state -- is decided at inference time by the
+# agent and is NOT asserted here; see the PR body's stated residual.
+run_test test_tier_routing_is_exercised "tier: session-state vs durable routing is RUN, incl. glob precedence"
+# AC6's update-vs-create decision is NOT behaviorally tested, and this is stated
+# rather than papered over -- see the function's own comment for why, and the PR
+# body for the residual.
+run_test test_update_vs_create_rule_is_total "AC6 (partial): the update-vs-create rule is TOTAL — no uncovered case"
 run_test test_conventions_are_configurable "config: every convention is an overridable key (AC8)"
 run_test test_foreign_vocabulary_still_gets_correct_guidance "config: a foreign vocabulary gets correct guidance; the floor is not a knob"
 run_test test_config_parity_with_validator "parity: shared keys agree with check-okf-conformance"
