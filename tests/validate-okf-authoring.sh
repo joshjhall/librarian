@@ -410,17 +410,22 @@ test_no_surviving_authoring_instruction() {
                 # A `# WRONG`-marked block is a deliberate counterexample: the
                 # skill must be able to SHOW the bad shape in order to reject it.
                 #
-                # THE WORD BOUNDARY IS LOAD-BEARING. Without it the marker matched
-                # by PREFIX, so any comment merely STARTING with those five
-                # letters -- `# WRONGDOING`, `# WRONGLY documented` -- silenced a
-                # real unmarked block 4 lines below it. Measured in a sandbox: the
+                # THE WORD BOUNDARY IS LOAD-BEARING, AND ITS CLASS IS NARROW ON
+                # PURPOSE. Without any boundary the marker matched by PREFIX, so
+                # `# WRONGDOING` silenced a real block. A blanket `[^A-Za-z]` then
+                # fixed the letter case but still admitted `# WRONG-ish` and
+                # `# WRONG2`, because a hyphen or digit CONTINUES a compound word
+                # just as well as a letter does (measured: both exempted). So the
+                # class is whitespace, end-of-line, or the punctuation the real
+                # marker actually uses -- note the em dash is covered by the
+                # whitespace that precedes it in `# WRONG — ...`. Measured in a sandbox: the
                 # unboundaried pattern emitted nothing for a genuine regression
                 # sitting under `# WRONGDOING: unrelated topic`. Both awk copies
                 # below carry the boundary; a fixture pins it.
                 # Keyed to the MARKER, not to the filename -- exempting the whole
                 # file would let the skill itself regress into teaching the shape
                 # while the gate stayed green (measured: it did).
-                /^[[:space:]]*#[[:space:]]*WRONG([[:space:]]|$|[^A-Za-z])/ { wrong = NR }
+                /^[[:space:]]*#[[:space:]]*WRONG([[:space:]]|$|:|\.|,)/ { wrong = NR }
                 /^[[:space:]]*metadata:[[:space:]]*$/ { seen = NR; next }
                 seen && NR <= seen + 3 &&
                     /^[[:space:]]+(type|status|stale_after|stale_check):/ {
@@ -458,7 +463,7 @@ test_no_surviving_authoring_instruction() {
         command printf -- '---\n'
     } >"$probe"
     unmarked="$(command awk -v F="$probe" '
-        /^[[:space:]]*#[[:space:]]*WRONG([[:space:]]|$|[^A-Za-z])/ { wrong = NR }
+        /^[[:space:]]*#[[:space:]]*WRONG([[:space:]]|$|:|\.|,)/ { wrong = NR }
         /^[[:space:]]*metadata:[[:space:]]*$/ { seen = NR; next }
         seen && NR <= seen + 3 &&
             /^[[:space:]]+(type|status|stale_after|stale_check):/ {
@@ -482,7 +487,7 @@ test_no_surviving_authoring_instruction() {
         command printf -- '  type: feedback\n'
     } >"$probe"
     falsemarker="$(command awk -v F="$probe" '
-        /^[[:space:]]*#[[:space:]]*WRONG([[:space:]]|$|[^A-Za-z])/ { wrong = NR }
+        /^[[:space:]]*#[[:space:]]*WRONG([[:space:]]|$|:|\.|,)/ { wrong = NR }
         /^[[:space:]]*metadata:[[:space:]]*$/ { seen = NR; next }
         seen && NR <= seen + 3 &&
             /^[[:space:]]+(type|status|stale_after|stale_check):/ {
@@ -492,6 +497,33 @@ test_no_surviving_authoring_instruction() {
     ' "$probe")"
     assert_true "[ -n '$falsemarker' ]" \
         "AC3 exemption is word-bounded: '# WRONGDOING' does NOT silence a real nested block"
+
+    # A HYPHEN OR A DIGIT CONTINUES A COMPOUND WORD too, so a blanket
+    # `[^A-Za-z]` boundary was still evadable (measured: `# WRONG-ish` and
+    # `# WRONG2` both exempted). Table-driven so each spelling fails on its own
+    # row rather than collapsing into one pass/fail.
+    local fake
+    for fake in '# WRONG-ish: an unrelated note' '# WRONG2 numbered note' \
+        '# WRONGLY documented elsewhere'; do
+        probe="$WORKDIR/false-marker-variant.md"
+        {
+            command printf -- '%s\n' "$fake"
+            command printf -- 'Some prose.\n'
+            command printf -- 'metadata:\n'
+            command printf -- '  type: feedback\n'
+        } >"$probe"
+        falsemarker="$(command awk -v F="$probe" '
+            /^[[:space:]]*#[[:space:]]*WRONG([[:space:]]|$|:|\.|,)/ { wrong = NR }
+            /^[[:space:]]*metadata:[[:space:]]*$/ { seen = NR; next }
+            seen && NR <= seen + 3 &&
+                /^[[:space:]]+(type|status|stale_after|stale_check):/ {
+                    if (!(wrong && seen <= wrong + 4)) print F ":" NR ": " $0
+                    seen = 0
+                }
+        ' "$probe")"
+        assert_true "[ -n '$falsemarker' ]" \
+            "AC3 boundary rejects a compound continuation: '$fake' does not exempt"
+    done
 
     # ...and the GENUINE marker still exempts, or the boundary would have broken
     # the counterexample the skill legitimately needs to show.
@@ -503,7 +535,7 @@ test_no_surviving_authoring_instruction() {
         command printf -- '  type: feedback\n'
     } >"$probe"
     realmarker="$(command awk -v F="$probe" '
-        /^[[:space:]]*#[[:space:]]*WRONG([[:space:]]|$|[^A-Za-z])/ { wrong = NR }
+        /^[[:space:]]*#[[:space:]]*WRONG([[:space:]]|$|:|\.|,)/ { wrong = NR }
         /^[[:space:]]*metadata:[[:space:]]*$/ { seen = NR; next }
         seen && NR <= seen + 3 &&
             /^[[:space:]]+(type|status|stale_after|stale_check):/ {
@@ -600,8 +632,44 @@ test_tier_routing_is_exercised() {
     # names, decided by running the rule rather than by quoting it.
     assert_equals "short_term" "$(tier_of 'tmp/next-issue-101.json')" \
         "tier: a session-state artifact under tmp/ routes short-term"
+    # NOTE which glob actually decides this. In both `case` and fnmatch, `*` is
+    # NOT path-segment-aware, so `tmp/*` ALREADY matches `tmp/scratch/x.md` and
+    # the `tmp/**/*` entry is redundant for this input. Measured, both engines
+    # agreeing on all six combinations. The assertion is still worth making --
+    # nested session state must route short-term -- but the comment records that
+    # `tmp/*` carries it, so nobody later "fixes" a redundant-looking glob and
+    # assumes this case proved it.
     assert_equals "short_term" "$(tier_of 'tmp/scratch/measurement.md')" \
-        "tier: a nested tmp/ path routes short-term (tmp/**/* glob)"
+        "tier: a nested tmp/ path routes short-term (carried by tmp/*, not tmp/**/*)"
+
+    # ISOLATE WHICH GLOB CARRIES IT, or the row above pins nothing: it passes
+    # identically with `tmp/**/*` deleted, since `*` is not path-segment-aware in
+    # either `case` or fnmatch (measured, both engines agreeing on all six
+    # combinations). These two run the match against ONE pattern at a time.
+    # Via a variable, not a literal subject: shellcheck SC2194 flags a constant
+    # `case` word, and the fixture path is genuinely fixed here.
+    local one probe_path
+    probe_path='tmp/scratch/measurement.md'
+    case "$probe_path" in
+        tmp/*) one=yes ;;
+        *) one=no ;;
+    esac
+    assert_equals "yes" "$one" \
+        "tier: tmp/* ALONE already matches a nested path (so tmp/**/* is redundant here)"
+    probe_path='tmp/notes.md'
+    case "$probe_path" in
+        tmp/**/*) one=yes ;;
+        *) one=no ;;
+    esac
+    assert_equals "no" "$one" \
+        "tier: tmp/**/* ALONE does NOT match a top-level tmp/ file (the two are not interchangeable)"
+
+    # THE UNMATCHED BRANCH IS REACHABLE, and must never read as a pass. A path
+    # matching no configured glob returns a third value, not a tier -- a caller
+    # that treated `unmatched` as long-term would file session state as durable
+    # knowledge. Exercised so the branch is not dead code.
+    assert_equals "unmatched" "$(tier_of 'notes.txt')" \
+        "tier: a path matching NO configured glob is 'unmatched', not a defaulted tier"
 
     # A durable lesson lands long-term.
     assert_equals "long_term" "$(tier_of 'grep-q-under-pipefail-inverts-a-match.md')" \
@@ -615,6 +683,51 @@ test_tier_routing_is_exercised() {
     assert_equals "short_term" "$(tier_of 'tmp/notes.md')" \
         "tier: an OVERLAPPING path resolves short-term (short_term is checked FIRST)"
 }
+
+# THE log.md DESTINATION ITSELF, exercised against the real validator.
+#
+# The AC says a session-state fact routes to `log.md`, "not to a new concept".
+# WHICH fact is session state is the agent's judgment and is not testable here
+# (see the residual note at the run_test line). But the DESTINATION half is
+# mechanical and worth pinning: a dated record written to `log.md` must be
+# accepted as a reserved file (OKF §9) and must NOT be demanded to carry a
+# concept's `type`. If that were false, following the skill would produce a
+# finding the author could not avoid, and the routing advice would be unusable.
+test_log_md_destination_is_exercised() {
+    if [ ! -f "$OKF_SCANNER" ]; then
+        skip_test "review-audit not installed — no validator to route against"
+        return 0
+    fi
+    local bundle list rows rc=0 f
+    bundle="$WORKDIR/logdest"
+    command mkdir -p "$bundle"
+    command printf -- '---\ntype: reference\n---\n\nBody.\n' >"$bundle/kept.md"
+    command printf -- '# Index\n\n- [Kept](kept.md) — x\n' >"$bundle/MEMORY.md"
+    command printf -- '# Directory Update Log\n\n## 2026-09-11\n* **Update**: session state, recorded here rather than as a concept.\n' >"$bundle/log.md"
+    list="$WORKDIR/logdest-files.txt"
+    : >"$list"
+    for f in "$bundle"/*.md; do command printf '%s\n' "$f" >>"$list"; done
+
+    rows="$(OKF_BUNDLE_ROOT="$bundle" OKF_TODAY="2026-09-11" command bash "$OKF_SCANNER" "$list" 2>/dev/null)" || rc=$?
+    assert_equals "0" "$rc" "log.md: the scanner ran cleanly"
+    assert_equals "" "$rows" \
+        "log.md: a dated session-state record is a RESERVED file, not an untyped concept"
+
+    # COUNTER-FIXTURE: the same content as an ordinary concept file DOES fire.
+    # Without it, the silence above could equally mean the scanner read nothing.
+    local bad badlist badrows
+    bad="$WORKDIR/logdest-bad"
+    command mkdir -p "$bad"
+    command printf -- '# Index\n\n- [Notes](session-notes.md) — x\n' >"$bad/MEMORY.md"
+    command printf -- '# Session notes\n\n## 2026-09-11\n* **Update**: same content, wrong destination.\n' >"$bad/session-notes.md"
+    badlist="$WORKDIR/logdest-bad-files.txt"
+    : >"$badlist"
+    for f in "$bad"/*.md; do command printf '%s\n' "$f" >>"$badlist"; done
+    badrows="$(OKF_BUNDLE_ROOT="$bad" OKF_TODAY="2026-09-11" command bash "$OKF_SCANNER" "$badlist" 2>/dev/null || true)"
+    assert_contains "$badrows" "okf-unparseable-frontmatter" \
+        "log.md counter: the SAME record as a concept file DOES fire (the check can fail)"
+}
+
 
 
 # AC6 -- WHAT THIS DOES AND DOES NOT ASSERT. Read this before strengthening it.
@@ -848,10 +961,13 @@ run_test test_skill_teaches_pointer_and_tier "skill: pointer-in-one-index and th
 # The MECHANICAL half of the session-state routing AC. The judgment half -- whether
 # a given FACT is durable or session state -- is decided at inference time by the
 # agent and is NOT asserted here; see the PR body's stated residual.
-run_test test_tier_routing_is_exercised "tier: session-state vs durable routing is RUN, incl. glob precedence"
+run_test test_tier_routing_is_exercised "tier: glob precedence + the unmatched branch are RUN (not the log.md destination — see below)"
 # AC6's update-vs-create decision is NOT behaviorally tested, and this is stated
 # rather than papered over -- see the function's own comment for why, and the PR
 # body for the residual.
+# The MECHANICAL half of the log.md routing AC. Which FACT is session state stays
+# the agent's inference-time judgment; see the PR body's stated residual.
+run_test test_log_md_destination_is_exercised "log.md: a dated record is a reserved destination, not a concept"
 run_test test_update_vs_create_rule_is_total "AC6 (partial): the update-vs-create rule is TOTAL — no uncovered case"
 run_test test_conventions_are_configurable "config: every convention is an overridable key (AC8)"
 run_test test_foreign_vocabulary_still_gets_correct_guidance "config: a foreign vocabulary gets correct guidance; the floor is not a knob"
