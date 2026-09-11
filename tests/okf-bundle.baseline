@@ -12,4 +12,4 @@
 # Regenerate with: tests/validate-okf-bundle.sh --regen
 
 memory-missing-why 80
-okf-missing-type 245
+okf-missing-type 246

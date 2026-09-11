@@ -79,6 +79,7 @@ run_stage "check-lifecycle detector fixtures" bash "$SCRIPT_DIR/validate-lifecyc
 run_stage "check-decomposition detector fixtures" bash "$SCRIPT_DIR/validate-decomposition-detectors.sh"
 run_stage "check-okf-conformance detector fixtures" bash "$SCRIPT_DIR/validate-okf-detectors.sh"
 run_stage "audit-memory semantic-pass contract" bash "$SCRIPT_DIR/validate-memory-semantics.sh"
+run_stage "okf-author + okf-librarian authoring loop" bash "$SCRIPT_DIR/validate-okf-authoring.sh"
 run_stage "dev-core loop-* + drift-detect detector fixtures" bash "$SCRIPT_DIR/validate-loop-detectors.sh"
 run_stage "Namespaced slash-command refs" bash "$SCRIPT_DIR/lint-command-refs.sh"
 run_stage "READONLY harness wording" bash "$SCRIPT_DIR/lint-readonly-harness.sh"

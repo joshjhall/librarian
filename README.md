@@ -71,7 +71,7 @@ clone-by-tag consumers that don't verify keep working unchanged.
 
 | Plugin | Components | What's inside |
 |---|---|---|
-| **[dev-core](plugins/dev-core/README.md)** | 20 skills · 6 agents | General development + authoring: code review, debugging, refactoring, testing, git/error/doc workflow skills, and the skill/agent/workflow authoring guides. |
+| **[dev-core](plugins/dev-core/README.md)** | 21 skills · 7 agents | General development + authoring: code review, debugging, refactoring, testing, git/error/doc workflow skills, and the skill/agent/workflow authoring guides. |
 | **[review-audit](plugins/review-audit/README.md)** | 12 skills · 11 agents | The `codebase-audit` / `check-*` / `audit-*` suite plus the issue writer. |
 | **[workflow](plugins/workflow/README.md)** | 10 skills · 3 agents · 1 hook | Issue-driven and parallel automation: the user-directed `/workflow:file-issue`, `/workflow:golem`, and `/workflow:orchestrate` entry points, the `next-issue` → `ship-issue` pipeline they drive, `provision-agent`, the `rebase-*` resolvers, and the bundled shell scripts they call. |
 
