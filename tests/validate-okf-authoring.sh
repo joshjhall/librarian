@@ -139,6 +139,35 @@ skill_section() {
     ' "$SKILL"
 }
 
+# detect_nested_metadata FILE -- the ONE implementation of the AC3 detector.
+#
+# WHY THIS IS A FUNCTION. This seven-line awk program was copy-pasted at SIX call
+# sites, and its boundary regex was wrong THREE times (no boundary -> `[^A-Za-z]`
+# -> a punctuation allowlist -> the current word boundary). Six copies of a rule
+# that keeps needing correction is the recurrence mechanism itself: each fix had
+# to land in every copy, and "are they still identical?" became a thing reviewers
+# had to check by hand. One definition makes the next correction a one-line diff
+# and makes drift impossible rather than merely detectable.
+#
+# Emits `FILE:LINE: <text>` for each nested `metadata:` block that is NOT covered
+# by a `# WRONG`-marked counterexample within the preceding 4 lines.
+#
+# THE BOUNDARY CLASS excludes what CONTINUES a word (alnum, `_`, `-`) rather than
+# enumerating what may follow it: enumerating terminators is unbounded and each
+# earlier spelling over-fit to whichever fixtures existed. Pinned in both
+# directions by the table-driven fixtures below.
+detect_nested_metadata() {
+    command awk -v F="$1" '
+        /^[[:space:]]*#[[:space:]]*WRONG([^A-Za-z0-9_-]|$)/ { wrong = NR }
+        /^[[:space:]]*metadata:[[:space:]]*$/ { seen = NR; next }
+        seen && NR <= seen + 3 &&
+            /^[[:space:]]+(type|status|stale_after|stale_check):/ {
+                if (!(wrong && seen <= wrong + 4)) print F ":" NR ": " $0
+                seen = 0
+            }
+    ' "$1"
+}
+
 # --- 1. The skill states the floor, and states it first ---------------------
 
 test_skill_exists_and_is_discoverable() {
@@ -406,43 +435,7 @@ test_no_surviving_authoring_instruction() {
     hits="$(command find "$REPO_ROOT/plugins" -name '*.md' -type f 2>/dev/null |
         command grep -v '/docs/verification/' |
         while IFS= read -r f; do
-            command awk -v F="$f" '
-                # A `# WRONG`-marked block is a deliberate counterexample: the
-                # skill must be able to SHOW the bad shape in order to reject it.
-                #
-                # A TRUE WORD BOUNDARY, stated as what a word CONTINUES with
-                # rather than as a list of what may follow. This regex has been
-                # wrong three times, each time by over-fitting to the fixtures
-                # then on hand:
-                #   1. no boundary    -> `# WRONGDOING` silenced a real block
-                #   2. `[^A-Za-z]`    -> still admitted `# WRONG-ish`, `# WRONG2`
-                #                        (a hyphen or digit CONTINUES a word)
-                #   3. `:|\.|,` list -> stopped those, but then FALSELY FIRED on
-                #                        `# WRONG!`, `# WRONG;`, `# WRONG)` and an
-                #                        em dash with no preceding space --
-                #                        breaking a legitimate counterexample
-                #                        instead of missing a regression.
-                # Enumerating the punctuation that MAY follow is unbounded; the
-                # set of characters that CONTINUE a word is small and closed
-                # (alnum, `_`, `-`). So the class excludes those and admits
-                # everything else, which is the general rule the three earlier
-                # spellings were each approximating. Verified in both directions
-                # across twelve spellings. Measured in a sandbox: the
-                # unboundaried pattern emitted nothing for a genuine regression
-                # sitting under `# WRONGDOING: unrelated topic`. Both awk copies
-                # below carry the boundary; a fixture pins it.
-                # Keyed to the MARKER, not to the filename -- exempting the whole
-                # file would let the skill itself regress into teaching the shape
-                # while the gate stayed green (measured: it did).
-                /^[[:space:]]*#[[:space:]]*WRONG([^A-Za-z0-9_-]|$)/ { wrong = NR }
-                /^[[:space:]]*metadata:[[:space:]]*$/ { seen = NR; next }
-                seen && NR <= seen + 3 &&
-                    /^[[:space:]]+(type|status|stale_after|stale_check):/ {
-                        if (!(wrong && seen <= wrong + 4))
-                            print F ":" NR ": " $0
-                        seen = 0
-                    }
-            ' "$f"
+            detect_nested_metadata "$f"
         done || true)"
     assert_equals "" "$hits" \
         "no instruction surface teaches the nested metadata: type: shape (AC3)"
@@ -471,15 +464,7 @@ test_no_surviving_authoring_instruction() {
         command printf -- '  type: feedback\n'
         command printf -- '---\n'
     } >"$probe"
-    unmarked="$(command awk -v F="$probe" '
-        /^[[:space:]]*#[[:space:]]*WRONG([^A-Za-z0-9_-]|$)/ { wrong = NR }
-        /^[[:space:]]*metadata:[[:space:]]*$/ { seen = NR; next }
-        seen && NR <= seen + 3 &&
-            /^[[:space:]]+(type|status|stale_after|stale_check):/ {
-                if (!(wrong && seen <= wrong + 4)) print F ":" NR ": " $0
-                seen = 0
-            }
-    ' "$probe")"
+    unmarked="$(detect_nested_metadata "$probe")"
     assert_true "[ -n '$unmarked' ]" \
         "AC3 detector fires on an UNMARKED nested block (the exemption is the marker, not the file)"
 
@@ -495,15 +480,7 @@ test_no_surviving_authoring_instruction() {
         command printf -- 'metadata:\n'
         command printf -- '  type: feedback\n'
     } >"$probe"
-    falsemarker="$(command awk -v F="$probe" '
-        /^[[:space:]]*#[[:space:]]*WRONG([^A-Za-z0-9_-]|$)/ { wrong = NR }
-        /^[[:space:]]*metadata:[[:space:]]*$/ { seen = NR; next }
-        seen && NR <= seen + 3 &&
-            /^[[:space:]]+(type|status|stale_after|stale_check):/ {
-                if (!(wrong && seen <= wrong + 4)) print F ":" NR ": " $0
-                seen = 0
-            }
-    ' "$probe")"
+    falsemarker="$(detect_nested_metadata "$probe")"
     assert_true "[ -n '$falsemarker' ]" \
         "AC3 exemption is word-bounded: '# WRONGDOING' does NOT silence a real nested block"
 
@@ -530,15 +507,7 @@ test_no_surviving_authoring_instruction() {
             command printf -- 'metadata:\n'
             command printf -- '  type: feedback\n'
         } >"$probe"
-        falsemarker="$(command awk -v F="$probe" '
-            /^[[:space:]]*#[[:space:]]*WRONG([^A-Za-z0-9_-]|$)/ { wrong = NR }
-            /^[[:space:]]*metadata:[[:space:]]*$/ { seen = NR; next }
-            seen && NR <= seen + 3 &&
-                /^[[:space:]]+(type|status|stale_after|stale_check):/ {
-                    if (!(wrong && seen <= wrong + 4)) print F ":" NR ": " $0
-                    seen = 0
-                }
-        ' "$probe")"
+        falsemarker="$(detect_nested_metadata "$probe")"
         assert_true "[ -n '$falsemarker' ]" \
             "AC3 boundary rejects a compound continuation: '$fake' does not exempt"
     done
@@ -557,15 +526,7 @@ test_no_surviving_authoring_instruction() {
             command printf -- 'metadata:\n'
             command printf -- '  type: feedback\n'
         } >"$probe"
-        realmarker="$(command awk -v F="$probe" '
-            /^[[:space:]]*#[[:space:]]*WRONG([^A-Za-z0-9_-]|$)/ { wrong = NR }
-            /^[[:space:]]*metadata:[[:space:]]*$/ { seen = NR; next }
-            seen && NR <= seen + 3 &&
-                /^[[:space:]]+(type|status|stale_after|stale_check):/ {
-                    if (!(wrong && seen <= wrong + 4)) print F ":" NR ": " $0
-                    seen = 0
-                }
-        ' "$probe")"
+        realmarker="$(detect_nested_metadata "$probe")"
         assert_equals "" "$realmarker" \
             "AC3 boundary still honors a genuine marker: '$good' exempts"
     done
@@ -579,15 +540,7 @@ test_no_surviving_authoring_instruction() {
         command printf -- 'metadata:\n'
         command printf -- '  type: feedback\n'
     } >"$probe"
-    realmarker="$(command awk -v F="$probe" '
-        /^[[:space:]]*#[[:space:]]*WRONG([^A-Za-z0-9_-]|$)/ { wrong = NR }
-        /^[[:space:]]*metadata:[[:space:]]*$/ { seen = NR; next }
-        seen && NR <= seen + 3 &&
-            /^[[:space:]]+(type|status|stale_after|stale_check):/ {
-                if (!(wrong && seen <= wrong + 4)) print F ":" NR ": " $0
-                seen = 0
-            }
-    ' "$probe")"
+    realmarker="$(detect_nested_metadata "$probe")"
     assert_equals "" "$realmarker" \
         "AC3 exemption still honors a GENUINE '# WRONG' marker (boundary did not over-tighten)"
 
