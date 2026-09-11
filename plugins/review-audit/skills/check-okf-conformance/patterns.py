@@ -430,13 +430,28 @@ def scan_file(
     is_index() here is what makes the two passes agree — a routing fix, not a new
     rule, and it keeps RESERVED as the spec's two names only.
 
-    `log.md` stays a literal: §9 makes it a changelog at ANY level, it is
-    reserved by §3.1 rather than configured, and it is not an index.
+    SCOPED TO THE BUNDLE ROOT, matching the graph pass it was made to agree with
+    (bundle_graph.scan_bundle is root-level only, by its own docstring). is_index()
+    compares BASENAMES, and the default config ships a glob (`index-*.md`), so
+    without this scoping a nested concept legitimately named
+    `sub/index-of-known-issues.md` would route to scan_index() — suppressing its
+    §11 `type` check (a false negative) and emitting a spurious
+    `okf-reserved-file-structure` row instead (measured: it did). A configured
+    index name identifies THIS bundle's routing files, which live at its root; a
+    same-named file in a subdirectory is a concept.
+
+    `index.md` keeps routing as an index at ANY depth: §3.1 reserves that name
+    hierarchy-wide, so it is never a concept wherever it appears.
+
+    `log.md` stays a literal for the same §3.1 reason: it is a changelog at any
+    level, reserved rather than configured, and it is not an index.
     """
     base = path.rsplit("/", 1)[-1]
     if base == "log.md":
         scan_log(path, lines)
-    elif is_index(base, index_names):
+    elif base == "index.md" or (
+        is_index(base, index_names) and is_bundle_root_file(path, root)
+    ):
         scan_index(path, lines, root, pinned)
     else:
         scan_concept(path, lines)

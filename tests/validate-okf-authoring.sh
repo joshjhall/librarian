@@ -301,6 +301,38 @@ test_config_parity_with_validator() {
         "parity: validator pinned_version parses non-empty (vacuity guard)"
     assert_equals "$theirs" "$mine" \
         "parity: okf.pinned_version agrees with check-okf-conformance"
+
+    # naming_policy and the tier lists are duplicated TOO, and were omitted from
+    # this gate's first version -- which made check-okf-conformance's own comment
+    # ("tests/validate-okf-authoring.sh holds the two copies in parity") only half
+    # true for `tiers`. Every key that exists on both sides is compared, or the
+    # gate's promise is narrower than its prose.
+    mine="$(yaml_scalar naming_policy "$CONFIG")"
+    theirs="$(yaml_scalar naming_policy "$OKF_CONFIG")"
+    assert_true "[ -n '$mine' ]" \
+        "parity: okf-author naming_policy parses non-empty (vacuity guard)"
+    assert_true "[ -n '$theirs' ]" \
+        "parity: validator naming_policy parses non-empty (vacuity guard)"
+    assert_equals "$theirs" "$mine" \
+        "parity: naming_policy agrees with check-okf-conformance"
+
+    mine="$(yaml_list long_term "$CONFIG")"
+    theirs="$(yaml_list long_term "$OKF_CONFIG")"
+    assert_true "[ -n '$mine' ]" \
+        "parity: okf-author tiers.long_term parses non-empty (vacuity guard)"
+    assert_true "[ -n '$theirs' ]" \
+        "parity: validator tiers.long_term parses non-empty (vacuity guard)"
+    assert_equals "$theirs" "$mine" \
+        "parity: tiers.long_term agrees with check-okf-conformance"
+
+    mine="$(yaml_list short_term "$CONFIG")"
+    theirs="$(yaml_list short_term "$OKF_CONFIG")"
+    assert_true "[ -n '$mine' ]" \
+        "parity: okf-author tiers.short_term parses non-empty (vacuity guard)"
+    assert_true "[ -n '$theirs' ]" \
+        "parity: validator tiers.short_term parses non-empty (vacuity guard)"
+    assert_equals "$theirs" "$mine" \
+        "parity: tiers.short_term agrees with check-okf-conformance"
 }
 
 # The parity parser must FIRE on a divergence, not merely agree today. Without
@@ -335,15 +367,83 @@ test_no_surviving_authoring_instruction() {
         "the superseded memory-conventions skill is gone from the discovery path"
 
     local hits
-    # Any instruction to nest `type` under `metadata:`, across instruction
-    # surfaces. The skill's own labelled counterexample is excluded by matching
-    # only the nested-key spelling in a directive voice.
-    hits="$(command grep -rn 'metadata\.type' \
-        "$REPO_ROOT/plugins" "$REPO_ROOT/README.md" "$REPO_ROOT/CLAUDE.md" 2>/dev/null |
-        command grep -vE 'okf-missing-type|patterns\.sh|patterns\.py|bundle_graph\.py' |
-        command grep -v 'validate-okf-authoring' || true)"
+    # ANY INSTRUCTION TO NEST `type` UNDER `metadata:`, matched in the shape it
+    # ACTUALLY TAKES -- a `metadata:` line followed by an indented `type:` line.
+    #
+    # THIS USED TO GREP THE DOTTED TOKEN `metadata.type`, AND WAS VACUOUS. Real
+    # YAML never writes that token: the shape is two lines, `metadata:` then
+    # `  type: <value>`. Measured on the tree at the time: `grep -rn
+    # 'metadata\.type' plugins README.md CLAUDE.md` returned ZERO hits -- including
+    # inside this skill's own counterexample, which the old pattern was supposedly
+    # tolerating. So the assertion could only ever fire on someone writing the
+    # unusual dotted spelling by hand, never on the regression it claims to guard.
+    #
+    # It also passed a mutation test deceptively: mutating the skill to say
+    # "metadata.type" fired it, because that mutation used the dotted spelling the
+    # grep looks for. Mutating in the REAL yaml shape did NOT fire. The fixture has
+    # to be the shape the defect actually takes, or the mutation proves nothing.
+    #
+    # `awk` over each candidate file rather than grep: the condition spans two
+    # lines, which a per-line grep cannot express. The bundle itself is NOT walked
+    # (248 memories legitimately carry the old shape until #631/#671 migrate them),
+    # and containers/ is out of scope per the header note.
+    hits="$(command find "$REPO_ROOT/plugins" -name '*.md' -type f 2>/dev/null |
+        command grep -v '/docs/verification/' |
+        while IFS= read -r f; do
+            command awk -v F="$f" '
+                # A `# WRONG`-marked block is a deliberate counterexample: the
+                # skill must be able to SHOW the bad shape in order to reject it.
+                # Keyed to the MARKER, not to the filename -- exempting the whole
+                # file would let the skill itself regress into teaching the shape
+                # while the gate stayed green (measured: it did).
+                /^[[:space:]]*#[[:space:]]*WRONG/ { wrong = NR }
+                /^[[:space:]]*metadata:[[:space:]]*$/ { seen = NR; next }
+                seen && NR <= seen + 3 &&
+                    /^[[:space:]]+(type|status|stale_after|stale_check):/ {
+                        if (!(wrong && seen <= wrong + 4))
+                            print F ":" NR ": " $0
+                        seen = 0
+                    }
+            ' "$f"
+        done || true)"
     assert_equals "" "$hits" \
-        "no instruction surface tells an author to write metadata.type"
+        "no instruction surface teaches the nested metadata: type: shape (AC3)"
+
+    # THE SKILL'S OWN COUNTEREXAMPLE IS THE LEAK FIXTURE, and it must be the ONLY
+    # exempted site. Asserting merely that `hits` is empty would also pass if the
+    # detector matched nothing at all, so prove the detector SEES the one instance
+    # that legitimately exists -- the labelled WRONG block in okf-author/SKILL.md.
+    local self
+    self="$(command awk '
+        /^[[:space:]]*metadata:[[:space:]]*$/ { seen = NR; next }
+        seen && NR <= seen + 3 && /^[[:space:]]+type:/ { print NR; seen = 0 }
+    ' "$SKILL")"
+    assert_true "[ -n '$self' ]" \
+        "AC3 detector is live: it finds the skill's own labelled counterexample (vacuity guard)"
+
+    # ...and the MARKER is what exempts it, not the filename. The same block with
+    # the marker stripped must be REPORTED -- otherwise the exemption is a blanket
+    # mute and a regression INSIDE the skill passes, which is measurably what a
+    # filename-scoped `grep -v` did.
+    local unmarked probe
+    probe="$WORKDIR/unmarked.md"
+    {
+        command printf -- '---\n'
+        command printf -- 'metadata:\n'
+        command printf -- '  type: feedback\n'
+        command printf -- '---\n'
+    } >"$probe"
+    unmarked="$(command awk -v F="$probe" '
+        /^[[:space:]]*#[[:space:]]*WRONG/ { wrong = NR }
+        /^[[:space:]]*metadata:[[:space:]]*$/ { seen = NR; next }
+        seen && NR <= seen + 3 &&
+            /^[[:space:]]+(type|status|stale_after|stale_check):/ {
+                if (!(wrong && seen <= wrong + 4)) print F ":" NR ": " $0
+                seen = 0
+            }
+    ' "$probe")"
+    assert_true "[ -n '$unmarked' ]" \
+        "AC3 detector fires on an UNMARKED nested block (the exemption is the marker, not the file)"
 
     # The plugins tree must not INSTRUCT wikilink authoring. A mention is fine
     # where the text REJECTS the form, DOCUMENTS it as an opt-in config value, or
@@ -531,6 +631,14 @@ test_agent_cannot_apply() {
         "advisory: agent holds no Write — a mutation stays the session's act"
     assert_not_contains "$tools" "Edit" \
         "advisory: agent holds no Edit"
+    # Bash is the side channel that would make the two denials above prose again:
+    # `> file`, `cp`, `git commit` all mutate without Write/Edit. Withholding it is
+    # what lets the agent claim the posture is structural. Especially load-bearing
+    # here because this agent reads bundle content, which in a consuming repo is
+    # text this project has never seen — a prompt-injection payload must find no
+    # shell to reach for.
+    assert_not_contains "$tools" "Bash" \
+        "advisory: agent holds no Bash — otherwise the Write/Edit denial is prose, not structure"
 }
 
 # Config-driven, same rule as the skill: a disabled judgment is disabled, never

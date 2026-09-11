@@ -1392,6 +1392,55 @@ test_configured_index_name_is_not_a_concept() {
     list="$(list_bundle "$b")"
     assert_no_rows "$list" \
         "okf: log.md is still reserved (not an index, not a concept) after the routing fix"
+
+    # THE ROUTING IS ROOT-SCOPED, matching the graph pass. is_index() compares
+    # BASENAMES and the default config ships the glob `index-*.md`, so an unscoped
+    # routing sends a NESTED concept that merely matches that glob to scan_index --
+    # suppressing its §11 `type` check (a false negative) AND emitting a spurious
+    # okf-reserved-file-structure row. Measured on the first cut of this fix: it
+    # did exactly that, so this case is a regression fixture, not a hypothetical.
+    b="$(fresh_bundle)"
+    command mkdir -p "$b/sub"
+    command printf -- '# Root\n\n* [Sub](sub/index-of-known-issues.md) - x\n' >"$b/MEMORY.md"
+    command printf -- '---\ntype: reference\n---\n\nA concept merely NAMED like an index.\n' \
+        >"$b/sub/index-of-known-issues.md"
+    list="$(make_list "$b/../../../nested.txt" \
+        "$b/MEMORY.md" "$b/sub/index-of-known-issues.md")"
+    # Scoped to the routing categories rather than assert_no_rows: the graph pass
+    # resolves index lines against the bundle root, so a nested target yields an
+    # unrelated memory-dangling-index row here. Asserting silence on the two
+    # categories the ROUTING decides keeps the claim about routing.
+    assert_silent "$list" okf-reserved-file-structure \
+        "okf: a NESTED file matching index-*.md is not treated as an index (no reserved-file row)"
+    assert_silent "$list" okf-unparseable-frontmatter \
+        "okf: ...and it is not demanded to be frontmatter-free either"
+
+    # ...and the §11 type check is genuinely still applied to it -- the false
+    # NEGATIVE half, which assert_no_rows above cannot see on a conformant file.
+    # Same nested path, type removed: the row must appear.
+    b="$(fresh_bundle)"
+    command mkdir -p "$b/sub"
+    command printf -- '# Root\n\n* [Sub](sub/index-of-known-issues.md) - x\n' >"$b/MEMORY.md"
+    command printf -- '---\ntitle: no type here\n---\n\nBody.\n' \
+        >"$b/sub/index-of-known-issues.md"
+    list="$(make_list "$b/../../../nested-untyped.txt" \
+        "$b/MEMORY.md" "$b/sub/index-of-known-issues.md")"
+    assert_fires "$list" okf-missing-type "index-of-known-issues.md" \
+        "okf: a nested index-named concept is STILL type-checked (no false negative)"
+
+    # `index.md` itself stays an index at ANY depth -- §3.1 reserves that name
+    # hierarchy-wide, so the root scoping must NOT demote a nested one to concept
+    # (which would demand frontmatter §8 forbids it from carrying).
+    b="$(fresh_bundle)"
+    command mkdir -p "$b/sub"
+    command printf -- '# Root\n\n* [Kept](kept.md) - x\n' >"$b/MEMORY.md"
+    command printf -- '---\ntype: reference\n---\n\nBody.\n' >"$b/kept.md"
+    command printf -- '# Sub index\n\n* [Thing](thing.md) - x\n' >"$b/sub/index.md"
+    command printf -- '---\ntype: reference\n---\n\nBody.\n' >"$b/sub/thing.md"
+    list="$(make_list "$b/../../../nested-index.txt" \
+        "$b/MEMORY.md" "$b/kept.md" "$b/sub/index.md" "$b/sub/thing.md")"
+    assert_silent "$list" okf-unparseable-frontmatter \
+        "okf: a nested index.md stays an index at any depth (§3.1 reserves it)"
 }
 
 run_test test_healthy_bundle_is_silent "check-okf-conformance: a conformant bundle produces ZERO findings"

@@ -1098,6 +1098,10 @@ EOF
 # first-seen order. One list may span more than one bundle (a fixture tree, a
 # monorepo), so the graph pass runs once per distinct directory.
 BUNDLE_DIRS=""
+# Resolved ONCE, not per file -- the routing predicate below reads it for every
+# path, and re-reading thresholds.yml per path made the scan's cost scale with the
+# bundle while diverging from the python twin's single resolve.
+_SCAN_INDEX_NAMES="$(read_index_names)"
 while IFS= read -r file; do
     [ -n "$file" ] || continue
     [ -f "$file" ] || continue
@@ -1138,12 +1142,30 @@ $seen_dir
     # conformance pass. Reusing the same predicate here is what makes the two
     # passes agree, and is why this is a routing fix rather than a new rule.
     #
-    # `log.md` stays a literal: §9 makes it a changelog at ANY level, it is
-    # reserved by §3.1 rather than configured, and it is not an index.
+    # SCOPED TO THE BUNDLE ROOT, matching the graph pass it was made to agree
+    # with (that pass is root-level only). is_index compares BASENAMES and the
+    # default config ships a glob (`index-*.md`), so without this scoping a nested
+    # concept legitimately named `sub/index-of-known-issues.md` routes to
+    # scan_index -- suppressing its §11 `type` check AND emitting a spurious
+    # okf-reserved-file-structure row (measured: it did). A configured index name
+    # identifies THIS bundle's routing files, which sit at its root; a same-named
+    # file in a subdirectory is a concept.
+    #
+    # `index.md` keeps routing as an index at ANY depth: §3.1 reserves that name
+    # hierarchy-wide, so it is never a concept wherever it appears. `log.md` stays
+    # a literal for the same §3.1 reason -- a changelog at any level, reserved
+    # rather than configured, and not an index.
+    #
+    # read_index_names is resolved ONCE above the loop (_SCAN_INDEX_NAMES), not
+    # per file: re-reading thresholds.yml for every path made the scan's cost
+    # scale with the bundle for no behavioral gain, and diverged from the python
+    # twin's single resolve.
     _scan_base="${file##*/}"
     if [ "$_scan_base" = "log.md" ]; then
         scan_log "$file"
-    elif is_index "$_scan_base" "$(read_index_names)"; then
+    elif [ "$_scan_base" = "index.md" ]; then
+        scan_index "$file"
+    elif is_index "$_scan_base" "$_SCAN_INDEX_NAMES" && is_bundle_root_file "$file"; then
         scan_index "$file"
     else
         scan_concept "$file"
