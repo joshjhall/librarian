@@ -1,0 +1,662 @@
+#!/usr/bin/env bash
+# token-attribute behavioral gate (issue #788).
+#
+# WHAT THIS GATE IS FOR. #788 did not ask for coverage of a reporting tool. It
+# asked for four transcript-parsing traps to be "encoded as assertions, not as
+# comments" — because each one produces a number that is CONFIDENTLY WRONG
+# rather than loudly broken. A wrong reading here looks plausible, gets quoted
+# in an issue, and steers the #782–#787 series. So the subject of this suite is
+# the four traps, and every other case exists to keep them honest.
+#
+# THE FOUR, AND WHAT EACH FIXTURE WOULD CATCH:
+#
+#   1. DEDUP by message.id. Claude Code writes one line per assistant CONTENT
+#      BLOCK and every line of a turn repeats that turn's SAME usage. Summing
+#      per line runs ~2x high (2.7x measured on a real transcript;
+#      .claude/memory/token-scrape-transcript-dedup.md). The fixture makes raw
+#      and deduped totals DIFFER and pins both, so removing the dedup moves a
+#      pinned number — #788's AC3 in its own words.
+#
+#   2. UNION the blocks across those lines. The obvious dedup — group by id,
+#      take .[0] — is a worse bug: the lines carry DIFFERENT blocks. An early
+#      pass in the analysis that produced #788 reported 4 Bash calls where there
+#      were 176. The fixture puts three DIFFERENT tool_use blocks on three lines
+#      of ONE message.id; .[0] reports 1, and the assertion pins 3.
+#
+#   3. THINKING TOKENS live in usage.output_tokens_details.thinking_tokens. The
+#      `thinking` content blocks are EMPTY STRINGS, so any character count over
+#      content silently returns 0 and hides 55-86% of subagent output. The
+#      fixture is exactly that shape: empty thinking blocks, non-zero usage.
+#
+#   4. TIMEZONE. Naive stamps are local; gateway figures are UTC. Mixing them
+#      misfiles a 5-hour band of runs
+#      (.claude/memory/review-cost-after-2026-07-28.md). The fixture crosses the
+#      local/UTC date boundary and asserts it is classified by UTC.
+#
+# WHY THE FIXTURES ARE HAND-BUILT RATHER THAN SAMPLED. Every trap above is
+# invisible on a healthy corpus — that is what makes it a trap. A real
+# transcript cannot be asked for three different blocks under one id on demand,
+# and a sampled fixture would stop discriminating the moment the sample changed.
+#
+# ONE CASE IS A CONTROL. test_union_beats_any_single_line asserts the unioned
+# count is >= the largest single line's AND pins the exact figure. The
+# inequality alone would pass on a tool that returned everything twice; the
+# exact count alone would pass on a fixture that never had a duplicate id. Both
+# together are what pin the behavior.
+#
+# Pure bash + coreutils via the `command` builtin; python3 for the tool itself.
+# bash-3.2 clean, BSD-regex clean. Uses the shared harness assertions.
+
+set -uo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# shellcheck source=tests/lib/harness.sh
+source "$SCRIPT_DIR/lib/harness.sh"
+
+TA_PY="$REPO_ROOT/plugins/workflow/scripts/token-attribute.py"
+TA_SH="$REPO_ROOT/plugins/workflow/scripts/token-attribute.sh"
+
+# PHYSICAL path: macOS $TMPDIR is under /var, a symlink to /private/var, so
+# `mktemp -d` returns /var/... while realpath-based code resolves the same dir
+# to /private/var/.... Any prefix match between the two spellings fails (#932).
+WORKDIR="$(command mktemp -d)"
+WORKDIR="$(cd "$WORKDIR" && command pwd -P)"
+trap 'command rm -rf "$WORKDIR"' EXIT
+
+test_suite "token-attribute trap gate (#788)"
+
+# The tool is Python-3.11+ only BY DESIGN — it parses JSONL and has no bash
+# fallback (the decision is recorded in the tool's own header, #788 AC8). With
+# no such runtime the WHOLE gate reports the reserved 77 sentinel rather than
+# passing vacuously: a silent skip is indistinguishable from a pass, which is
+# how a gate sits inert unnoticed (CLAUDE.md § gates; #538/#571).
+if ! command -v python3 >/dev/null 2>&1 ||
+    ! python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)' 2>/dev/null; then
+    command printf '%s\n' \
+        "token-attribute gate: no python3 >= 3.11 — gate DID NOT RUN." >&2
+    exit 77
+fi
+
+# --- helpers -----------------------------------------------------------------
+
+# run_ta SUBCOMMAND ROOT [EXTRA...] — stdout+stderr into OUT, status into RC.
+# Assigned to globals rather than run in a subshell so assertions land in the
+# caller's shell where TEST_STATUS is real.
+run_ta() {
+    local sub="$1" root="$2"
+    shift 2
+    set +e
+    OUT="$(python3 "$TA_PY" "$sub" --root "$root" "$@" 2>&1)"
+    RC=$?
+    set -e
+}
+
+# row_field ROW_MATCH FIELD_INDEX — the Nth tab-separated field of the first
+# non-comment output row containing ROW_MATCH. 1-indexed, like awk.
+#
+# Reads from $OUT and strips /^#/ exactly as the TSV contract says a consumer
+# does, so the assertions exercise the documented reading rather than a
+# privileged one.
+row_field() {
+    command printf '%s\n' "$OUT" |
+        command grep -v '^#' |
+        command grep -F "$1" |
+        command head -1 |
+        command awk -F'\t' -v n="$2" '{print $n}'
+}
+
+# --- TRAP 2 + TRAP 1: one message.id, three lines, different blocks ----------
+#
+# The shape that makes both traps visible at once, and the shape no real
+# transcript can be asked to produce on demand:
+#
+#   line 1  id=msgDUP  blocks: [thinking]                     usage: 900 output
+#   line 2  id=msgDUP  blocks: [tool_use grep]                 usage: 900 (repeat)
+#   line 3  id=msgDUP  blocks: [tool_use git status, tool_use rm]        (repeat)
+#
+# Correct reading: 3 tool_use blocks, 900 output tokens.
+#   .[0]        -> 0 tool_use blocks (line 1 is the thinking line)
+#   per-line    -> 2700 output tokens, a 3x overstatement
+#
+# All three are Bash calls on purpose: `bash-class` is the subcommand that can
+# count them, and their three DIFFERENT classifications (read/read/mutate) mean
+# a tool that dropped any one of them changes a pinned number rather than just
+# the total.
+#
+# The three tool_use ids are distinct so the within-turn dedup cannot collapse
+# them; a fixture reusing one id would pass on a tool that dropped two.
+DUP="$WORKDIR/dup"
+command mkdir -p "$DUP/proj"
+{
+    command printf '{"type":"assistant","sessionId":"s1","timestamp":"2026-08-23T10:00:00.000Z","message":{"id":"msgDUP","role":"assistant","model":"claude-opus-5","content":[{"type":"thinking","thinking":""}],"usage":{"input_tokens":10,"cache_read_input_tokens":1000,"cache_creation_input_tokens":0,"output_tokens":900,"output_tokens_details":{"thinking_tokens":700}}}}\n'
+    command printf '{"type":"assistant","sessionId":"s1","timestamp":"2026-08-23T10:00:00.000Z","message":{"id":"msgDUP","role":"assistant","model":"claude-opus-5","content":[{"type":"tool_use","id":"tu_a","name":"Bash","input":{"command":"grep -rn foo ."}}],"usage":{"input_tokens":10,"cache_read_input_tokens":1000,"cache_creation_input_tokens":0,"output_tokens":900,"output_tokens_details":{"thinking_tokens":700}}}}\n'
+    command printf '{"type":"assistant","sessionId":"s1","timestamp":"2026-08-23T10:00:00.000Z","message":{"id":"msgDUP","role":"assistant","model":"claude-opus-5","content":[{"type":"tool_use","id":"tu_b","name":"Bash","input":{"command":"git status"}},{"type":"tool_use","id":"tu_c","name":"Bash","input":{"command":"rm -rf build"}}],"usage":{"input_tokens":10,"cache_read_input_tokens":1000,"cache_creation_input_tokens":0,"output_tokens":900,"output_tokens_details":{"thinking_tokens":700}}}}\n'
+} >"$DUP/proj/session.jsonl"
+
+test_union_beats_any_single_line() {
+    # THE TRAP-2 ASSERTION #788 asks for in AC2, in both halves: the unioned
+    # count must be at least any single line's, AND it must be the exact 3.
+    run_ta bash-class "$DUP"
+    assert_equals "0" "$RC" "the duplicate-id corpus reports"
+
+    local read_calls mutate_calls total
+    read_calls="$(row_field "	read	" 4)"
+    mutate_calls="$(row_field "	mutate	" 4)"
+    total=$((read_calls + mutate_calls))
+
+    # >= the largest single line (that line carries 2). Guards against a
+    # regression that reads one line and happens to pick the richest.
+    assert_true "[ $total -ge 2 ]" "unioned blocks are at least any single line's"
+    # And the exact figure: .[0] would report 0, the second line alone 1.
+    assert_equals "3" "$total" "all three tool_use blocks survive the union"
+    # The classification also has to be right, or the count above could be 3 by
+    # accident of everything landing in one bucket.
+    assert_equals "2" "$read_calls" "grep and git status classify as read"
+    assert_equals "1" "$mutate_calls" "rm -rf classifies as mutate"
+}
+
+test_usage_is_not_summed_per_line() {
+    # THE TRAP-1 ASSERTION (AC3): raw summation and deduped totals differ on
+    # this fixture — 2700 vs 900 — and the deduped figure is what is emitted.
+    # Removing the dedup moves this pinned number, which is the property #788
+    # asks for ("so the dedup cannot be quietly removed").
+    run_ta growth "$DUP"
+    assert_equals "0" "$RC" "growth reports on the duplicate-id corpus"
+
+    local output_tokens turns
+    output_tokens="$(row_field "	1	" 6)"
+    turns="$(row_field "	1	" 4)"
+
+    assert_equals "1" "$turns" "three lines of one id are ONE turn, not three"
+    assert_equals "900" "$output_tokens" "usage is read once per id, not summed per line"
+    assert_not_contains "$OUT" "	2700	" "the naive per-line sum (2700) is never emitted"
+}
+
+# --- TRAP 3: thinking tokens are in usage, and the blocks are empty ----------
+#
+# The fixture is the exact shape that defeats a character count: the `thinking`
+# content blocks hold EMPTY STRINGS while usage reports 700 + 1300. A tool
+# measuring the blocks reports 0 and nobody notices, because 0 thinking tokens
+# is a believable reading.
+THINK="$WORKDIR/thinking"
+command mkdir -p "$THINK/proj"
+{
+    command printf '{"type":"assistant","sessionId":"s1","timestamp":"2026-08-23T10:00:00.000Z","message":{"id":"m1","role":"assistant","model":"claude-opus-5","content":[{"type":"thinking","thinking":""}],"usage":{"input_tokens":5,"cache_read_input_tokens":500,"cache_creation_input_tokens":0,"output_tokens":100,"output_tokens_details":{"thinking_tokens":700}}}}\n'
+    command printf '{"type":"assistant","sessionId":"s1","timestamp":"2026-08-23T10:05:00.000Z","message":{"id":"m2","role":"assistant","model":"claude-opus-5","content":[{"type":"thinking","thinking":""},{"type":"text","text":"done"}],"usage":{"input_tokens":5,"cache_read_input_tokens":700,"cache_creation_input_tokens":0,"output_tokens":200,"output_tokens_details":{"thinking_tokens":1300}}}}\n'
+} >"$THINK/proj/session.jsonl"
+
+test_thinking_tokens_come_from_usage_not_content() {
+    run_ta growth "$THINK"
+    assert_equals "0" "$RC" "the empty-thinking-block corpus reports"
+
+    # Both turns land in the first decile (n=2 over 10 buckets puts turn 1 in
+    # bucket 1); the assertion is that SOME bucket carries a non-zero figure and
+    # that the total is exactly the usage sum.
+    local total
+    total="$(command printf '%s\n' "$OUT" | command grep -v '^#' |
+        command awk -F'\t' '{s += $7} END {print s+0}')"
+    assert_equals "2000" "$total" "thinking tokens are summed from usage (700+1300)"
+    # The failure this pins: a character count over the empty blocks yields 0.
+    assert_true "[ $total -ne 0 ]" "empty thinking blocks do not read as zero thinking"
+}
+
+test_thinking_is_not_derived_from_block_text() {
+    # A SECOND, independent reading of trap 3. The fixture above could pass on a
+    # tool that guessed thinking from output_tokens. Here output_tokens and
+    # thinking_tokens differ, so a tool substituting one for the other fails.
+    run_ta growth "$THINK"
+    local thinking output
+    thinking="$(command printf '%s\n' "$OUT" | command grep -v '^#' |
+        command awk -F'\t' '{s += $7} END {print s+0}')"
+    output="$(command printf '%s\n' "$OUT" | command grep -v '^#' |
+        command awk -F'\t' '{s += $6} END {print s+0}')"
+    assert_equals "300" "$output" "output tokens total 100+200"
+    assert_true "[ $thinking -ne $output ]" \
+        "thinking is read from its own field, not substituted from output_tokens"
+}
+
+# --- TRAP 4: a naive stamp straddling the local/UTC boundary -----------------
+#
+# `2026-08-23T22:30:00` with NO offset. Read as America/New_York (UTC-4 in
+# August) it is 2026-08-24T02:30Z — the NEXT DAY. Read naively as UTC it stays
+# on the 23rd. That one-day slip is exactly the 5-hour misfiling recorded in
+# .claude/memory/review-cost-after-2026-07-28.md, and it is invisible in any
+# window that does not cross a boundary — which is why the fixture crosses one.
+TZF="$WORKDIR/tz"
+command mkdir -p "$TZF/proj"
+{
+    command printf '{"type":"assistant","sessionId":"s1","timestamp":"2026-08-23T22:30:00","message":{"id":"m1","role":"assistant","model":"claude-opus-5","content":[{"type":"text","text":"x"}],"usage":{"input_tokens":5,"cache_read_input_tokens":500,"cache_creation_input_tokens":0,"output_tokens":100}}}\n'
+} >"$TZF/proj/session.jsonl"
+
+test_naive_timestamp_is_normalized_to_utc() {
+    run_ta growth "$TZF" --tz America/New_York
+    assert_equals "0" "$RC" "a naive stamp under an explicit --tz reports"
+
+    local window
+    window="$(row_field "	1	" 1)"
+    # THE ASSERTION (AC5): the emitted window_start is UTC, and under UTC-4 that
+    # is the NEXT day. A naive local reading would emit 2026-08-23T22:30.
+    assert_contains "$window" "2026-08-24T02:30:00" "a naive stamp is converted to UTC"
+    assert_contains "$window" "+00:00" "and is emitted with an explicit UTC offset"
+    assert_not_contains "$window" "2026-08-23T22:30" "the naive local reading is never emitted"
+}
+
+test_same_instant_reads_identically_under_either_spelling() {
+    # The other direction, and the one that proves the conversion is real rather
+    # than a fixed offset added to everything: an AWARE stamp naming the same
+    # instant must produce the SAME window_start, whatever --tz says. A tool
+    # that blindly applied --tz would shift this one too.
+    local aware="$WORKDIR/tz-aware"
+    command mkdir -p "$aware/proj"
+    command printf '{"type":"assistant","sessionId":"s1","timestamp":"2026-08-24T02:30:00Z","message":{"id":"m1","role":"assistant","model":"claude-opus-5","content":[{"type":"text","text":"x"}],"usage":{"input_tokens":5,"cache_read_input_tokens":500,"cache_creation_input_tokens":0,"output_tokens":100}}}\n' \
+        >"$aware/proj/session.jsonl"
+
+    run_ta growth "$aware" --tz America/New_York
+    local aware_window
+    aware_window="$(row_field "	1	" 1)"
+    run_ta growth "$TZF" --tz America/New_York
+    local naive_window
+    naive_window="$(row_field "	1	" 1)"
+    assert_equals "$aware_window" "$naive_window" \
+        "an aware stamp and its naive local spelling land on the same instant"
+}
+
+test_unknown_timezone_fails_loudly() {
+    # --tz is the knob that makes trap 4 avoidable, so a typo in it must not
+    # degrade to "whatever the machine's zone is" — that is the silent-local
+    # reading the trap is made of.
+    run_ta growth "$TZF" --tz Not/AZone
+    assert_true "[ $RC -ne 0 ]" "an unknown zone does not exit 0"
+    assert_contains "$OUT" "unknown timezone" "and says which knob was wrong"
+}
+
+# --- the TSV contract (AC6) --------------------------------------------------
+
+test_every_subcommand_emits_the_join_key() {
+    # AC6: output must join against token-report.sh's window output, which keys
+    # on (window_start, model). Asserted for EVERY subcommand rather than one,
+    # because the contract is what makes gateway and transcript numbers
+    # comparable and a single divergent subcommand breaks the join silently.
+    local sub
+    for sub in debt floor growth prefix bash-class attachments; do
+        run_ta "$sub" "$CONTRACT"
+        assert_equals "0" "$RC" "$sub reports on the contract corpus"
+        assert_contains "$OUT" "# columns: window_start	model" \
+            "$sub declares the window_start+model join key first"
+
+        local first_row
+        first_row="$(command printf '%s\n' "$OUT" | command grep -v '^#' |
+            command head -1)"
+        assert_contains "$first_row" "claude-opus-5" \
+            "$sub emits the model read from the transcript, not a placeholder"
+    done
+}
+
+test_rows_are_tab_separated_with_no_empty_fields() {
+    # An EMPTY field collapses under a TSV reader's field split, shifting every
+    # later column left — so a consumer reading column 6 silently gets column 7
+    # (the repo has this recorded as a class). Every field must be non-empty;
+    # the tool spells an absent value `-`.
+    run_ta debt "$CONTRACT"
+    local bad
+    bad="$(command printf '%s\n' "$OUT" | command grep -v '^#' |
+        command awk -F'\t' '{for (i = 1; i <= NF; i++) if ($i == "") print NR}')"
+    assert_equals "" "$bad" "no row carries an empty field"
+}
+
+test_absent_timestamp_emits_a_sentinel_not_a_blank() {
+    # The specific case the rule above exists for: a corpus whose records carry
+    # no parseable timestamp. window_start has no value, and the wrong answer is
+    # an empty first field.
+    local nots="$WORKDIR/no-ts"
+    command mkdir -p "$nots/proj"
+    command printf '{"type":"assistant","sessionId":"s1","message":{"id":"m1","role":"assistant","model":"claude-opus-5","content":[{"type":"text","text":"x"}],"usage":{"input_tokens":5,"cache_read_input_tokens":500,"cache_creation_input_tokens":0,"output_tokens":100}}}\n' \
+        >"$nots/proj/session.jsonl"
+    run_ta growth "$nots"
+    assert_equals "0" "$RC" "a stampless corpus still reports"
+    local first
+    first="$(command printf '%s\n' "$OUT" | command grep -v '^#' | command head -1 |
+        command awk -F'\t' '{print $1}')"
+    assert_equals "-" "$first" "an unknown window_start is the sentinel, not empty"
+}
+
+# --- the contract corpus -----------------------------------------------------
+#
+# One session with tool calls, results, attachments, and a spawn — enough for
+# every subcommand to produce at least one row. Deliberately separate from the
+# trap fixtures above, which are minimal on purpose.
+CONTRACT="$WORKDIR/contract"
+command mkdir -p "$CONTRACT/proj/sess/subagents/wf"
+{
+    command printf '{"type":"attachment","sessionId":"s1","timestamp":"2026-08-23T09:00:00.000Z","attachment":{"type":"prompt_snapshot","systemPrompt":"%s"}}\n' \
+        "$(command printf 'x%.0s' $(command seq 1 400))"
+    command printf '{"type":"attachment","sessionId":"s1","timestamp":"2026-08-23T09:00:01.000Z","attachment":{"type":"instructions","files":"%s"}}\n' \
+        "$(command printf 'y%.0s' $(command seq 1 200))"
+    command printf '{"type":"assistant","sessionId":"s1","timestamp":"2026-08-23T09:00:02.000Z","message":{"id":"c1","role":"assistant","model":"claude-opus-5","content":[{"type":"tool_use","id":"tu1","name":"Bash","input":{"command":"grep -rn pattern ."}}],"usage":{"input_tokens":10,"cache_read_input_tokens":2000,"cache_creation_input_tokens":100,"output_tokens":50,"output_tokens_details":{"thinking_tokens":20}}}}\n'
+    command printf '{"type":"user","sessionId":"s1","timestamp":"2026-08-23T09:00:03.000Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu1","content":"%s"}]}}\n' \
+        "$(command printf 'z%.0s' $(command seq 1 12000))"
+    command printf '{"type":"assistant","sessionId":"s1","timestamp":"2026-08-23T09:00:04.000Z","message":{"id":"c2","role":"assistant","model":"claude-opus-5","content":[{"type":"text","text":"ok"}],"usage":{"input_tokens":10,"cache_read_input_tokens":14000,"cache_creation_input_tokens":0,"output_tokens":30}}}\n'
+} >"$CONTRACT/proj/session.jsonl"
+command printf '{"type":"assistant","sessionId":"sp1","timestamp":"2026-08-23T09:00:05.000Z","message":{"id":"s1","role":"assistant","model":"claude-opus-5","content":[{"type":"text","text":"spawned"}],"usage":{"input_tokens":2,"cache_read_input_tokens":20000,"cache_creation_input_tokens":4000,"output_tokens":40,"output_tokens_details":{"thinking_tokens":15}}}}\n' \
+    >"$CONTRACT/proj/sess/subagents/wf/agent-one.jsonl"
+
+# --- re-read debt arithmetic -------------------------------------------------
+
+test_debt_is_size_times_residency_not_size() {
+    # The arithmetic that makes `debt` different from a size ranking, and the
+    # reason Bash carried 76% of re-read debt while not being the largest single
+    # result. The fixture has a SMALL early result and a LARGE late one, chosen
+    # so the two orderings disagree: ranking by size puts Read first, ranking by
+    # debt puts Bash first.
+    local dbt="$WORKDIR/debt"
+    command mkdir -p "$dbt/proj"
+    {
+        command printf '{"type":"assistant","sessionId":"s1","timestamp":"2026-08-23T09:00:00.000Z","message":{"id":"d1","role":"assistant","model":"claude-opus-5","content":[{"type":"tool_use","id":"tuA","name":"Bash","input":{"command":"ls"}}],"usage":{"input_tokens":1,"cache_read_input_tokens":10,"cache_creation_input_tokens":0,"output_tokens":1}}}\n'
+        command printf '{"type":"user","sessionId":"s1","timestamp":"2026-08-23T09:00:01.000Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tuA","content":"%s"}]}}\n' \
+            "$(command printf 'a%.0s' $(command seq 1 12000))"
+        local i
+        for i in 1 2 3 4 5 6 7 8; do
+            command printf '{"type":"assistant","sessionId":"s1","timestamp":"2026-08-23T09:0%s:00.000Z","message":{"id":"pad%s","role":"assistant","model":"claude-opus-5","content":[{"type":"text","text":"pad"}],"usage":{"input_tokens":1,"cache_read_input_tokens":10,"cache_creation_input_tokens":0,"output_tokens":1}}}\n' "$i" "$i"
+        done
+        command printf '{"type":"assistant","sessionId":"s1","timestamp":"2026-08-23T09:09:00.000Z","message":{"id":"d2","role":"assistant","model":"claude-opus-5","content":[{"type":"tool_use","id":"tuB","name":"Read","input":{"file_path":"/x"}}],"usage":{"input_tokens":1,"cache_read_input_tokens":10,"cache_creation_input_tokens":0,"output_tokens":1}}}\n'
+        command printf '{"type":"user","sessionId":"s1","timestamp":"2026-08-23T09:09:01.000Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tuB","content":"%s"}]}}\n' \
+            "$(command printf 'b%.0s' $(command seq 1 20000))"
+    } >"$dbt/proj/session.jsonl"
+
+    run_ta debt "$dbt"
+    assert_equals "0" "$RC" "the debt corpus reports"
+
+    local bash_tokens read_tokens bash_debt read_debt
+    bash_tokens="$(row_field "	Bash	" 5)"
+    read_tokens="$(row_field "	Read	" 5)"
+    bash_debt="$(row_field "	Bash	" 6)"
+    read_debt="$(row_field "	Read	" 6)"
+
+    # The premise: Read's single result IS the larger one.
+    assert_true "[ $read_tokens -gt $bash_tokens ]" \
+        "the late Read result is larger than the early Bash one"
+    # The finding: Bash nonetheless carries more debt, because it is re-sent for
+    # the rest of the session. A tool ranking by size alone inverts this.
+    assert_true "[ $bash_debt -gt $read_debt ]" \
+        "the earlier, smaller result carries MORE re-read debt"
+    # And the first row is the highest-debt one, not the largest.
+    assert_contains "$(command printf '%s\n' "$OUT" | command grep -v '^#' |
+        command head -1)" "Bash" "rows are ordered by debt, not by size"
+}
+
+test_trivial_results_are_floored_out() {
+    # Without the floor the debt table is dominated by hundreds of status lines
+    # whose products are noise. A result under RESULT_FLOOR_TOKENS contributes
+    # nothing — asserted so the floor cannot be dropped silently.
+    local tiny="$WORKDIR/tiny"
+    command mkdir -p "$tiny/proj"
+    {
+        command printf '{"type":"assistant","sessionId":"s1","timestamp":"2026-08-23T09:00:00.000Z","message":{"id":"t1","role":"assistant","model":"claude-opus-5","content":[{"type":"tool_use","id":"tuT","name":"Bash","input":{"command":"pwd"}}],"usage":{"input_tokens":1,"cache_read_input_tokens":10,"cache_creation_input_tokens":0,"output_tokens":1}}}\n'
+        command printf '{"type":"user","sessionId":"s1","timestamp":"2026-08-23T09:00:01.000Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tuT","content":"/workspace"}]}}\n'
+    } >"$tiny/proj/session.jsonl"
+    run_ta debt "$tiny"
+    assert_equals "3" "$RC" "a corpus of only trivial results is an ABSENT measurement"
+    assert_contains "$OUT" "no tool results over" "and says why"
+}
+
+# --- floor vs attachments: fixed vs open vocabulary --------------------------
+
+test_floor_vocabulary_is_fixed_and_attachments_is_open() {
+    # These two subcommands deliberately disagree, and the disagreement is
+    # load-bearing: a FLOOR whose categories drift cannot be compared between
+    # two measurements, while an ATTACHMENT census with a fixed list would have
+    # filtered out the unexpected type that produced the no-op `hook_success`
+    # finding in the first place.
+    local mixed="$WORKDIR/mixed"
+    command mkdir -p "$mixed/proj"
+    {
+        command printf '{"type":"attachment","sessionId":"s1","timestamp":"2026-08-23T09:00:00.000Z","attachment":{"type":"prompt_snapshot","systemPrompt":"%s"}}\n' \
+            "$(command printf 'x%.0s' $(command seq 1 400))"
+        command printf '{"type":"attachment","sessionId":"s1","timestamp":"2026-08-23T09:00:01.000Z","attachment":{"type":"hook_success","text":"noop"}}\n'
+    } >"$mixed/proj/session.jsonl"
+
+    run_ta attachments "$mixed"
+    assert_equals "0" "$RC" "attachments reports on the mixed corpus"
+    assert_contains "$OUT" "hook_success" \
+        "an unexpected attachment type is surfaced, not filtered away"
+
+    run_ta floor "$mixed"
+    assert_equals "0" "$RC" "floor reports on the mixed corpus"
+    assert_not_contains "$OUT" "hook_success" \
+        "the floor vocabulary stays fixed so two measurements compare"
+    assert_contains "$OUT" "prompt_snapshot" "and still carries the real floor components"
+}
+
+# --- Bash classification -----------------------------------------------------
+
+test_bash_classification_resolves_subcommands_and_prefixes() {
+    # Three ways the 49%/67% split goes wrong if classification is by head word
+    # alone: `git log` and `git push` collapse together; `command grep` lands in
+    # `other` (this repo's own scripts use that prefix everywhere); and a
+    # pipeline whose tail writes reads as a pure read.
+    local cls="$WORKDIR/classify"
+    command mkdir -p "$cls/proj"
+    {
+        command printf '{"type":"assistant","sessionId":"s1","timestamp":"2026-08-23T09:00:00.000Z","message":{"id":"k1","role":"assistant","model":"claude-opus-5","content":[{"type":"tool_use","id":"k_a","name":"Bash","input":{"command":"git log --oneline"}},{"type":"tool_use","id":"k_b","name":"Bash","input":{"command":"git push origin main"}},{"type":"tool_use","id":"k_c","name":"Bash","input":{"command":"command grep -rn x ."}},{"type":"tool_use","id":"k_d","name":"Bash","input":{"command":"cat a | tee out.txt"}},{"type":"tool_use","id":"k_e","name":"Bash","input":{"command":"frobnicate --wild"}}],"usage":{"input_tokens":1,"cache_read_input_tokens":10,"cache_creation_input_tokens":0,"output_tokens":1}}}\n'
+    } >"$cls/proj/session.jsonl"
+
+    run_ta bash-class "$cls"
+    assert_equals "0" "$RC" "the classification corpus reports"
+    # git log + command grep = 2 reads.
+    assert_equals "2" "$(row_field "	read	" 4)" \
+        "git log and a command-prefixed grep are reads"
+    # git push + the tee pipeline = 2 mutations.
+    assert_equals "2" "$(row_field "	mutate	" 4)" \
+        "git push and a pipeline whose tail writes are mutations"
+    # An unrecognized command is `other`, never folded into either side — an
+    # unknown must not be able to move the ratio the finding quotes.
+    assert_equals "1" "$(row_field "	other	" 4)" \
+        "an unrecognized command is other, not silently a read"
+}
+
+# --- degradation and exit codes ----------------------------------------------
+
+test_malformed_lines_are_tolerated() {
+    # A transcript being written while this runs can end mid-line. One bad line
+    # must not abandon the thousands of good ones — but it also must not be
+    # counted, so the surviving figure is asserted rather than just the exit.
+    local broken="$WORKDIR/broken"
+    command mkdir -p "$broken/proj"
+    {
+        command printf '{"type":"assistant","sessionId":"s1","timestamp":"2026-08-23T09:00:00.000Z","message":{"id":"b1","role":"assistant","model":"claude-opus-5","content":[{"type":"text","text":"ok"}],"usage":{"input_tokens":1,"cache_read_input_tokens":100,"cache_creation_input_tokens":0,"output_tokens":42}}}\n'
+        command printf '{"type":"assistant","truncated\n'
+        command printf '\n'
+    } >"$broken/proj/session.jsonl"
+    run_ta growth "$broken"
+    assert_equals "0" "$RC" "a truncated line does not abort the run"
+    assert_equals "42" "$(row_field "	1	" 6)" "the good record is still counted exactly"
+}
+
+test_string_content_is_not_dropped() {
+    # `content` may be a bare string rather than a block list. Returning [] for
+    # that shape silently drops the turn — a wrong-but-quiet outcome.
+    local strc="$WORKDIR/strcontent"
+    command mkdir -p "$strc/proj"
+    command printf '{"type":"assistant","sessionId":"s1","timestamp":"2026-08-23T09:00:00.000Z","message":{"id":"s1","role":"assistant","model":"claude-opus-5","content":"plain text answer","usage":{"input_tokens":1,"cache_read_input_tokens":100,"cache_creation_input_tokens":0,"output_tokens":7}}}\n' \
+        >"$strc/proj/session.jsonl"
+    run_ta growth "$strc"
+    assert_equals "0" "$RC" "a string-content turn reports"
+    assert_equals "1" "$(row_field "	1	" 4)" "and is counted as a turn"
+}
+
+test_spawn_transcripts_are_excluded_from_main_session_reads() {
+    # `debt` and `growth` size what the MAIN session absorbed. A subagent's
+    # reading is precisely what a delegation keeps OUT of that context, so
+    # counting it here would report the delegated volume as if the parent had
+    # paid for it — inverting the conclusion the tool exists to support.
+    run_ta growth "$CONTRACT"
+    local turns
+    turns="$(command printf '%s\n' "$OUT" | command grep -v '^#' |
+        command awk -F'\t' '{s += $4} END {print s+0}')"
+    assert_equals "2" "$turns" "only the two main-session turns are counted"
+
+    # And the spawn IS visible to the subcommand that asks about spawns.
+    run_ta prefix "$CONTRACT"
+    assert_equals "0" "$RC" "prefix reports on the spawn"
+    assert_equals "1" "$(row_field "claude-opus-5" 3)" "the spawn is counted exactly once"
+}
+
+test_absent_root_exits_three() {
+    run_ta debt "$WORKDIR/does-not-exist"
+    assert_equals "3" "$RC" "an absent transcript root exits 3, not 0"
+    assert_contains "$OUT" "no transcript root" "and names the cause"
+}
+
+test_empty_corpus_exits_three_not_zero() {
+    # An empty corpus and a corpus that genuinely measured zero are DIFFERENT
+    # claims, and only the second is evidence. Exit 3 keeps them distinguishable.
+    local empty="$WORKDIR/empty"
+    command mkdir -p "$empty/proj"
+    run_ta growth "$empty"
+    assert_equals "3" "$RC" "an empty corpus is an absent measurement, not a zero"
+}
+
+test_unknown_subcommand_exits_two() {
+    run_ta dbet "$CONTRACT"
+    assert_equals "2" "$RC" "an unknown subcommand exits 2"
+}
+
+test_every_subcommand_is_dispatchable() {
+    # The argparse choices tuple and the SUBCOMMANDS dict are separate edits; a
+    # subcommand added to one and not the other fails here rather than at use.
+    local sub
+    for sub in debt floor growth prefix bash-class attachments; do
+        run_ta "$sub" "$CONTRACT"
+        assert_true "[ $RC -ne 2 ]" "$sub is a registered subcommand"
+    done
+}
+
+test_default_subcommand_is_debt() {
+    set +e
+    local out
+    out="$(python3 "$TA_PY" --root "$CONTRACT" 2>&1)"
+    set -e
+    assert_contains "$out" "token-attribute debt" "the default subcommand is debt"
+}
+
+# --- the shim's 77 sentinel --------------------------------------------------
+
+test_shim_reports_77_without_python() {
+    # The shim must exit the reserved 77 sentinel, never 0, when its runtime is
+    # missing — reporting nothing beats reporting wrong attribution.
+    #
+    # Forcing python3 absent needs BOTH an emptied PATH and BASH_ENV unset:
+    # /etc/bash_env re-seeds PATH in every non-interactive bash here, so a
+    # PATH-only override silently leaves python3 findable and the test proves
+    # nothing (a measured trap — see the sibling gate).
+    local runner="$WORKDIR/no-python.sh" out rc
+    {
+        command printf '#!/usr/bin/env bash\n'
+        # Resolve bash BEFORE emptying PATH: the fixture removes python3, not
+        # the shell, and an unresolvable interpreter would fail as 127 for a
+        # reason that has nothing to do with the sentinel under test.
+        command printf '_sh="$(command -v bash)"\n'
+        command printf 'export PATH=%s/empty-bin\n' "$WORKDIR"
+        command printf 'unset BASH_ENV\n'
+        command printf 'exec "$_sh" "$1" debt\n'
+    } >"$runner"
+    command mkdir -p "$WORKDIR/empty-bin"
+    set +e
+    out="$(command bash "$runner" "$TA_SH" 2>&1)"
+    rc=$?
+    set -e
+    assert_equals "77" "$rc" "an absent python3 exits the 77 sentinel"
+    assert_contains "$out" "python3 not found" "and names the real cause"
+}
+
+test_shim_reports_77_on_old_python() {
+    # A PRESENT but too-old interpreter is a different branch from an absent
+    # one, and the absent-python test cannot reach it. The stub satisfies
+    # `command -v` and fails the version probe.
+    local stub_dir="$WORKDIR/oldpy" runner="$WORKDIR/old-python.sh" out rc
+    command mkdir -p "$stub_dir"
+    {
+        command printf '#!/usr/bin/env sh\n'
+        command printf 'exit 1\n'
+    } >"$stub_dir/python3"
+    command chmod +x "$stub_dir/python3"
+    {
+        command printf '#!/usr/bin/env bash\n'
+        command printf 'export PATH=%s:/usr/bin:/bin\n' "$stub_dir"
+        command printf 'unset BASH_ENV\n'
+        command printf 'exec bash "$1" debt\n'
+    } >"$runner"
+    set +e
+    out="$(command bash "$runner" "$TA_SH" 2>&1)"
+    rc=$?
+    set -e
+    assert_equals "77" "$rc" "a too-old python3 exits the 77 sentinel"
+    assert_contains "$out" "older than 3.11" "and names the version as the cause"
+}
+
+test_shim_diagnoses_a_missing_tool_correctly() {
+    # A missing .py and a missing python3 both exit 77 but need DIFFERENT
+    # messages: the operator action is "reinstall the plugin" versus "install
+    # python". One message for both would send them down the wrong path.
+    local fake="$WORKDIR/fakedir" out rc
+    command mkdir -p "$fake"
+    command cp "$TA_SH" "$fake/token-attribute.sh"
+    set +e
+    out="$(command bash "$fake/token-attribute.sh" debt 2>&1)"
+    rc=$?
+    set -e
+    assert_equals "77" "$rc" "a missing .py exits the 77 sentinel"
+    assert_contains "$out" "plugin install is incomplete" \
+        "and diagnoses the install, not the runtime"
+}
+
+# --- the decision the issue asked to be recorded (AC8) -----------------------
+
+test_bash_fallback_decision_is_recorded() {
+    # #788 AC8: "the bash-fallback decision is recorded with its reason" — and
+    # asks for it to be STATED rather than defaulted either way. A reader
+    # reaching for a .sh twin must find the reason there is none, in the two
+    # files they would open.
+    assert_file_contains "$TA_SH" "BASH-FALLBACK DECISION" \
+        "the shim states the decision under a findable heading"
+    assert_file_contains "$TA_SH" "pre-scan family" \
+        "and distinguishes this tool from the family that keeps one"
+    assert_file_contains "$TA_PY" "NO bash fallback" \
+        "the tool's own header states it too"
+    # The 77 sentinel is half the decision: having chosen not to degrade, the
+    # tool must refuse loudly. A shim that exited 0 here would make the recorded
+    # reason false in practice.
+    assert_file_contains "$TA_SH" "exit 77" \
+        "and the refusal path the decision implies is present"
+}
+
+run_test test_union_beats_any_single_line "TRAP 2: blocks are unioned across duplicate message.id lines"
+run_test test_usage_is_not_summed_per_line "TRAP 1: usage is read once per id, not summed per line"
+run_test test_thinking_tokens_come_from_usage_not_content "TRAP 3: thinking tokens come from usage, not content"
+run_test test_thinking_is_not_derived_from_block_text "TRAP 3: thinking is its own field, not output_tokens"
+run_test test_naive_timestamp_is_normalized_to_utc "TRAP 4: a naive stamp is normalized to UTC"
+run_test test_same_instant_reads_identically_under_either_spelling "TRAP 4: an aware stamp is not double-shifted"
+run_test test_unknown_timezone_fails_loudly "TRAP 4: an unknown --tz fails loudly"
+run_test test_every_subcommand_emits_the_join_key "AC6: every subcommand emits the window_start+model join key"
+run_test test_rows_are_tab_separated_with_no_empty_fields "AC6: no row carries a column-shifting empty field"
+run_test test_absent_timestamp_emits_a_sentinel_not_a_blank "AC6: an unknown window_start is a sentinel"
+run_test test_debt_is_size_times_residency_not_size "debt ranks by residency product, not by size"
+run_test test_trivial_results_are_floored_out "trivial results are floored out of the debt table"
+run_test test_floor_vocabulary_is_fixed_and_attachments_is_open "floor is fixed vocabulary, attachments is open"
+run_test test_bash_classification_resolves_subcommands_and_prefixes "Bash classification resolves subcommands and prefixes"
+run_test test_malformed_lines_are_tolerated "a truncated line is tolerated, not counted"
+run_test test_string_content_is_not_dropped "string-shaped content is not dropped"
+run_test test_spawn_transcripts_are_excluded_from_main_session_reads "spawn transcripts stay out of main-session totals"
+run_test test_absent_root_exits_three "an absent transcript root exits 3"
+run_test test_empty_corpus_exits_three_not_zero "an empty corpus exits 3, not a measured zero"
+run_test test_unknown_subcommand_exits_two "an unknown subcommand exits 2"
+run_test test_every_subcommand_is_dispatchable "every declared subcommand is dispatchable"
+run_test test_default_subcommand_is_debt "the default subcommand is debt"
+run_test test_shim_reports_77_without_python "the shim exits 77 when python3 is absent"
+run_test test_shim_reports_77_on_old_python "the shim exits 77 when python3 is too old"
+run_test test_shim_diagnoses_a_missing_tool_correctly "the shim diagnoses a missing .py distinctly"
+run_test test_bash_fallback_decision_is_recorded "AC8: the bash-fallback decision is recorded with its reason"
+
+generate_report

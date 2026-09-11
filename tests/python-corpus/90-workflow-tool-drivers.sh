@@ -462,3 +462,54 @@ if [ -f "$ADOPTION_PY" ]; then
     unset _arpt
     run_count=$((run_count + 1))
 fi
+
+# --- scripts/token-attribute.py — transcript-side attribution (#788) ---------
+#
+# Driven against the synthetic TA_ROOT built in 80-workflow-tools.sh, never the
+# developer's real ~/.claude/projects: --root makes the run hermetic AND
+# deterministic, and without it the measurement would be EMPTY in CI, leaving
+# every reporting branch unexecuted while still exiting 0.
+#
+# COVERAGE ONLY. The assertions live in tests/validate-token-attribute.sh, whose
+# four trap fixtures are each mutation-verified. Nothing here checks a number —
+# every invocation is `|| true` with output discarded, which executes lines and
+# asserts nothing (the limitation #787's review recorded for the sibling driver).
+TOKEN_ATTR_PY="$PLUGINS_DIR/workflow/scripts/token-attribute.py"
+if [ -f "$TOKEN_ATTR_PY" ]; then
+    # All six reports over the mixed corpus. Each has its own aggregation and
+    # its own emit(), so one representative subcommand would leave five
+    # unexecuted.
+    for _tarpt in debt floor growth prefix bash-class attachments; do
+        run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
+            "$TOKEN_ATTR_PY" "$_tarpt" --root "$TA_ROOT" --tz UTC \
+            >/dev/null 2>&1 || true
+    done
+    # A non-UTC zone -> the naive-stamp conversion branch of parse_ts, which a
+    # --tz UTC run passes through without converting anything.
+    run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
+        "$TOKEN_ATTR_PY" growth --root "$TA_ROOT" --tz America/New_York \
+        >/dev/null 2>&1 || true
+    # An unresolvable zone -> resolve_tz's SystemExit arm.
+    run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
+        "$TOKEN_ATTR_PY" growth --root "$TA_ROOT" --tz Not/AZone \
+        >/dev/null 2>&1 || true
+    # Default subcommand (argparse nargs="?" -> debt) on the same corpus.
+    run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
+        "$TOKEN_ATTR_PY" --root "$TA_ROOT" --tz UTC >/dev/null 2>&1 || true
+    # The exit-3 arms: a corpus with sessions but nothing to report, and a root
+    # that does not exist. Different branches, same exit code — and each
+    # subcommand has its OWN refusal, so the bare corpus is driven across all of
+    # them rather than through one representative.
+    for _tarpt in debt floor growth prefix bash-class attachments; do
+        run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
+            "$TOKEN_ATTR_PY" "$_tarpt" --root "$TA_BARE" --tz UTC \
+            >/dev/null 2>&1 || true
+    done
+    run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
+        "$TOKEN_ATTR_PY" debt --root "$TA_GHOST" --tz UTC >/dev/null 2>&1 || true
+    # Usage error (exit 2) -> argparse's invalid-choice arm.
+    run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
+        "$TOKEN_ATTR_PY" bogus-report --root "$TA_ROOT" >/dev/null 2>&1 || true
+    unset _tarpt
+    run_count=$((run_count + 1))
+fi

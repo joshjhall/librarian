@@ -206,6 +206,7 @@ plugins/workflow/scripts/autonomy-resolve.py
 plugins/workflow/scripts/golem-event-listener.py
 plugins/workflow/scripts/delegation-adoption.py
 plugins/workflow/scripts/measure-spawn-prefix.py
+plugins/workflow/scripts/token-attribute.py
 plugins/workflow/skills/ship-issue/plan-lens.py
 plugins/workflow/skills/ship-issue/sizing.py
 plugins/workflow/skills/ship-issue/split-verify.py"

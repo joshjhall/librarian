@@ -34,6 +34,29 @@ Both numbers are **measured in this repo**. Cite them; do not re-derive them.
 delegate when:  result_tokens x turns_resident  >  ~24,650
 ```
 
+## Re-measuring these numbers
+
+Both figures above came from transcript analysis, and that analysis is now a
+command rather than an afternoon (#788):
+
+```bash
+# the break-even's left side: what a spawn costs
+plugins/workflow/scripts/token-attribute.sh prefix --tz UTC
+# its right side: which tool's results carry the re-read debt
+plugins/workflow/scripts/token-attribute.sh debt --tz UTC
+```
+
+`debt` is the source of "Bash results carry 76% of all re-read debt" — it ranks
+by `result_tokens x turns_resident`, the same product this skill's rule uses, so
+an early medium result outranks a late large one exactly as the rule says it
+should. Rows join against `token-report.sh window` on `(window_start, model)`,
+which is what lets a gateway total be decomposed rather than merely observed.
+
+**Re-measure before citing a changed number, not before citing these.** The
+figures above are stable and this skill says to cite them; the tool is for when
+a specific before/after comes back ambiguous, which is the documented likely
+outcome for at least one of the #782–#787 changes.
+
 **Use the billing-weighted figure, not the raw one** (#787;
 `docs/verification/subagent-prefix-e2e-787.md`). A spawn's first turn splits into
 a shared system-prompt + tool-schema block that is byte-identical across spawns —

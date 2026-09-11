@@ -401,3 +401,65 @@ printf '{"type":"user","message":{"role":"user","content":[{"type":"tool_result"
 
 # A path that does not exist -> the missing-root exit 3.
 ADOPT_GHOST="$WFDIR/adopt-never-created"
+
+# =============================================================================
+# token-attribute.py — transcript-side token attribution (#788)
+# =============================================================================
+#
+# A THIRD synthetic root, and not a reuse of either above, because this tool
+# branches on shapes neither of them contains: duplicate message.id lines
+# carrying different blocks, attachment records, and a naive timestamp. The two
+# roots above have no `message.id` at all, so every grouping and union line —
+# the tool's core — would sit unexecuted while the driver still exited 0.
+#
+# Coverage driver only: the ASSERTIONS live in tests/validate-token-attribute.sh,
+# which mutation-verifies each trap fixture. This root exists to execute the
+# reporting branches, not to check their arithmetic.
+TA_ROOT="$WFDIR/token-attr-root"
+mkdir -p "$TA_ROOT/proj/sess/subagents/workflows/wf_ta"
+
+# 12k of filler -> a tool_result over RESULT_FLOOR_TOKENS, so `debt` reports a
+# row instead of taking its exit-3 "nothing over the floor" arm.
+_ta_pad="$(head -c 12000 /dev/zero | tr '\0' 'x')"
+{
+    # Attachments: one floor component and one type OUTSIDE the fixed floor
+    # vocabulary, so `floor`'s skip branch and `attachments`' open enumeration
+    # both run.
+    printf '{"type":"attachment","sessionId":"ta1","timestamp":"2026-08-23T09:00:00.000Z","attachment":{"type":"prompt_snapshot","systemPrompt":"sys"}}\n'
+    printf '{"type":"attachment","sessionId":"ta1","timestamp":"2026-08-23T09:00:01.000Z","attachment":{"type":"hook_success","text":"noop"}}\n'
+    printf '{"type":"attachment","sessionId":"ta1","timestamp":"2026-08-23T09:00:02.000Z","attachment":{}}\n'
+    # THE DUPLICATE ID, three lines, different blocks -> the union path.
+    printf '{"type":"assistant","sessionId":"ta1","timestamp":"2026-08-23T09:00:03.000Z","message":{"id":"tam1","role":"assistant","model":"claude-opus-5","content":[{"type":"thinking","thinking":""}],"usage":{"input_tokens":5,"cache_read_input_tokens":900,"cache_creation_input_tokens":10,"output_tokens":60,"output_tokens_details":{"thinking_tokens":40}}}}\n'
+    printf '{"type":"assistant","sessionId":"ta1","timestamp":"2026-08-23T09:00:03.000Z","message":{"id":"tam1","role":"assistant","model":"claude-opus-5","content":[{"type":"tool_use","id":"ta_a","name":"Bash","input":{"command":"git log --oneline"}},{"type":"tool_use","id":"ta_b","name":"Bash","input":{"command":"rm -rf tmp"}}],"usage":{"input_tokens":5,"cache_read_input_tokens":900,"cache_creation_input_tokens":10,"output_tokens":60}}}\n'
+    # An unrecognized head word -> the `other` bucket.
+    printf '{"type":"assistant","sessionId":"ta1","timestamp":"2026-08-23T09:00:04.000Z","message":{"id":"tam2","role":"assistant","model":"claude-opus-5","content":[{"type":"tool_use","id":"ta_c","name":"Bash","input":{"command":"frobnicate --wild"}}],"usage":{"input_tokens":5,"cache_read_input_tokens":1000,"cache_creation_input_tokens":0,"output_tokens":20}}}\n'
+    printf '{"type":"user","sessionId":"ta1","timestamp":"2026-08-23T09:00:05.000Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"ta_a","content":"%s"}]}}\n' "$_ta_pad"
+    # A result whose tool_use_id matches no call -> the "(unknown)" attribution.
+    printf '{"type":"user","sessionId":"ta1","timestamp":"2026-08-23T09:00:06.000Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"ta_orphan","content":"%s"}]}}\n' "$_ta_pad"
+    # Bare-string content, a blank line and a non-JSON line -> the degradation
+    # arms of _blocks and _iter_records.
+    printf '{"type":"assistant","sessionId":"ta1","timestamp":"2026-08-23T09:00:07.000Z","message":{"id":"tam3","role":"assistant","model":"claude-opus-5","content":"plain","usage":{"input_tokens":5,"cache_read_input_tokens":1100,"cache_creation_input_tokens":0,"output_tokens":15}}}\n'
+    printf '\n'
+    printf 'not json at all\n'
+    # A NAIVE timestamp -> the --tz conversion branch.
+    printf '{"type":"assistant","sessionId":"ta1","timestamp":"2026-08-23T22:30:00","message":{"id":"tam4","role":"assistant","model":"claude-opus-5","content":[{"type":"text","text":"x"}],"usage":{"input_tokens":5,"cache_read_input_tokens":1200,"cache_creation_input_tokens":0,"output_tokens":10}}}\n'
+    # An unparseable timestamp -> the None-return arm of parse_ts.
+    printf '{"type":"assistant","sessionId":"ta1","timestamp":"not-a-date","message":{"id":"tam5","role":"assistant","model":"claude-opus-5","content":[{"type":"text","text":"y"}],"usage":{"input_tokens":5,"cache_read_input_tokens":1300,"cache_creation_input_tokens":0,"output_tokens":10}}}\n'
+} >"$TA_ROOT/proj/session-ta.jsonl"
+
+# A spawn -> `prefix` has something to measure. journal.jsonl is skipped by name.
+printf '{"type":"assistant","sessionId":"tasp","timestamp":"2026-08-23T09:10:00.000Z","message":{"id":"tasp1","role":"assistant","model":"claude-opus-5","content":[{"type":"text","text":"spawned"}],"usage":{"input_tokens":2,"cache_read_input_tokens":20000,"cache_creation_input_tokens":4000,"output_tokens":30,"output_tokens_details":{"thinking_tokens":12}}}}\n' \
+    >"$TA_ROOT/proj/sess/subagents/workflows/wf_ta/agent-ta.jsonl"
+printf '{"type":"assistant","message":{"role":"assistant","usage":{"input_tokens":9}}}\n' \
+    >"$TA_ROOT/proj/sess/subagents/workflows/wf_ta/journal.jsonl"
+unset _ta_pad
+
+# A root with sessions but no attachments, no spawns and no sizeable results ->
+# the exit-3 arm of every subcommand that has one.
+TA_BARE="$WFDIR/token-attr-bare"
+mkdir -p "$TA_BARE/proj"
+printf '{"type":"assistant","sessionId":"b1","timestamp":"2026-08-23T09:00:00.000Z","message":{"id":"b1","role":"assistant","content":[{"type":"text","text":"hi"}]}}\n' \
+    >"$TA_BARE/proj/session-bare.jsonl"
+
+# A path that does not exist -> the missing-root exit 3.
+TA_GHOST="$WFDIR/token-attr-never-created"
