@@ -27,6 +27,22 @@ test regenerated from the code it tests, a snapshot updated to match new output.
 **How to apply:** treat a green parity/snapshot gate as evidence of *agreement*,
 never of correctness. The catching test asserts the **intended** match against a
 hand-written fixture, and lives in the per-detector suite, not the parity gate.
+
+The method that actually finds these: **read the pattern against shapes no
+fixture contains.** Enumerate the real-world forms of the thing being matched and
+check each by hand — the shared defect lives precisely where no one thought to
+write a case, which is why every existing test passes. #842 found two this way in
+one arm: a character class that excluded the quote characters, so a backgrounded
+command ending in a quoted argument (`curl "$url" &` — most of them) never
+matched; and an exclusion keyed on a **proxy** property (the line being
+assignment-shaped) that covered the one known false positive while silencing
+whole genuine categories. Both were byte-identical across the runtimes, so parity
+was perfect and wrong. A proxy that happens to fit the one sample you have is the
+shape to distrust: key on the property that actually makes the case true.
+
+Relatedly, prefer a spelling that makes a trap **unreachable** over one that
+documents it — that fix replaced an anchored exclusion with an unanchored one,
+which cannot acquire [[anchor-binds-to-grep-n-prefix]]'s bug at all.
 When you fix one side of a port, fix both in the same commit and add the
 intent-asserting case — parity will pass either way, so it tells you nothing
 about whether the fix was right. Also note the second blind spot: a parity gate

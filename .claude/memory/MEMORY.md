@@ -90,7 +90,7 @@
 - [Empty TSV column collapses under read](empty-tsv-column-collapses-under-read.md) — consecutive tabs merge, shifting every later field left; emit a `-` sentinel and assert the LAST field
 - [Observer resolves its own cwd](observer-resolves-its-own-cwd-not-the-subjects.md) — a helper run BY one actor ABOUT another must derive paths from the SUBJECT arg; wrong path yields empty, which reads as "nothing here"
 - [Derived key hides the gate it guards](derived-key-hides-the-gate-it-guards.md) — `ext` is of the PATH, the gate is about the NAME; a dotted DIRECTORY diverges and parity is blind
-- [Parity gate hides a shared defect](parity-gate-hides-shared-defect.md) — both impls wrong the same way passes green; same-output ≠ same-intent (#684)
+- [Parity gate hides a shared defect](parity-gate-hides-shared-defect.md) — both impls wrong the same way passes green; read the pattern against shapes NO fixture contains (#684, #842)
 - [Parity is blind to exit-code divergence](parity-blind-to-exit-code-divergence.md) — a refusal path emits nothing in BOTH impls; assert the exit code, not just stdout (#816)
 - [A byte tool can't strip multi-byte](byte-tool-cannot-strip-multibyte.md) — `tr` passes U+202E that Python's isprintable() strips; enumerate literal UTF-8, never `\xNN` (#816)
 - [A config value is not a pattern](config-value-is-not-a-pattern.md) — `notes[1].md` never matches itself via fnmatch/case; try literal equality FIRST (#669)
