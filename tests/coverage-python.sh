@@ -206,6 +206,7 @@ plugins/workflow/scripts/autonomy-resolve.py
 plugins/workflow/scripts/golem-event-listener.py
 plugins/workflow/scripts/delegation-adoption.py
 plugins/workflow/scripts/measure-spawn-prefix.py
+plugins/workflow/scripts/token-attribute.py
 plugins/workflow/skills/ship-issue/plan-lens.py
 plugins/workflow/skills/ship-issue/sizing.py
 plugins/workflow/skills/ship-issue/split-verify.py"
@@ -238,7 +239,9 @@ plugins/review-audit/skills/check-decomposition/loc_engine.py
 plugins/review-audit/skills/check-decomposition/prose_spec.py
 plugins/review-audit/skills/check-okf-conformance/bundle_graph.py
 plugins/workflow/skills/ship-issue/loc_engine.py
-plugins/workflow/skills/ship-issue/prose_spec.py"
+plugins/workflow/skills/ship-issue/prose_spec.py
+plugins/workflow/scripts/token_attribute_engine.py
+plugins/workflow/scripts/token_attribute_reports.py"
 
 # --- Synthetic corpus lifecycle ---------------------------------------------
 WORKDIR="$(mktemp -d)"

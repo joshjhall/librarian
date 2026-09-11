@@ -69,6 +69,12 @@ run_stage "golem-resolve clearing-signal helper" bash "$SCRIPT_DIR/validate-gole
 run_stage "golem-inbox brokered gate reverse channel" bash "$SCRIPT_DIR/validate-golem-inbox.sh"
 run_stage "golem-watch streaming dispatcher" bash "$SCRIPT_DIR/validate-golem-watch.sh"
 run_stage "token-cost reconciliation harness" bash "$SCRIPT_DIR/validate-token-report.sh"
+# The transcript side of the same question (#788): the gate above covers the
+# gateway's "how much", this one the "where did it go". Its subject is four
+# transcript-parsing traps, each of which yields a CONFIDENTLY WRONG number
+# rather than an error, so every fixture is mutation-verified to fail when its
+# guard is removed.
+run_stage "token attribution trap fixtures" bash "$SCRIPT_DIR/validate-token-attribute.sh"
 run_stage "context-budget session-length signal" bash "$SCRIPT_DIR/validate-context-budget.sh"
 run_stage "ephemeral-port allocation + retry" bash "$SCRIPT_DIR/validate-free-port.sh"
 # The ORDERING of a status-label transition (#636/#921): add first, remove only
