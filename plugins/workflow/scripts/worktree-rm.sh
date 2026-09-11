@@ -1047,11 +1047,15 @@ if [ -n "$br" ] && [ -n "$(command git branch --list "$br")" ]; then
             # Measured on git 2.55.0 — with two colliding refs,
             # `git -c core.warnAmbiguousRefs=false rev-parse --verify 'collide^{commit}'`
             # exits 0 with EMPTY stderr and still RESOLVES the name. Without the
-            # pin, a `~/.gitconfig` carrying that line would silently reduce this
-            # guard to the "assumed safe" posture the comment above says it
-            # replaced. Env scrubbing does not help: it stops GIT_CONFIG_* from
+            # pin, that value set ANYWHERE in git's config chain — repo-local,
+            # the operator's `~/.gitconfig`, or system — would silently reduce
+            # this guard to the "assumed safe" posture the comment above says it
+            # replaced. Scope does not matter to the outcome, only the effective
+            # value does, which is why `-c` (highest precedence) is the fix; the
+            # regression test plants it repo-locally as the cheapest sandboxable
+            # equivalent. Env scrubbing does not help: it stops GIT_CONFIG_* from
             # redirecting which files git reads, not a value legitimately set in
-            # the operator's own config.
+            # one of them.
             #
             # `LC_ALL=C` because the match is on git's ENGLISH text. Note the
             # measured status: `refname '%s' is ambiguous.` is NOT in git's

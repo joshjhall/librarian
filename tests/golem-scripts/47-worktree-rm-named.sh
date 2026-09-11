@@ -496,8 +496,13 @@ test_worktree_rm_named_ambiguous_base_ref_is_refused() {
 # and this test plants the hostile config to prove the pin holds.
 test_worktree_rm_named_ambiguity_guard_survives_silenced_warning() {
     local sb branches
+    # The caller's own config silences the warning the guard reads. Planted
+    # repo-LOCALLY as the cheapest sandboxable equivalent of the `~/.gitconfig`
+    # case: git resolves one EFFECTIVE value from the chain, and `-c` (the fix)
+    # outranks every scope, so local proves the same property without writing to
+    # the real HOME. (new_sandbox already repoints HOME at the sandbox, but a
+    # local write is narrower still.)
     new_sandbox sb
-    # The caller's own config silences the warning the guard reads.
     sb_git "$sb" config core.warnAmbiguousRefs false 2>/dev/null
     # Place the name where NO qualified arm reaches it, so only the bare fallback
     # sees it: refs/heads/collide, refs/remotes/collide and refs/tags/collide all
