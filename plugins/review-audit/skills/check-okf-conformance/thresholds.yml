@@ -151,8 +151,11 @@ semantic:
   # Matched against the bundle-relative path, `*` glob or literal. A bundle with
   # no tier split configures `short_term` empty and gets ZERO
   # memory-tier-misplaced rows — the correct answer for a flat bundle, not a
-  # finding on every file. These two are dev-core's memory-conventions skill
-  # (committed root vs gitignored tmp/) stated as config.
+  # finding on every file. These two are the committed-root vs gitignored-tmp/
+  # split stated as config; dev-core's okf-author skill teaches the same split
+  # to an AUTHOR from its own `tiers` key, and tests/validate-okf-authoring.sh
+  # holds the two copies in parity (#696 retired the memory-conventions skill
+  # that used to state it as prose).
   #
   # PRECEDENCE: `short_term` is checked FIRST, and the first list that matches
   # wins. The two lists overlap by construction — the defaults below are a

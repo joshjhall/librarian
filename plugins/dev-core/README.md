@@ -7,7 +7,7 @@ debug, refactor, and test code, and author the Claude Code artifacts (skills,
 agents, `workflow.js` harnesses) themselves — on a host, on bare Linux, or
 inside a devcontainer.
 
-## Skills (20)
+## Skills (21)
 
 ### Code & workflow guidance
 
@@ -18,13 +18,14 @@ inside a devcontainer.
 - `shell-scripting` — shell conventions, naming patterns, testing
 - `testing-patterns` — test-first patterns and framework conventions
 - `documentation-authoring` — docs/docstring/README standards
-- `memory-conventions` — two-tier `.claude/memory/` conventions
 
 ### Authoring guides (for building Claude Code artifacts)
 
 - `skill-authoring` / `agent-authoring` / `workflow-authoring` — guidelines for
   writing skills, agents, and `workflow.js` harnesses
 - `adversarial-review` — adversarial review method for skills/agents/harnesses
+- `okf-author` — how to author one OKF memory: frontmatter floor, naming, index
+  pointer, link syntax (config in its `thresholds.yml`)
 
 ### Activate-by-context (auto-activated when the work matches)
 
@@ -37,7 +38,7 @@ inside a devcontainer.
   `loop-make-it-documented` / `loop-make-it-secure`
 - `drift-detect` — catch scope drift between an issue plan and the actual diff
 
-## Agents (6)
+## Agents (7)
 
 | Agent | Role |
 | --- | --- |
@@ -47,6 +48,7 @@ inside a devcontainer.
 | `test-writer` | Comprehensive tests for existing code |
 | `skill-author` | Write/review/upgrade skills |
 | `agent-author` | Write/review/upgrade agents |
+| `okf-librarian` | Durable-vs-session, update-vs-create, which index, what to link — recommends only |
 
 `code-reviewer` ships a deterministic `workflow.js` harness alongside its flat
 `agents/code-reviewer.md` (see the repo's

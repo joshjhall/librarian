@@ -1,0 +1,123 @@
+# okf-author — Configurable Authoring Conventions
+#
+# Override by placing a modified copy in your project's
+# .claude/skills/okf-author/thresholds.yml.
+#
+# WHY THIS FILE EXISTS AT ALL, given #663 ("one threshold table"). It is a
+# SECOND copy of two keys that check-okf-conformance/thresholds.yml also
+# defines, and that duplication is FORCED, not chosen: `okf-author` ships in
+# `dev-core` while the validator ships in `review-audit`, and the two plugins
+# install INDEPENDENTLY. A skill that read the validator's table as its only
+# source would be silently inert for anyone who installed dev-core alone --
+# which is most consumers, since correct memory authoring must not require the
+# audit suite.
+#
+# So the duplication gets a GATE instead of silence:
+# tests/validate-okf-authoring.sh asserts the overlapping keys (`index_names`,
+# `body_requirements`) agree with check-okf-conformance's copy whenever that
+# plugin is present, and SKIPS on the 77 sentinel when it is not. Key names and
+# the `- item` list shape are deliberately identical to the validator's so ONE
+# parser reads both and the comparison is a plain diff -- a second parse shape
+# would be a second place the two can disagree.
+#
+# CONFIG, NOT CONVENTION. Every default below is librarian's own habit. A repo
+# with a different vocabulary, different index names, or a different link
+# preference must get CORRECT authoring guidance with zero code changes.
+
+# THE FLOOR IS NOT CONFIGURABLE, and this comment is where that is stated.
+#
+# OKF §4.1 makes top-level `type` the sole always-required key; §6.1 makes
+# cross-links standard markdown links; §8/§9 fix the reserved files. Those come
+# from the spec, not from taste, so they are NOT keys here -- a repo that could
+# configure the floor away would be authoring non-conformant memories with this
+# skill's blessing. Everything below is the part the spec deliberately leaves to
+# the producer.
+
+# THE OKF VERSION this guidance targets. Read from
+# check-okf-conformance/thresholds.yml (`okf.pinned_version`) when that plugin
+# is present; restated here so dev-core-only installs know what shape they are
+# being taught. The parity gate pins the two together.
+okf:
+  pinned_version: "0.2" # OKF_PINNED_VERSION
+  spec_checked: "2026-09-10"
+
+# WHICH `type` VALUES THIS REPO USES.
+#
+# OKF §4.1 registers NO types centrally and requires consumers to tolerate
+# unknown ones, so this list is a repo's own habit and never a validation rule:
+# a value absent from it is still fully conformant. It exists so an author
+# picking a type for a NEW memory has a shortlist instead of inventing a synonym
+# for a category that already exists -- which is how a bundle ends up with
+# `feedback`, `guidance`, and `directive` all meaning one thing.
+#
+# An EMPTY list means "no house vocabulary": the skill then tells an author to
+# pick a descriptive value per §4.1 and stops making a recommendation. That is
+# the correct behavior for a foreign bundle, not a finding on every file.
+type_vocabulary:
+  - user = who the user is (role, expertise, standing preferences)
+  - feedback = guidance the user has given on HOW to work, incl. the why
+  - project = ongoing work, goals, or constraints not derivable from the code
+  - reference = pointers to external resources (URLs, dashboards, tickets)
+
+# WHICH FILES ROUTE RECALL -- an author must add a pointer to one of these, or
+# the memory is written but never recalled (slice B's `memory-orphan`).
+#
+# Matched literally, or as a glob when the entry contains `*`. Identical
+# defaults and identical shape to check-okf-conformance's `health.index_names`,
+# which is what the parity gate compares. Overridable as OKF_INDEX_NAMES
+# (space-separated).
+index_names:
+  - MEMORY.md
+  - index.md
+  - index-*.md
+
+# Per-`type` required body sections, as `<type> = <section> | <section>`.
+#
+# A type ABSENT from this list has NO body requirement -- the portability
+# default. Identical shape and defaults to check-okf-conformance's
+# `health.body_requirements`, and compared against it by the parity gate: a
+# body section this skill did not teach is a `memory-missing-why` row the
+# author had no way to avoid.
+body_requirements:
+  - feedback = **Why:** | **How to apply:**
+  - project = **Why:** | **How to apply:**
+
+# LINK SYNTAX. `markdown` teaches OKF §6.1's form; `wikilink` teaches
+# `[[name]]` for a repo whose tooling (Obsidian, Foam) requires it.
+#
+# There is no `both`, on purpose. This key answers "what do I type RIGHT NOW",
+# and an author handed two forms picks by habit -- which is precisely how a
+# bundle accumulates 502 wikilinks nobody decided on. A repo that tolerates
+# inbound wikilinks while emitting markdown sets `markdown` and loses nothing:
+# §6.1 requires consumers to tolerate broken links either way.
+#
+# NOTE this is the one key with no counterpart in check-okf-conformance, and
+# the asymmetry is deliberate on ITS side: that scanner emits no link-syntax
+# finding at all (a dangling `[[wiki-link]]` is explicitly tolerated as
+# knowledge not yet written), so there is nothing to hold parity with. Authoring
+# needs an answer where validation correctly declines to have an opinion.
+link_syntax: markdown # markdown | wikilink
+
+# PREFERRED markdown link form when `link_syntax: markdown`.
+# `bundle_relative` is §6.1's recommended form (`/slug.md`, stable when a file
+# moves within its subdirectory); `relative` is `./slug.md`.
+link_form: bundle_relative # bundle_relative | relative
+
+# NAMING POLICY. `lesson` = the filename names the durable lesson, so a file
+# named after a ticket is a session note wearing a memory's clothes. `none`
+# disables the recommendation for a repo that names by ticket on purpose.
+# Same key name and values as check-okf-conformance's `semantic.naming_policy`.
+naming_policy: lesson # lesson | none
+
+# WHICH PATHS ARE WHICH TIER -- a durable lesson written into short-term storage
+# is lost at the next rebuild. `short_term` is checked FIRST and the first match
+# wins (the lists overlap by construction, exactly as the validator's do).
+#
+# These are the two-tier conventions the retired `memory-conventions` skill
+# stated as prose, now stated as config.
+tiers:
+  long_term:
+    - "*.md"
+  short_term:
+    - tmp/*
+    - tmp/**/*

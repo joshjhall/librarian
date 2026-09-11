@@ -42,6 +42,7 @@
 - [Deferred work may be doable now](deferred-work-may-be-doable-now.md) — "wait for Phase N" is an estimate; probe the blocker before accepting it
 - [Strictness-first failures are in the checker](strictness-first-fails-in-the-checker.md) — a finer gate's first findings are its own parser bugs; never edit the subject to go green
 - [Two classifiers, one threshold, disagree](two-classifiers-one-threshold-disagree.md) — same constant, two comparisons: one report contradicts itself at the exact boundary (#870)
+- [One tool, two answers for one file](one-tool-two-answers-for-one-file.md) — a pass that hardcodes what its sibling configures; the false rows sat in a baseline as accepted debt (#696)
 - [Harden one knob, grep siblings](harden-one-knob-grep-every-sibling.md) — recurring class (#487/#489/#493): fix one site, sibling stays exposed
 - [Sync-region boundary predicts stale arms](sync-region-boundary-predicts-stale-arms.md) — a past widening reached only the WATCHED copies; probe every unwatched sibling (#840)
 - [Required param beats optional default](required-param-beats-optional-default.md) — a smarter default preserves the footgun; require it, and test the omitted AND wrong-value paths

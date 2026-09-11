@@ -150,6 +150,11 @@ disabled_rules = ["CC-MEM-014", "CC-MEM-009"]
 # TOTALS of which 10 are the real errors these overrides clear — so the phantom
 # count is the row minus 10, and it is NOT constant across the pre-floor range:
 #     0.40.0 -> 57   0.43.0 -> 57   0.47.0 -> 50   0.48.1 -> 10   0.49.0 -> 10
+# The row above was MEASURED before #696 added a fourth CC-AG-005 site
+# (okf-librarian.md -> okf-author), which makes the real count 11 on an unchanged
+# tree; the row is left as measured rather than edited to a guess. Re-derive with
+# `agnix check CLAUDE.md AGENTS.md plugins` minus this file's overrides — the gate
+# itself asserts 0 AFTER overrides, so it never reads these numbers.
 # Do NOT add overrides for the phantoms: they are parser bugs against correct
 # files, and suppressing them would hide the real rule everywhere it applies.
 # The fix is the version, which is why #734 also moved code-scanning.yml's pin
@@ -177,19 +182,21 @@ paths = [
 ]
 disabled_rules = ["XML-001"]
 
-# CC-AG-005 (referenced skill not found) — 3 errors, all FALSE POSITIVES. All
-# three skills exist and resolve correctly at runtime. agnix looks for them at
+# CC-AG-005 (referenced skill not found) — 4 errors, all FALSE POSITIVES. All
+# four skills exist and resolve correctly at runtime. agnix looks for them at
 # `.claude/skills/<name>/SKILL.md`, the SINGLE-REPO layout; this repo is a plugin
 # MARKETPLACE, where skills live at `plugins/<plugin>/skills/<name>/SKILL.md`.
 # The rule has no notion of that layout, so it cannot resolve any of them:
-#   agent-author.md  -> agent-authoring  (plugins/dev-core/skills/agent-authoring)
-#   skill-author.md  -> skill-authoring  (plugins/dev-core/skills/skill-authoring)
-#   issue-filer.md   -> file-issue       (plugins/workflow/skills/file-issue)
+#   agent-author.md   -> agent-authoring  (plugins/dev-core/skills/agent-authoring)
+#   skill-author.md   -> skill-authoring  (plugins/dev-core/skills/skill-authoring)
+#   issue-filer.md    -> file-issue       (plugins/workflow/skills/file-issue)
+#   okf-librarian.md  -> okf-author       (plugins/dev-core/skills/okf-author, #696)
 [[overrides]]
 paths = [
   "**/agents/agent-author.md",
   "**/agents/skill-author.md",
   "**/agents/issue-filer.md",
+  "**/agents/okf-librarian.md",
 ]
 disabled_rules = ["CC-AG-005"]
 
