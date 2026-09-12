@@ -5,6 +5,67 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.0] - 2026-09-11
+
+### Added
+
+- Seed a per-worktree CARGO_TARGET_DIR off the repo mount (#969)
+- Measure investigation-delegation adoption and close the #785 tally (#985)
+- Catch malformed memory updates at PR review (#987)
+- Reconcile the declared status/* vocabulary against the live repo (#938) (#1008)
+- Phase 5 — model Bash across the four check-* scanners (closes the epic) (#1013)
+- Package transcript-side token attribution (#788) (#1014)
+- OKF slice F — okf-author skill + okf-librarian agent (#696)
+
+### CI/CD
+
+- Promote bsd-probe into merge-gate's needs (#947) (#967)
+
+### Changed
+
+- Phase 3 — audit the TS/JS arms against the language-support contract (#989)
+- Phase 4 — audit the Python arms against the language-support contract (#994)
+
+### Documentation
+
+- Verify hookify stays disabled in a fresh container (#887) (#965)
+- Re-measure the hookify delta on a clean window (#793) (#975)
+- Verify the OWASP epic's acceptance end-to-end (#705) (#976)
+- Record three more phantom prompt-buffer instances and the trigger
+- Record the checker-defect sub-shape of blocking==[]
+- Extend the background-exit-code lesson to a blocked git push
+- Identify the phantom prompt-buffer text as the autocomplete suggestion
+- Record #867 as the third checker-defect instance (#992)
+- Record that the proxy path answers 200 with HTML, not JSON
+- Record that adding a memory file bumps the OKF baseline
+- Record two lessons from the #870 review cycle (#1009)
+
+### Fixed
+
+- Strip a trailing CR from every pre-scan evidence field (#982)
+- Bump the okf-missing-type baseline for the memory added in 6c2ad75
+- Register ship-issue's background work (#890) (#1001)
+- Bump okf-missing-type to 243 — #1001 added a memory without it
+- Distinguish an autocomplete suggestion from queued input in pane readers (#998)
+- Narrow multi-question classifier to 2 tab signals (#986) (#1011)
+- Detect a multi-question form whose tab bar scrolled off the pane (#1012)
+- Accept a worktree name in worktree-rm.sh, not only an issue number (#1021)
+
+### Improved
+
+- Re-balance the CI shards to the Shell-portability floor (#964) (#966)
+- Identify the subagent prefix cache-miss cause (#870) (#993)
+
+### Miscellaneous
+
+- Gate the \b-under-sed hazard and retire the drifted site counts (#970)
+
+### Testing
+
+- Gate a suite that FAILs while exiting 0 (#981)
+- Gate review-route.sh's extension table against EXT_LANG (#979)
+- Unbind the differential gate from the repo's own file shapes (#988)
+
 ## [0.13.0] - 2026-09-07
 
 ### Added
@@ -851,6 +912,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Relocate skill/agent quality gates + fixtures (#12)
 
+[0.14.0]: https://github.com/joshjhall/librarian/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/joshjhall/librarian/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/joshjhall/librarian/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/joshjhall/librarian/compare/v0.10.1...v0.11.0
