@@ -1,9 +1,9 @@
 ---
 name: push-hang-is-the-prepush-suite
 description: "A git push that hangs while fetches are instant is the lefthook pre-push suite, not the network — give it ~10 min, never --no-verify"
-metadata: 
+type: feedback
+metadata:
   node_type: memory
-  type: feedback
   originSessionId: 8fd5bc08-523d-47c6-96be-ee5a00c30ae5
   modified: 2026-08-23T04:50:14.648Z
 ---

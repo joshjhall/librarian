@@ -1,9 +1,9 @@
 ---
 name: cap-stop-is-not-convergence
 description: "A review loop that stops on C1-cap has run out of budget, not converged — re-run the predicate uncapped before treating stop as a merge signal"
-metadata: 
+type: feedback
+metadata:
   node_type: memory
-  type: feedback
   originSessionId: 1ee159fd-a0ac-4290-bd02-ee3f15deda76
   modified: 2026-08-14T17:34:16.420Z
 ---

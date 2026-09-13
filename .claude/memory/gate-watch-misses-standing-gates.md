@@ -1,9 +1,9 @@
 ---
 name: gate-watch-misses-standing-gates
 description: golem-gate-watch fires only on transition INTO a gate; a gate already standing when the watch arms is never surfaced
-metadata: 
+type: feedback
+metadata:
   node_type: memory
-  type: feedback
   originSessionId: 488b0a34-9bc0-433c-bfaa-2b103493faaa
   modified: 2026-07-24T08:26:30.910Z
 ---

@@ -1,8 +1,7 @@
 ---
 name: background-task-exit-code-is-the-wrappers
 description: A <task-notification>'s "exit code 0" is the backgrounding wrapper's status, not the command's — read the captured log's own verdict
-metadata:
-  type: feedback
+type: feedback
 ---
 
 When a long command is moved to the background (timeout, or `run_in_background`),

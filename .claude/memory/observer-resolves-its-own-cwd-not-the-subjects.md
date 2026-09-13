@@ -1,8 +1,7 @@
 ---
 name: observer-resolves-its-own-cwd-not-the-subjects
 description: A script run BY an observer ABOUT a subject must derive paths from the SUBJECT argument, not from repo_root/cwd
-metadata:
-  type: feedback
+type: feedback
 ---
 
 When a helper is invoked by one actor *about* another, any path it resolves from

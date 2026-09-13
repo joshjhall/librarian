@@ -1,9 +1,9 @@
 ---
 name: prefix-match-is-not-an-exact-pin
 description: "An index()==1 / startswith check pins a PREFIX, so a superset value satisfies it and the assertion decays to a presence check"
-metadata: 
+type: feedback
+metadata:
   node_type: memory
-  type: feedback
   originSessionId: ce1a1fbd-0733-44ed-9d81-6a516198451e
   modified: 2026-08-28T18:21:35.070Z
 ---

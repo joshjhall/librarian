@@ -1,9 +1,9 @@
 ---
 name: auto-mode-blocks-self-merge
 description: L3/L4 ship auto-merge is refused by the Claude Code auto-mode classifier — self-authored PR with no human approval; park for human merge
-metadata: 
+type: project
+metadata:
   node_type: memory
-  type: project
   originSessionId: af4e0622-a491-43db-8f6a-124d215c769f
   modified: 2026-08-16T22:07:15.097Z
 ---

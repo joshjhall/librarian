@@ -1,9 +1,9 @@
 ---
 name: l3-broker-plan-gate
 description: "Standard L3 plan-gate flow — orchestrator presents each golem's plan in-session with options, human decides HERE, orchestrator sends the keystroke back to the golem (never hand the operator a TTY)"
+type: feedback
 metadata:
   node_type: memory
-  type: feedback
   originSessionId: 10478e43-b9c4-4a7c-a620-83c6efd01629
   modified: 2026-07-21T21:05:52.784Z
 ---

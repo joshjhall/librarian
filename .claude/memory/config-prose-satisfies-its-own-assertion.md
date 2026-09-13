@@ -1,9 +1,9 @@
 ---
 name: config-prose-satisfies-its-own-assertion
 description: A raw-text assertion that a config still sets X passes on the comment EXPLAINING X — delete the setting and the test stays green
-metadata: 
+type: feedback
+metadata:
   node_type: memory
-  type: feedback
   originSessionId: c5ce24e2-e77c-45fa-a057-bc727ea834d8
   modified: 2026-08-28T00:16:34.150Z
 ---

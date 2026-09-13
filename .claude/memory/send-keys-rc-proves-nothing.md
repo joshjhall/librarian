@@ -1,9 +1,9 @@
 ---
 name: send-keys-rc-proves-nothing
 description: "tmux send-keys returns 0 for an unrecognized key name — it types the literal text instead; assert the key ARGUMENT, never the exit status"
-metadata: 
+type: feedback
+metadata:
   node_type: memory
-  type: feedback
   originSessionId: 732dcb29-edfd-4578-b070-8cd221a9a696
   modified: 2026-08-04T22:02:30.874Z
 ---

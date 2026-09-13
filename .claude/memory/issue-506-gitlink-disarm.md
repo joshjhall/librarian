@@ -1,9 +1,9 @@
 ---
 name: issue-506-gitlink-disarm
 description: "#506 worktree-guard gitlink-rewrite disarm fix; re-poison trap = _find_enclosing_primary must use structural -d <a>/.git, NOT git rev-parse --show-toplevel"
-metadata: 
+type: project
+metadata:
   node_type: memory
-  type: project
   originSessionId: 488b0a34-9bc0-433c-bfaa-2b103493faaa
   modified: 2026-07-24T15:50:41.446Z
 ---

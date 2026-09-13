@@ -1,8 +1,7 @@
 ---
 name: confirm-pid-ownership-before-killing
 description: On a shared host a PID you did not spawn may belong to a peer golem; never pkill by pattern, and confirm the worktree a process belongs to before proposing to kill it
-metadata:
-  type: feedback
+type: feedback
 ---
 
 Processes on this host belong to several concurrent golems. A PID this session

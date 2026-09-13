@@ -1,9 +1,9 @@
 ---
 name: mutation-round-finds-the-untested-rule
 description: "Run the mutation round over EVERY rule, not just the ones you wrote tests for — the rule with no failing test is the one it exists to find"
-metadata: 
+type: feedback
+metadata:
   node_type: memory
-  type: feedback
   originSessionId: 621fe101-e237-498d-9198-a05d816bf523
   modified: 2026-08-05T03:30:26.679Z
 ---

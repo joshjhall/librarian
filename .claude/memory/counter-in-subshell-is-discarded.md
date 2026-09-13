@@ -1,9 +1,9 @@
 ---
 name: counter-in-subshell-is-discarded
 description: A shell counter incremented inside $(...) never reaches the parent — a shadowed callback then repeats forever and the test misreports what happened
-metadata: 
+type: feedback
+metadata:
   node_type: memory
-  type: feedback
   originSessionId: 237ae268-417c-4953-a378-41e10f8333d5
   modified: 2026-08-29T06:37:07.407Z
 ---

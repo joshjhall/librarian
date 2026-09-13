@@ -1,9 +1,9 @@
 ---
 name: git-cliff-checksum-sha512
 description: "git-cliff release assets ship .tar.gz.sha512 (not .sha256) per-asset checksums + .sig; verify against the published sibling, not a hardcoded hash"
+type: reference
 metadata:
   node_type: memory
-  type: reference
   originSessionId: 01092dc9-35b3-479e-8b0b-2d7eb320b6ea
 ---
 

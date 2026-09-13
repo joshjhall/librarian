@@ -1,9 +1,9 @@
 ---
 name: doc-claims-a-consumer-that-never-adopted
 description: "A shared doc's header names its consumers; one of them never adopted it. The claim reads as evidence of integration, so nobody greps — measure adoption from the CONSUMER side, per call site"
+type: feedback
 metadata:
   node_type: memory
-  type: feedback
 ---
 
 `golem/background-work.md` opened with *"on-demand companion for `golem/`,

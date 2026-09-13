@@ -1,9 +1,9 @@
 ---
 name: parity-gate-hides-shared-defect
 description: A gate comparing two impls to each other passes when both are wrong the same way — same-output is not same-intent
-metadata: 
+type: feedback
+metadata:
   node_type: memory
-  type: feedback
   originSessionId: 16a069af-0c7b-4077-af29-c8e08c876369
   modified: 2026-08-13T21:27:54.598Z
 ---

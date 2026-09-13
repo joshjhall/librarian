@@ -1,8 +1,7 @@
 ---
 name: one-row-per-line-must-name-every-hit
 description: Collapsing N findings into one row re-creates the suppression bug unless the evidence enumerates every hit
-metadata:
-  type: feedback
+type: feedback
 ---
 
 When a scanner emits **one row per line** but a line can carry several real

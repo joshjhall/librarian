@@ -1,9 +1,9 @@
 ---
 name: pre-review-gates-needs-filelist
 description: pre-review-gates.sh requires a file-list arg; bare invocation errors with Usage
+type: reference
 metadata:
   node_type: memory
-  type: reference
   originSessionId: 38cd8f66-5b91-4af5-b41f-c131957b0c9f
 ---
 

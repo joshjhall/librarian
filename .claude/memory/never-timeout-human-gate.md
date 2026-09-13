@@ -1,9 +1,9 @@
 ---
 name: never-timeout-human-gate
 description: "When you ask the user a human-in-the-loop question, WAIT indefinitely — never time out and proceed on your own"
+type: feedback
 metadata:
   node_type: memory
-  type: feedback
   originSessionId: eb9ed30d-d710-4bd7-99a1-89bc96c3db29
 ---
 

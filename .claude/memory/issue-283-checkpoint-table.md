@@ -1,9 +1,9 @@
 ---
 name: issue-283-checkpoint-table
 description: "#283 (PR #414): golem-status.sh --checkpoint compact per-track status+burn table — design, the two blocking-review rounds, and the run-all GIT_DIR-leak hardening"
-metadata: 
+type: project
+metadata:
   node_type: memory
-  type: project
   originSessionId: 2ee5cc43-9890-496a-924c-3cd117d9ac0d
   modified: 2026-08-01T04:13:39.804Z
 ---

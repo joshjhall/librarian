@@ -1,9 +1,9 @@
 ---
 name: marketplace-source-reaped-worktree
 description: "librarian marketplace can get registered against a golem WORKTREE path; reaping that worktree (post-merge) breaks the source → cache-miss → all librarian plugins fail to load → next dispatched golem is DOA (Unknown command: /workflow:next-issue). Fix: re-point marketplace to /workspace/librarian main checkout"
-metadata: 
+type: feedback
+metadata:
   node_type: memory
-  type: feedback
   originSessionId: de55e24b-986b-4be4-9eac-43fc9c6a1593
   modified: 2026-08-01T04:13:39.934Z
 ---

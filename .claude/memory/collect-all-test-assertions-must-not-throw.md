@@ -1,9 +1,9 @@
 ---
 name: collect-all-test-assertions-must-not-throw
 description: "tests/validate-workflow-helpers.mjs is collect-all (ok/eq push to failures, never throw) — a bare property access on a missing entry throws a TypeError that aborts the whole run and masks every later assertion; use optional chaining"
-metadata: 
+type: feedback
+metadata:
   node_type: memory
-  type: feedback
   originSessionId: f7727210-6758-48e9-8623-221d5189530e
   modified: 2026-07-29T02:33:36.826Z
 ---

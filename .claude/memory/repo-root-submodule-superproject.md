@@ -1,9 +1,9 @@
 ---
 name: repo-root-submodule-superproject
 description: repo_root() submodule bug — --git-common-dir yields .git/modules; fix uses --show-superproject-working-tree
-metadata: 
+type: project
+metadata:
   node_type: memory
-  type: project
   originSessionId: 5d3fc5f2-3efa-4e95-88d0-cd62c1c2b8a0
 ---
 

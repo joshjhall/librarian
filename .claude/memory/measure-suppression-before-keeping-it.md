@@ -1,9 +1,9 @@
 ---
 name: measure-suppression-before-keeping-it
 description: "Before narrowing a noise-suppression rule, measure what it actually suppresses — neuter the predicate and diff; it may buy nothing while causing false negatives"
-metadata: 
+type: feedback
+metadata:
   node_type: memory
-  type: feedback
   originSessionId: aa16fd2f-af85-4575-a80b-1d6f140f4b74
   modified: 2026-08-05T00:12:58.849Z
 ---

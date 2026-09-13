@@ -1,9 +1,9 @@
 ---
 name: frozen-counter-is-done-not-wedged
 description: "A golem's frozen top-level TOKENS(Δ)=0 in golem-status --checkpoint usually means DONE-and-idle-at-prompt (the #447 stall class), NOT wedged; check PRs/disk before calling a wedge"
-metadata: 
+type: feedback
+metadata:
   node_type: memory
-  type: feedback
   originSessionId: 4a569e6e-ef19-4017-ab95-d5f8dfddb610
   modified: 2026-07-21T03:17:06.058Z
 ---

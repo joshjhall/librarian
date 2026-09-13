@@ -1,9 +1,9 @@
 ---
 name: issue-256-cache-stability
 description: "#256 shipped (PR #404) — workflow.js prompt-cache stability pass; stableStringify + reorder + hoists; the runtime-breakpoint caveat"
-metadata: 
+type: project
+metadata:
   node_type: memory
-  type: project
   originSessionId: dd94a236-4dce-4332-9b15-27d52f0f4434
   modified: 2026-08-01T04:13:39.681Z
 ---

@@ -1,9 +1,9 @@
 ---
 name: stale-base-squash-reverts-merged-pr
 description: git reset --soft origin/main from a stale worktree silently reverts PRs merged mid-session; restore each advanced file before amending
-metadata: 
+type: feedback
+metadata:
   node_type: memory
-  type: feedback
   originSessionId: 091532d0-4b9a-4836-8736-f7d1b9e44f4b
 ---
 

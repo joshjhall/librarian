@@ -2,9 +2,8 @@
 name: measured-zero-needs-a-denominator
 description: A measurement returning zero must distinguish absent-from-zero and carry a denominator, or it is unfalsifiable
 type: feedback
-metadata: 
+metadata:
   node_type: memory
-  type: feedback
   originSessionId: 8152d5e8-438d-4142-8f53-05dd43014899
   modified: 2026-09-09T19:46:51.000Z
 ---

@@ -1,9 +1,9 @@
 ---
 name: next-issue-read-issue-comments
 description: "next-issue/ship-issue must read issue COMMENTS, not just the body — follow-ups fold in requirements, and can INVERT the plan"
-metadata: 
+type: feedback
+metadata:
   node_type: memory
-  type: feedback
   originSessionId: 552d98d0-aaf1-4deb-bf59-9701cde7d19f
 ---
 

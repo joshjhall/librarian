@@ -1,9 +1,9 @@
 ---
 name: self-skipping-test-hides-the-risky-branch
 description: "A test that skips itself when a tool is absent never covers the absent-tool branch — CI always has the tool, so the risky arm is the one arm tested nowhere"
-metadata: 
+type: feedback
+metadata:
   node_type: memory
-  type: feedback
   originSessionId: d282d6e2-265f-4046-adc3-50e27ce0b45a
   modified: 2026-08-10T22:28:46.539Z
 ---

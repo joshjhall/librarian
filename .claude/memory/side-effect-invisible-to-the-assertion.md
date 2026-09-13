@@ -1,9 +1,9 @@
 ---
 name: side-effect-invisible-to-the-assertion
 description: "A test can corrupt real state while every assertion passes — the assertion looks at output, the damage lands somewhere else"
+type: feedback
 metadata:
   node_type: memory
-  type: feedback
 ---
 
 A test that **executes** a real component can mutate real state that **no

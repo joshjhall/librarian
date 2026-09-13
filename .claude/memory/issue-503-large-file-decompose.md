@@ -1,14 +1,14 @@
 ---
 name: issue-503-large-file-decompose
 description: "#503 large-file decomposition tracking issue — file-length scan baseline, workflow.js no-split constraint, sequenced after #494/#495"
-metadata: 
+type: project
+status: stable
+stale_after: 2026-10-31
+stale_check: "the file-length scan baseline and "#503 open" status — re-check with `gh issue view 503`"
+metadata:
   node_type: memory
-  type: project
   originSessionId: 3c0be081-4199-4f38-bfae-4f667d3db8af
   modified: 2026-07-24T04:58:05.284Z
-  status: stable
-  stale_after: 2026-10-31
-  stale_check: "the file-length scan baseline and "#503 open" status — re-check with `gh issue view 503`"
 ---
 
 # #503 tracks decomposing oversized files (code-health file-length lens)

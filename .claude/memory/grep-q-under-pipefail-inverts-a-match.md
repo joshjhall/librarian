@@ -1,8 +1,7 @@
 ---
 name: grep-q-under-pipefail-inverts-a-match
 description: "`x | grep -q` under pipefail reports FAILURE when the match SUCCEEDS — and only once the upstream write exceeds the pipe buffer"
-metadata:
-  type: feedback
+type: feedback
 ---
 
 `grep -q` exits **as soon as it matches**, closing the pipe while the upstream is

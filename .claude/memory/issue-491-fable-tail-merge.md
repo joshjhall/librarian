@@ -1,9 +1,9 @@
 ---
 name: issue-491-fable-tail-merge
 description: "#491 L3: merged ship-issue rescore+classify into one fresh-judge fable pass; review self-review found the AC-untestable orchestration gap"
-metadata: 
+type: project
+metadata:
   node_type: memory
-  type: project
   originSessionId: 488b0a34-9bc0-433c-bfaa-2b103493faaa
   modified: 2026-07-24T15:51:06.780Z
 ---

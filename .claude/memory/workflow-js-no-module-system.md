@@ -1,9 +1,9 @@
 ---
 name: workflow-js-no-module-system
 description: workflow.js harnesses cannot be split into importable modules — the Workflow engine has no import/require/filesystem
+type: project
 metadata:
   node_type: memory
-  type: project
   originSessionId: 49cfd60a-c2b8-4004-aa76-cb019e6bb6aa
 ---
 

@@ -1,9 +1,9 @@
 ---
 name: redirect-order-leaks-the-diagnostic
 description: "`>>\"$f\" 2>/dev/null` opens the file FIRST, so a failed open still prints to the live stderr — absorbed failure, unabsorbed noise"
-metadata: 
+type: feedback
+metadata:
   node_type: memory
-  type: feedback
   originSessionId: 956ca71e-7925-484d-98d4-227c314aa2a5
   modified: 2026-08-22T23:05:49.340Z
 ---

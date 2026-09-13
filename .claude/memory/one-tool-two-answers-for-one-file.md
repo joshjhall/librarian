@@ -1,8 +1,7 @@
 ---
 name: one-tool-two-answers-for-one-file
 description: Two passes in one scanner classify the same file differently — one hardcodes, the sibling reads config — and the false rows land in a baseline as accepted debt
-metadata:
-  type: feedback
+type: feedback
 ---
 
 When one tool makes the same classification in two passes, check whether both
@@ -27,12 +26,13 @@ each test was looking at — so no fixture could see it. And the rows had been
 frozen into a baseline, which reads as "known debt someone triaged", not "the
 detector is wrong".
 
-(This file's own frontmatter nests `type` under `metadata:` — the shape
-[[okf-author]] labels WRONG — *deliberately*. The whole bundle does, and
-[[adding-a-memory-bumps-the-okf-baseline]] directs raising the baseline rather
-than hoisting one file, because a lone conformant file pre-empts the
-migrate-vs-document decision #991 exists to make. #631/#671 convert all of them
-at once.)
+(This scanner was itself the worked example: its slice-A pass read `type` at the
+top level while slice B resolved it at either level, so one bundle got two
+answers about the same file. #991 settled it — the bundle migrated to top-level
+`type:`, and the asymmetry stayed, deliberately: conformance enforces §4.1's one
+spelling, while the health lookup tolerates both because a consuming repo may
+legitimately nest. Two passes may differ when they are answering different
+questions; they may not differ while answering the same one.)
 
 **How to apply:** when a scanner has two passes over one corpus, grep for the
 classification in both and make the narrower one call the broader one's helper —

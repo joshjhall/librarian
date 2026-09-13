@@ -1,8 +1,7 @@
 ---
 name: prefix-arm-cannot-detect-a-suffix-strip
 description: A fixture aimed at a permissive arm of a case table cannot detect a normalization the strict arms need; pick the input where the arms disagree
-metadata:
-  type: feedback
+type: feedback
 ---
 
 When a `case` table mixes **strict** arms (`github.com | *.github.com`) with

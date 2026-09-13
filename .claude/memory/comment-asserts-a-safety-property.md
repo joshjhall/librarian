@@ -1,8 +1,7 @@
 ---
 name: comment-asserts-a-safety-property
 description: A comment that justifies omitting a guard by claiming a sibling already has it must be measured; the claim is the dangerous half
-metadata:
-  type: feedback
+type: feedback
 ---
 
 When a comment explains why one runtime needs a guard and its twin does not,

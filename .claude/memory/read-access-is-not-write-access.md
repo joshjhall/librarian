@@ -1,9 +1,9 @@
 ---
 name: read-access-is-not-write-access
 description: "Probing a blocker with a read call proves only that reads work — test the ACTUAL verb before reporting the blocker lifted"
+type: feedback
 metadata:
   node_type: memory
-  type: feedback
 ---
 
 When an issue says an action is blocked on access, probe it with the **verb the

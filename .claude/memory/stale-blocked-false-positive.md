@@ -1,9 +1,9 @@
 ---
 name: stale-blocked-false-positive
 description: "golem-status BLOCKED list pins send-keys-resolved plan gates for the full 3600s TTL (no clearing feed line) → trains you to ignore the list → nearly miss a REAL fresh gate; filed #422; trust the feed/host, not a pane-grep"
-metadata: 
+type: feedback
+metadata:
   node_type: memory
-  type: feedback
   originSessionId: de55e24b-986b-4be4-9eac-43fc9c6a1593
   modified: 2026-07-19T22:07:42.759Z
 ---

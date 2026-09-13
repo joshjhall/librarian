@@ -1,9 +1,9 @@
 ---
 name: fixture-must-express-the-divergent-case
 description: "A test pins nothing unless its INPUT makes fixed and unfixed code differ — solve for the divergent value, don't pick a plausible one"
-metadata: 
+type: feedback
+metadata:
   node_type: memory
-  type: feedback
   originSessionId: 928777c5-82e1-47cf-8b1e-a7b507d03905
   modified: 2026-08-24T21:58:47.707Z
 ---

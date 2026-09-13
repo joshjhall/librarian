@@ -1,8 +1,7 @@
 ---
 name: surviving-mutant-may-be-a-noop
 description: A mutant that survives may never have changed behavior — check the mutation is reachable and not overwritten before blaming the test
-metadata:
-  type: feedback
+type: feedback
 ---
 
 A surviving mutant is **two** hypotheses, not one: the test is weak, OR the

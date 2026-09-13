@@ -1,9 +1,9 @@
 ---
 name: stale-artifact-makes-the-stub-pass
 description: "A test whose stub produces no output passed locally only because a real earlier run had left the output file behind; CI, with a clean tree, failed"
-metadata: 
+type: feedback
+metadata:
   node_type: memory
-  type: feedback
   originSessionId: 26ef5638-3597-4602-8550-bb61f308f37a
   modified: 2026-08-23T17:17:35.957Z
 ---

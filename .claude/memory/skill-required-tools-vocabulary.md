@@ -1,9 +1,9 @@
 ---
 name: skill-required-tools-vocabulary
 description: "metadata.yml required_tools uses shell-command names, not agent tool names; no SKILL.md has a frontmatter tools: field"
+type: reference
 metadata:
   node_type: memory
-  type: reference
   originSessionId: 4d1f9d6a-15ff-4ed2-a2d0-87bb49609c70
 ---
 

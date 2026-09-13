@@ -1,8 +1,7 @@
 ---
 name: issue-symbol-inventory-needs-remeasuring
 description: An issue's table of duplicated symbols is a snapshot that drifts and counts NAMES, not meanings — re-measure declarations and diff bodies before unifying
-metadata:
-  type: feedback
+type: feedback
 ---
 
 An issue that proposes deduplicating "the same symbol across N files" ships a

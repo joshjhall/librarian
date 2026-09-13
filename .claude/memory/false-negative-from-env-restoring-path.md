@@ -1,8 +1,7 @@
 ---
 name: false-negative-from-env-restoring-path
 description: Shimming PATH does not hide a tool when BASH_ENV restores it — a fail-loud test passed green and read as a real gate bug
-metadata:
-  type: feedback
+type: feedback
 ---
 
 To prove a gate fails loudly when its runtime is missing, the obvious test is to

@@ -1,9 +1,9 @@
 ---
 name: token-burn-audit-2026-07-21
 description: "2026-07-21 four-axis token-burn audit → issues #487-#495; where the live-session burn actually lives"
+type: project
 metadata:
   node_type: memory
-  type: project
   originSessionId: 384cb28b-3451-4b95-aaa9-2d07c8096637
   modified: 2026-07-21T21:06:16.427Z
 ---

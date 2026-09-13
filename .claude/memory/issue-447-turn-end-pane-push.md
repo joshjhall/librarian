@@ -1,9 +1,9 @@
 ---
 name: issue-447-turn-end-pane-push
 description: "#447 SHIPPED PR #455 (parked human-merge) — turn-ended/idle-at-prompt now pushed on the --stream-panes gate-watch channel; confirm_turn_end subshell-state bug + wall-timeout-partial park"
-metadata: 
+type: project
+metadata:
   node_type: memory
-  type: project
   originSessionId: 3393af5c-9977-48c3-92b9-0faa33f8cc9e
   modified: 2026-07-21T01:17:19.638Z
 ---

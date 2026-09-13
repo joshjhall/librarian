@@ -1,9 +1,9 @@
 ---
 name: harden-one-knob-grep-every-sibling
 description: "Hardening one call site while leaving its siblings exposed is my recurring self-inflicted bug class — after fixing X, grep for every sibling that reaches the same construct (#487, #489, #493)"
-metadata: 
+type: feedback
+metadata:
   node_type: memory
-  type: feedback
   originSessionId: b3100c69-fe8e-4fa0-9335-e1a0ad5da29c
   modified: 2026-08-01T04:18:18.290Z
 ---

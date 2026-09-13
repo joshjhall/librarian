@@ -1,9 +1,9 @@
 ---
 name: autonomy-vs-plangate-flags
 description: next-issue has two orthogonal flag families — autonomy (--autonomous) vs plan-gate (--skip-plan); and three unrelated --auto spellings that must not be renamed
+type: project
 metadata:
   node_type: memory
-  type: project
   originSessionId: 5ab6fd65-c6c6-433d-a590-2ec30160b58e
 ---
 

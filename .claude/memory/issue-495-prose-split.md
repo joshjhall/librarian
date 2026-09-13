@@ -1,9 +1,9 @@
 ---
 name: issue-495-prose-split
 description: "#495 SHIPPED PR #527 (L3, parked for human merge — auto-mode blocked self-merge); split always-loaded workflow prose to on-demand dependency-queue.md + dedup standing-rules; the #409 handoff guard greps SKILL.md for literal \"before ... plan mode\""
-metadata: 
+type: project
+metadata:
   node_type: memory
-  type: project
   originSessionId: 488b0a34-9bc0-433c-bfaa-2b103493faaa
   modified: 2026-07-24T20:35:44.537Z
 ---

@@ -1,9 +1,9 @@
 ---
 name: librarian-runs-outside-containers
 description: "Librarian is installed in many envs (Mac host, bare-linux, container) — never introduce a hard dependency on the containers submodule/devcontainer being present; cross-repo container changes get a companion high-priority issue on joshjhall/containers"
-metadata: 
+type: feedback
+metadata:
   node_type: memory
-  type: feedback
   originSessionId: 4a569e6e-ef19-4017-ab95-d5f8dfddb610
   modified: 2026-07-21T04:21:00.488Z
 ---

@@ -1,9 +1,9 @@
 ---
 name: issue-426-harness-rm-rf
 description: "#426 CRITICAL/large — read-only reviewer subagents could run destructive shell (rm -rf) against the LIVE tree; FULLY CLOSED (2026-07-20): belt+origin-lock PR #449 + PreToolUse bash-guard hook PR #450 (closed #448). Both #426 and #448 CLOSED."
-metadata: 
+type: project
+metadata:
   node_type: memory
-  type: project
   originSessionId: de55e24b-986b-4be4-9eac-43fc9c6a1593
   modified: 2026-07-20T23:17:22.176Z
 ---

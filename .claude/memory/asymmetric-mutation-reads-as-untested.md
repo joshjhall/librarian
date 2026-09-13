@@ -1,8 +1,7 @@
 ---
 name: asymmetric-mutation-reads-as-untested
 description: A mutation weaker than its twin SURVIVES for a reason unrelated to coverage — narrow it before writing a test
-metadata:
-  type: feedback
+type: feedback
 ---
 
 When a mutation survives in one runtime but its twin dies in the other, suspect

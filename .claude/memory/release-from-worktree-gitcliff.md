@@ -1,9 +1,9 @@
 ---
 name: release-from-worktree-gitcliff
 description: git-cliff scopes commits to cwd; running release.sh from a worktree/subdir wiped the changelog — fixed with --include-path in PR
+type: project
 metadata:
   node_type: memory
-  type: project
   originSessionId: 5ab6fd65-c6c6-433d-a590-2ec30160b58e
 ---
 

@@ -1,9 +1,9 @@
 ---
 name: set-e-abort-untestable-in-run-test
 description: "A test whose subject is a set -e abort is vacuous inside run_test — the harness calls bodies as `if \"$fn\"`, which suspends set -e; slice the real function and run it at top level"
-metadata: 
+type: feedback
+metadata:
   node_type: memory
-  type: feedback
   originSessionId: 87b555fb-8e69-4c75-98f3-66c34a760396
   modified: 2026-07-30T09:27:17.818Z
 ---

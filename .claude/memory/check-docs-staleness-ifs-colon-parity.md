@@ -1,9 +1,9 @@
 ---
 name: check-docs-staleness-ifs-colon-parity
 description: "FIXED in #549 — `while IFS=: read` ate trailing colons from pre-scan evidence; 7 patterns.py cloned the bug via a shim, so the differential gate was green on wrong output"
-metadata: 
+type: project
+metadata:
   node_type: memory
-  type: project
   originSessionId: 4f0940df-8211-4fd0-8e89-61fc71776f18
   modified: 2026-07-29T14:33:15.212Z
 ---

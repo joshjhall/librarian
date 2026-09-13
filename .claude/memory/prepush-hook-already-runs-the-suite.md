@@ -1,9 +1,9 @@
 ---
 name: prepush-hook-already-runs-the-suite
 description: "Don't run tests/run-all.sh by hand before pushing — lefthook's pre-push quality-gates step runs that exact command; budget the push instead"
+type: feedback
 metadata:
   node_type: memory
-  type: feedback
 ---
 
 `lefthook.yml`'s **pre-push** `quality-gates` step is literally

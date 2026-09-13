@@ -1,8 +1,7 @@
 ---
 name: crashed-mutation-reads-as-survivor
 description: A mutation harness that treats "suite passed" as survival reports an un-applied mutation as an untested arm; assert the edit landed
-metadata:
-  type: feedback
+type: feedback
 ---
 
 In a mutation round, "the suite passed" means **survivor** only if the mutation

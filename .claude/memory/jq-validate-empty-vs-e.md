@@ -1,9 +1,9 @@
 ---
 name: jq-validate-empty-vs-e
 description: "To test \"is this valid JSON\" use `jq empty`, not `jq -e .` — the latter keys exit on output truthiness"
-metadata: 
+type: reference
+metadata:
   node_type: memory
-  type: reference
   originSessionId: bae2b1da-28e8-4ef6-a0b4-2a6b292def61
 ---
 

@@ -365,8 +365,7 @@ test_decline_is_a_finding_with_a_reason() {
 ---
 name: harness-budget-overrun
 description: The review harness truncates its last dimension when the shared budget runs out
-metadata:
-  type: feedback
+type: feedback
 ---
 
 The review harness fans five dimensions out under one shared budget. When the
@@ -380,8 +379,7 @@ FIXTURE
 ---
 name: harness-judge-disagreement
 description: The review harness judge can rank a real defect deferrable when dimensions disagree
-metadata:
-  type: feedback
+type: feedback
 ---
 
 The review harness runs a fresh judge over the five dimensions' findings. When

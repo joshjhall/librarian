@@ -1,9 +1,9 @@
 ---
 name: token-scrape-transcript-dedup
 description: golem-status token counter scrapes the Claude Code transcript; MUST dedup by message.id or it triple-counts
-metadata: 
+type: project
+metadata:
   node_type: memory
-  type: project
   originSessionId: 6d93bf87-8599-414e-a1f4-97789af5f61a
   modified: 2026-07-18T19:30:02.727Z
 ---

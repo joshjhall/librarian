@@ -1,9 +1,9 @@
 ---
 name: size-the-effect-from-the-right-quantity
 description: "Sizing an effect from the emitted bytes instead of the recorded artifact flipped 'too small to see' into 'a large effect is missing'"
+type: feedback
 metadata:
   node_type: memory
-  type: feedback
 ---
 
 Before concluding an effect is too small to measure, check you sized it from the

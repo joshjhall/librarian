@@ -1,9 +1,9 @@
 ---
 name: splitting-a-file-surfaces-masked-lint
 description: "Splitting a monolith makes per-file linters find real bugs the monolith masked — treat each new warning as a finding, not noise"
-metadata: 
+type: feedback
+metadata:
   node_type: memory
-  type: feedback
   originSessionId: 5d4f27be-4b8b-4fa0-b825-01bf01cb2b15
   modified: 2026-07-30T15:28:34.142Z
 ---

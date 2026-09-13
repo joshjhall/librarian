@@ -1,9 +1,9 @@
 ---
 name: check-ai-config-bloat-scan
 description: How to run the ai-file-bloat scanner locally + its raw-line-count thresholds per file type
-metadata: 
+type: reference
+metadata:
   node_type: memory
-  type: reference
   originSessionId: 0514957f-a771-49ed-93ae-8a7b994075b4
 ---
 

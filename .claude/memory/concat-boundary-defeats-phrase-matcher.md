@@ -1,9 +1,9 @@
 ---
 name: concat-boundary-defeats-phrase-matcher
 description: "A regex over a JS string built from concatenated literals silently stops matching when a phrase straddles a ' + ' join — collapsing whitespace is not enough"
-metadata: 
+type: feedback
+metadata:
   node_type: memory
-  type: feedback
   originSessionId: af6b1b7a-db5d-4281-8295-44415867b420
   modified: 2026-08-25T03:47:39.657Z
 ---

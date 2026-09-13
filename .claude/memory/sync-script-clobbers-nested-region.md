@@ -1,9 +1,9 @@
 ---
 name: sync-script-clobbers-nested-region
 description: A region-copy script that replaces a shared block wholesale silently deletes any INNER shared region nested inside it
-metadata: 
+type: feedback
+metadata:
   node_type: memory
-  type: feedback
   originSessionId: 9a981892-012f-47f0-9278-e9cab649b220
   modified: 2026-08-23T00:59:46.837Z
 ---

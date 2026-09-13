@@ -1,9 +1,9 @@
 ---
 name: execute-the-workflow-step-dont-grep-it
 description: "A CI `run:` block's regressions are re-ORDERINGS, which every string grep survives — slice the real block and execute it under a stub PATH"
-metadata: 
+type: feedback
+metadata:
   node_type: memory
-  type: feedback
   originSessionId: 956ca71e-7925-484d-98d4-227c314aa2a5
   modified: 2026-08-22T23:06:01.270Z
 ---

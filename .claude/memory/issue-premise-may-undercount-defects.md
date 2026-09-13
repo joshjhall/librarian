@@ -1,8 +1,7 @@
 ---
 name: issue-premise-may-undercount-defects
 description: An issue naming ONE cause may hide two; reproduce the issue's OWN example and check whether the named cause explains its silence
-metadata:
-  type: feedback
+type: feedback
 ---
 
 An issue that names a single root cause can be describing **two independent**

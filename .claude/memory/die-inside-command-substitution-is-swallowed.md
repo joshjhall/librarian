@@ -1,9 +1,9 @@
 ---
 name: die-inside-command-substitution-is-swallowed
 description: "A fail-loud `die` inside `$(...)` only kills the subshell — the caller computes a verdict anyway (#596)"
-metadata: 
+type: reference
+metadata:
   node_type: memory
-  type: reference
   originSessionId: e27f9ded-9f74-48fe-ba56-da0a45c3cf33
   modified: 2026-07-31T23:52:59.375Z
 ---

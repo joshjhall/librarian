@@ -1,9 +1,9 @@
 ---
 name: absence-assertion-needs-a-leak-fixture
 description: A test asserting something is ABSENT passes trivially when its predicate breaks — pin it with a synthetic fixture that must be detected
-metadata: 
+type: feedback
+metadata:
   node_type: memory
-  type: feedback
   originSessionId: af6b1b7a-db5d-4281-8295-44415867b420
   modified: 2026-08-25T03:47:28.494Z
 ---

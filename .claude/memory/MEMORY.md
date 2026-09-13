@@ -126,8 +126,9 @@ by topic; this root file stays selective — it is loaded every session, so an e
 earns its place here only by applying across tasks.
 
 A memory whose content **time can falsify** — a version pin, a "latest" claim, an
-open-issue status, a measured baseline — carries three optional `metadata:` keys
-(borrowed from OKF, see #631):
+open-issue status, a measured baseline — carries three optional **top-level**
+frontmatter keys (OKF, see #631). Top-level, like `type:` and for the same
+§4.1 reason: nested under `metadata:` they are tolerated but invisible (#991).
 
 ```yaml
 status: stable          # draft | stable | deprecated

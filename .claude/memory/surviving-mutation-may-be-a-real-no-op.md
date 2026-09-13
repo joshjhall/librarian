@@ -1,9 +1,9 @@
 ---
 name: surviving-mutation-may-be-a-real-no-op
 description: "A mutation that survives is sometimes provably equivalent code, not a coverage gap — prove which before writing a test that cannot fail"
-metadata: 
+type: feedback
+metadata:
   node_type: memory
-  type: feedback
   originSessionId: c65bf62a-a5be-45ca-adf3-2741defb9fa8
   modified: 2026-08-22T15:23:28.259Z
 ---

@@ -1,8 +1,7 @@
 ---
 name: parity-blind-to-exit-code-divergence
 description: A bash<->python parity gate compares STDOUT, so a refusal path that emits nothing in both impls can diverge on exit code alone and pass green
-metadata:
-  type: feedback
+type: feedback
 ---
 
 A same-output parity gate cannot see a divergence that lives entirely in the

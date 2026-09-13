@@ -1,9 +1,9 @@
 ---
 name: flaky-golem-gate-watch-test
 description: "tests/golem-gate-watch.sh non-hermeticity — root-caused to GIT_DIR leak from push hook; fixed in PR #62"
+type: project
 metadata:
   node_type: memory
-  type: project
   originSessionId: 3fe68c9e-e721-4106-9253-32d8429d669b
 ---
 

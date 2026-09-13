@@ -1,9 +1,9 @@
 ---
 name: issue-443-portable-command-paths
 description: "#443 repo-wide sweep of hardcoded /usr/bin//bin tool paths to `command <tool>` + _bin() resolver for stripped-PATH scripts + CI lint; the big gotcha = several classes MUST NOT be swept"
-metadata: 
+type: project
+metadata:
   node_type: memory
-  type: project
   originSessionId: 2e00fe92-7847-4f32-8736-90367f40c1a5
   modified: 2026-07-24T04:59:42.457Z
 ---

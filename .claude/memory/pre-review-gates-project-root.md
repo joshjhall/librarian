@@ -1,9 +1,9 @@
 ---
 name: pre-review-gates-project-root
 description: pre-review-gates.sh resolves _PROJECT_ROOT via git rev-parse; tests of its scan categories need a git-scrubbed sandbox
+type: project
 metadata:
   node_type: memory
-  type: project
   originSessionId: 13da0b8e-0e9a-47ce-951c-0c33f7cb4d30
 ---
 

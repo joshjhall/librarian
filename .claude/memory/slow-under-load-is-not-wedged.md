@@ -1,8 +1,7 @@
 ---
 name: slow-under-load-is-not-wedged
 description: Elapsed time alone cannot distinguish a wedged process from a slow one; check for an advancing child and real memory pressure before concluding "stranded"
-metadata:
-  type: feedback
+type: feedback
 ---
 
 A long-running process is not evidence of a stuck one. Under contention (several

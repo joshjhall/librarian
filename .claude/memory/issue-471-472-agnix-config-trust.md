@@ -1,14 +1,14 @@
 ---
 name: issue-471-472-agnix-config-trust
 description: "#471/#472 shipped PR #547 — agnix never reads the audited repo's config; 3 review cycles each killed the prior design; --config ordering bug had made the trust branch dead since #398"
-metadata: 
+type: project
+status: stable
+stale_after: 2026-10-31
+stale_check: "the 0.40.0/0.41.0 reproduction — re-verify the `--config` global-ordering behavior on the pinned version; the trust rule does not expire"
+metadata:
   node_type: memory
-  type: project
   originSessionId: b472b132-b2dd-4c1e-b549-e5fb7417f5b6
   modified: 2026-07-28T19:18:07.775Z
-  status: stable
-  stale_after: 2026-10-31
-  stale_check: "the 0.40.0/0.41.0 reproduction — re-verify the `--config` global-ordering behavior on the pinned version; the trust rule does not expire"
 ---
 
 MERGED PR #547 (`a8b23c7`, human-directed merge 19:17Z) closing #471 + #472,

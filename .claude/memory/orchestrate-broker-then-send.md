@@ -1,9 +1,9 @@
 ---
 name: orchestrate-broker-then-send
 description: Plan-gate flow is broker→human-decides→ORCHESTRATOR sends the tmux keystroke; never hand the keystroke back to the operator
+type: feedback
 metadata:
   node_type: memory
-  type: feedback
   originSessionId: 8ad52384-dc1c-4058-b9f5-e2707af84d8f
   modified: 2026-08-01T04:13:40.065Z
 ---

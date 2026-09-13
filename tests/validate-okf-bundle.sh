@@ -48,10 +48,16 @@
 # WHY ADVISORY IS THE DEFAULT, AND WHY IT STILL HAS TEETH
 # ---------------------------------------------------------------------------
 #
-# Measured on this repo's own bundle: several hundred conformance findings, ZERO
-# orphans and ZERO dangling index lines — the graph is healthy, the schema floor
-# is not. Blocking mode cannot land on that tree; those findings are what #631
-# (OKF adoption) exists to fix.
+# Measured on this repo's own bundle when this gate was written: several hundred
+# conformance findings, ZERO orphans and ZERO dangling index lines — the graph
+# was healthy, the schema floor was not.
+#
+# THE SCHEMA FLOOR IS NOW CLEAN (#991 migrated the bundle to top-level `type:`,
+# clearing ~246 okf-missing-type rows). What remains is memory-missing-why, a
+# HEALTH observation rather than a conformance failure: ~80 typed memories whose
+# bodies lack the `**Why:**` / `**How to apply:**` sections their type asks for.
+# So blocking mode still cannot land — but it is now one category away instead of
+# two, and the remaining one is prose work owned by #631, not a schema defect.
 #
 # NO SNAPSHOT COUNT IS QUOTED HERE ON PURPOSE. The bundle is written by every
 # session, so any number pasted into this comment is wrong within hours — an
@@ -371,6 +377,13 @@ if [ "$REGEN" -eq 1 ]; then
         command printf '#\n'
         command printf '# These are not targets. The listed findings are what #631 (OKF adoption)\n'
         command printf '# exists to drive to zero; this file only stops them growing meanwhile.\n'
+        command printf '#\n'
+        command printf '# A category that reaches zero DISAPPEARS from this file rather than being\n'
+        command printf '# listed as 0 -- the counts come from the findings actually emitted, so a\n'
+        command printf '# category with none produces no line. Absence is the TIGHTER state, not a\n'
+        command printf '# gap: an unlisted category has an implicit baseline of 0, so a single\n'
+        command printf '# regression fails. okf-missing-type left this file that way (#991\n'
+        command printf '# migrated the bundle to top-level `type:`); do not re-add it as a 0.\n'
         command printf '#\n'
         command printf '# Regenerate with: tests/validate-okf-bundle.sh --regen\n'
         command printf '\n'

@@ -1,9 +1,9 @@
 ---
 name: issue-462-tracks-build-order
 description: "#462 SHIPPED PR #483 — orchestrate/tracks build-order-aware composition; deps_honored display-field bug pattern"
+type: project
 metadata:
   node_type: memory
-  type: project
   originSessionId: 9a12ef77-0bc9-4d5f-b8c1-3a319548e421
   modified: 2026-07-21T21:07:51.379Z
 ---

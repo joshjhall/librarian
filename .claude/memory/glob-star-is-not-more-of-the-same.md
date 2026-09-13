@@ -1,9 +1,9 @@
 ---
 name: glob-star-is-not-more-of-the-same
 description: "Widening [0-9][0-9]- to [0-9][0-9]*- does NOT mean 'two or more digits' — a glob * matches ANY characters, so it silently admits digits-then-arbitrary-text; enumerate the widths instead"
+type: feedback
 metadata:
   node_type: memory
-  type: feedback
 ---
 
 Extending a bounded character-class glob by appending `*` reads like "more of

@@ -1,9 +1,9 @@
 ---
 name: issue-407-push-receiver
 description: "#407 golem-event HTTP receiver: consumption half of the event bus; design + review fixes + sandbox socket-kill gotcha"
+type: project
 metadata:
   node_type: memory
-  type: project
   originSessionId: cb59df21-a3c9-47e0-b22f-1b29f5566d39
   modified: 2026-07-21T21:06:51.591Z
 ---

@@ -1,8 +1,7 @@
 ---
 name: synthetic-script-dir-needs-the-new-sibling
 description: Adding a sourced sibling breaks every test fixture that builds a synthetic SCRIPT_DIR by copying the script — update the fixture, not the assertion
-metadata:
-  type: project
+type: project
 ---
 
 A script that resolves dependencies from its own `SCRIPT_DIR` is often tested by

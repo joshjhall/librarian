@@ -1,14 +1,14 @@
 ---
 name: issue-446-golem-status-reliability
 description: "#446 golem-status BLOCKED reliability — Bug #2 ghosts + Bug #4 API-death; 2 of 4 modes already fixed"
-metadata: 
+type: project
+status: stable
+stale_after: 2026-10-31
+stale_check: "the "#446 still open / 2 of 4 modes" status — re-check with `gh issue view 446`"
+metadata:
   node_type: memory
-  type: project
   originSessionId: 640198ea-00a1-4592-be2a-17773ad6f0d1
   modified: 2026-07-24T20:35:06.929Z
-  status: stable
-  stale_after: 2026-10-31
-  stale_check: "the "#446 still open / 2 of 4 modes" status — re-check with `gh issue view 446`"
 ---
 
 # 446 "golem-status.sh BLOCKED list unreliable" names **4 failure modes**

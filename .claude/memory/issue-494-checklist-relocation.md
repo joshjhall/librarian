@@ -1,9 +1,9 @@
 ---
 name: issue-494-checklist-relocation
 description: "#494 moved 6 code-reviewer sub-reviewer checklists .md→workflow.js SUBREVIEWERS; issue premise was WRONG (harness is sandboxed, pastes no section); also fixed bloat-glob missing flat agents"
+type: project
 metadata:
   node_type: memory
-  type: project
 ---
 
 **#494 (L3, refactor):** moved the six sub-reviewer checklists

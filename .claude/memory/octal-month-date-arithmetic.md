@@ -1,9 +1,9 @@
 ---
 name: octal-month-date-arithmetic
 description: "date +%m in $(( )) is parsed as OCTAL — aborts under set -e in Aug/Sep only, silently emitting zero findings"
-metadata: 
+type: feedback
+metadata:
   node_type: memory
-  type: feedback
   originSessionId: 0e233a17-021e-4d60-9845-ff1f92f2f7b1
   modified: 2026-08-01T01:29:41.736Z
 ---

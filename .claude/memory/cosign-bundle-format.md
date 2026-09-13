@@ -1,9 +1,9 @@
 ---
 name: cosign-bundle-format
 description: release.yml cosign signing must use --bundle (.sigstore.json); cosign 3.x ignores the old --output-signature/-certificate flags and fails with an empty-path error
+type: project
 metadata:
   node_type: memory
-  type: project
   originSessionId: 33d52fde-3186-45a2-b727-5a680228e918
 ---
 

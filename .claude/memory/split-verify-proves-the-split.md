@@ -1,8 +1,7 @@
 ---
 name: split-verify-proves-the-split
 description: After a decomposition, run ship-issue/split-verify.sh — it mechanically proves the split lost nothing, and a reviewer will ask for it
-metadata:
-  type: feedback
+type: feedback
 ---
 
 When a change **extracts** code into a new file, run

@@ -1,8 +1,7 @@
 ---
 name: tool-absence-fixture-needs-a-symlink-farm
 description: Forcing one tool absent via a hand-listed stub PATH fails 127 at a different tool each time, and each failure looks like the no-op arm passing
-metadata:
-  type: feedback
+type: feedback
 ---
 
 To test "tool X absent → clean no-op", build the stub PATH as a **symlink farm**:

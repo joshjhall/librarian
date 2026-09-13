@@ -1,9 +1,9 @@
 ---
 name: comment-asserts-intent-not-code
 description: "My comments repeatedly assert a property the final code lacks — written from intent, then never re-read against the implementation; reviewers catch it, and the wrong comment hides a real defect"
-metadata: 
+type: feedback
+metadata:
   node_type: memory
-  type: feedback
   originSessionId: 87b555fb-8e69-4c75-98f3-66c34a760396
   modified: 2026-07-30T09:58:07.683Z
 ---

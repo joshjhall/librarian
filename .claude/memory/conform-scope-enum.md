@@ -1,9 +1,9 @@
 ---
 name: conform-scope-enum
 description: "Commit scope is enum-restricted by .conform.yaml — fix(review): is rejected; use plugin/subsystem scopes"
+type: feedback
 metadata:
   node_type: memory
-  type: feedback
   originSessionId: 2afd10d9-8b06-465b-8d18-950c1bc9ec98
 ---
 

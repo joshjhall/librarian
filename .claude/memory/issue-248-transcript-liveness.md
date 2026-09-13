@@ -1,9 +1,9 @@
 ---
 name: issue-248-transcript-liveness
 description: "SHIPPED PR #473 — headless-golem idle/error detection via transcript stop_reason; new golem-transcript-liveness.sh tier; review caught working-staleness + usr-bin-hardcoding regressions"
-metadata: 
+type: project
+metadata:
   node_type: memory
-  type: project
   originSessionId: b6e2a2a7-abdc-4618-afb1-bff7f121562c
   modified: 2026-07-21T21:02:04.510Z
 ---

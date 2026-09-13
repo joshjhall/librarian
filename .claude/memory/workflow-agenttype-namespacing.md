@@ -1,9 +1,9 @@
 ---
 name: workflow-agenttype-namespacing
 description: Workflow-tool agent() needs namespaced <plugin>:<name>; Agent tool wants the bare name — opposite. Fixed in #126/PR #128; harnesses now namespaced and a lint gate enforces it.
+type: project
 metadata:
   node_type: memory
-  type: project
   originSessionId: 7601b90d-6a82-4f53-87ba-96560d7be13c
 ---
 

@@ -1,9 +1,9 @@
 ---
 name: model-tier-fable-valid
 description: "fable is a valid agent model: tier; aliases auto-track latest generation, so \"sonnet\" agents already = Sonnet 5"
+type: reference
 metadata:
   node_type: memory
-  type: reference
   originSessionId: 23a4ebd0-030d-40b7-bdf5-8c16948ecd2f
 ---
 

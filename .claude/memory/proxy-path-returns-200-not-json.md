@@ -1,9 +1,9 @@
 ---
 name: proxy-path-returns-200-not-json
 description: "BIFROST_URL is derivable from ANTHROPIC_BASE_URL by stripping the proxy suffix; the proxy path returns HTTP 200 with HTML, so a status-code probe reads as success"
+type: reference
 metadata:
   node_type: memory
-  type: reference
 ---
 
 `token-report.sh` needs **`BIFROST_URL`**, the gateway **admin** root. It is

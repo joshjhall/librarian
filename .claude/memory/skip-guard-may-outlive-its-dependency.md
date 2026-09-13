@@ -1,8 +1,7 @@
 ---
 name: skip-guard-may-outlive-its-dependency
 description: A `command -v X` skip guard can outlive the dependency it guards — widening it preserves a dependency that is already gone; A/B the guard against its SUBJECT before fixing it
-metadata:
-  type: feedback
+type: feedback
 ---
 
 A tool-presence skip guard (`command -v timeout` → `skip_test`) names a

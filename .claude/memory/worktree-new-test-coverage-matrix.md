@@ -1,9 +1,9 @@
 ---
 name: worktree-new-test-coverage-matrix
 description: The submodule/taint test coverage matrix for worktree-new.sh + config.sh repo_root() in validate-golem-scripts.sh
-metadata: 
+type: project
+metadata:
   node_type: memory
-  type: project
   originSessionId: e6c9bc2f-b177-4c48-a7ad-4aff3664d9a0
   modified: 2026-07-18T06:51:21.976Z
 ---

@@ -1,9 +1,9 @@
 ---
 name: escaped-fixture-cannot-self-match
 description: A fixture written with escaped metacharacters (console\. or \() can never match a detector whose pattern expects the literal character — the case passes either way
+type: feedback
 metadata:
   node_type: memory
-  type: feedback
 ---
 
 A third tautology shape, distinct from [[anchored-regex-tautological-test]] (the

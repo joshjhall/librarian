@@ -1,9 +1,9 @@
 ---
 name: ship-review-diff-must-be-faithful
 description: "ship-issue adversarial review — the `diff` arg IS the bytes reviewers read; never pass a paraphrased/abbreviated diff"
-metadata: 
+type: feedback
+metadata:
   node_type: memory
-  type: feedback
   originSessionId: 920860ad-58de-4fb6-8393-b12679cdb3dd
   modified: 2026-07-21T05:14:36.135Z
 ---

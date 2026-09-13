@@ -1,8 +1,7 @@
 ---
 name: structural-gate-where-fixtures-dont-scale
 description: When a defect is per-arm across many sites, assert over the SOURCE; the fixture that pins one arm leaves its siblings green
-metadata:
-  type: feedback
+type: feedback
 ---
 
 A behavioral fixture pins the arms its corpus happens to exercise. When the same

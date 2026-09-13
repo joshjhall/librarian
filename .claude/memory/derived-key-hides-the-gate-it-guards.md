@@ -1,8 +1,7 @@
 ---
 name: derived-key-hides-the-gate-it-guards
 description: A gate keyed off a value derived from the WHOLE path silently excludes the very inputs it targets; key it off the component the rule is about
-metadata:
-  type: feedback
+type: feedback
 ---
 
 When gating an expensive step on "this file has no extension", do not test the

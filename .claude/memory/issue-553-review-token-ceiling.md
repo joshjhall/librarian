@@ -1,9 +1,9 @@
 ---
 name: issue-553-review-token-ceiling
 description: "#553 — the ship-issue review harness had NO real bound: budget gates are dead code without a runtime turn directive; cost is in-agent exploration, not diff size"
-metadata: 
+type: project
+metadata:
   node_type: memory
-  type: project
   originSessionId: b03da476-855a-4340-a1de-499a566aea26
   modified: 2026-07-28T20:24:43.419Z
 ---

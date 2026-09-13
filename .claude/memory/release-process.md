@@ -1,12 +1,12 @@
 ---
 name: release-process
 description: "How librarian cuts a repo-level semver release (VERSION + vX.Y.Z tag + CHANGELOG) and what containers#608 pins to"
+type: project
+status: stable
 metadata:
   node_type: memory
-  type: project
   originSessionId: 5ef35931-1874-450d-9431-6255128dc6e2
   modified: 2026-08-16T22:07:01.255Z
-  status: stable
 ---
 
 Librarian has a repo-level semver release flow (added in PR #35, issue #31;

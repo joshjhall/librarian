@@ -1,9 +1,9 @@
 ---
 name: preserved-fixture-can-heal
 description: an environment-dependent repro kept as a fixture can self-heal before you test against it; capture the evidence now and verify against whatever is broken at that moment
-metadata: 
+type: feedback
+metadata:
   node_type: memory
-  type: feedback
   originSessionId: fc26bda0-7917-4736-9473-51d688830491
   modified: 2026-08-23T07:05:46.763Z
 ---

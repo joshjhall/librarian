@@ -1,9 +1,9 @@
 ---
 name: mjs-coverage-c8-excludes-tests
 description: "c8 excludes tests/ by default, so covering tests/*.mjs validators needs --exclude override; use NODE_V8_COVERAGE + c8 report to merge multiple entry points"
+type: project
 metadata:
   node_type: memory
-  type: project
   originSessionId: 4072d4d5-dc23-48bf-9bf4-b614e642e3f9
 ---
 

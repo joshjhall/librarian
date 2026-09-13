@@ -1,8 +1,7 @@
 ---
 name: measured-cause-may-invert-the-remedy
 description: An issue's remedy can be aimed at the cheap half of the cost; measure the SPLIT before acting on the total
-metadata:
-  type: feedback
+type: feedback
 ---
 
 A perf issue quoting a big total ("24.5k prefix, 53% of input") can still

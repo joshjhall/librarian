@@ -1,9 +1,9 @@
 ---
 name: typos-gate-blocks-push
 description: "The `typos` pre-push hook fails the whole push on any misspelling in touched files, including pre-existing ones"
+type: project
 metadata:
   node_type: memory
-  type: project
   originSessionId: ea04e8d4-f73c-4419-8d37-66d95037843f
   modified: 2026-07-19T04:28:22.383Z
 ---

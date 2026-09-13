@@ -1,8 +1,7 @@
 ---
 name: local-declaration-cannot-self-reference
 description: "Under set -u, `local a=$1 b=$FIXTURE/$a` aborts with 'a: unbound variable' — one local statement's assignments all evaluate before any name is bound; split into separate local statements"
-metadata:
-  type: feedback
+type: feedback
 ---
 
 A single `local` statement cannot reference a variable it is itself declaring.

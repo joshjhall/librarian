@@ -1,9 +1,9 @@
 ---
 name: review-fix-is-the-riskiest-code
 description: Code written to fix a review finding is the most defect-dense code in a PR — review the fix at least as hard as the original
-metadata: 
+type: feedback
+metadata:
   node_type: memory
-  type: feedback
   originSessionId: 1ee159fd-a0ac-4290-bd02-ee3f15deda76
   modified: 2026-08-14T17:34:29.282Z
 ---

@@ -1,8 +1,7 @@
 ---
 name: render-diff-before-and-after-an-extraction
 description: A behavior-preserving refactor should be proven by diffing the tool's real output before vs after, not only by a green suite
-metadata:
-  type: feedback
+type: feedback
 ---
 
 When a refactor claims "no behavior change," capture the tool's **actual output**

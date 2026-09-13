@@ -1,9 +1,9 @@
 ---
 name: verify-blocked-action-before-reporting-it-blocked
 description: "A permission denial on the verification step doesn't mean the action failed — check real state before reporting a block"
-metadata: 
+type: feedback
+metadata:
   node_type: memory
-  type: feedback
   originSessionId: 5fd8b772-404e-4cce-8dea-13525dc7da6a
   modified: 2026-08-31T18:55:10.863Z
 ---

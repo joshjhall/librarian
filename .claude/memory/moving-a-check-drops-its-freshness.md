@@ -1,9 +1,9 @@
 ---
 name: moving-a-check-drops-its-freshness
 description: "Relocating a guard to fix its ordering silently drops the freshness the old placement gave for free — the old site needs the check too, not instead"
-metadata: 
+type: feedback
+metadata:
   node_type: memory
-  type: feedback
   originSessionId: 75f55751-ed5c-4a63-b08a-68720a95fc00
   modified: 2026-08-29T00:35:21.618Z
 ---

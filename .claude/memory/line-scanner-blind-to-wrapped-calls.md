@@ -1,9 +1,9 @@
 ---
 name: line-scanner-blind-to-wrapped-calls
 description: A per-line scanner silently misses backslash-wrapped calls — the corpus reads clean because the violations were never parsed
-metadata: 
+type: feedback
+metadata:
   node_type: memory
-  type: feedback
   originSessionId: ce1a1fbd-0733-44ed-9d81-6a516198451e
   modified: 2026-08-28T18:21:24.255Z
 ---

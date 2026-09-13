@@ -1,8 +1,7 @@
 ---
 name: issue-cause-may-be-falsified-by-measurement
 description: An issue's stated cause and suggested fix are hypotheses — reproduce before implementing, or you ship a no-op
-metadata:
-  type: feedback
+type: feedback
 ---
 
 An issue body's **Cause** and **Suggested fix** sections are hypotheses written

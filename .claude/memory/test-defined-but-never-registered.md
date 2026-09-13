@@ -1,9 +1,9 @@
 ---
 name: test-defined-but-never-registered
 description: "A test function with no `run_test` line silently never runs while the suite reports green (#596)"
-metadata: 
+type: feedback
+metadata:
   node_type: memory
-  type: feedback
   originSessionId: e27f9ded-9f74-48fe-ba56-da0a45c3cf33
   modified: 2026-07-31T23:53:10.797Z
 ---

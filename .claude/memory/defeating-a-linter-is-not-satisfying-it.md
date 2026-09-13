@@ -1,8 +1,7 @@
 ---
 name: defeating-a-linter-is-not-satisfying-it
 description: Prefer a gate's documented exemption marker over a trick that hides the line from its regex
-metadata:
-  type: feedback
+type: feedback
 ---
 
 When a lint gate fires on a line that is legitimately fine, use the gate's

@@ -1,9 +1,9 @@
 ---
 name: devcontainer-bash-env-path-reset
 description: "This devcontainer's /etc/bash_env resets $PATH on every non-interactive bash, undoing PATH stubs in tests"
+type: reference
 metadata:
   node_type: memory
-  type: reference
   originSessionId: 5ab6fd65-c6c6-433d-a590-2ec30160b58e
   modified: 2026-08-28T18:21:13.224Z
 ---

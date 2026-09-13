@@ -1,8 +1,7 @@
 ---
 name: verify-then-refetch-is-not-verified
 description: "Verifying a package then re-resolving it by name installs unverified bytes; install the verified artifact by path"
-metadata:
-  type: feedback
+type: feedback
 ---
 
 A supply-chain check that verifies an artifact and then **re-fetches it by name**

@@ -1,8 +1,7 @@
 ---
 name: mutation-restore-must-not-be-git-checkout
 description: A mutation harness that restores with `git checkout --` reverts to HEAD and DELETES the uncommitted fix under test
-metadata:
-  type: feedback
+type: feedback
 ---
 
 A mutation round's `restore()` must snapshot and copy back — **never**

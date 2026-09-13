@@ -1,9 +1,9 @@
 ---
 name: ship-issue-rename-rationale
 description: "why the ship skill is named ship-issue (not next-issue-ship) — deliberate, don't rename it back into the next-issue prefix"
+type: project
 metadata:
   node_type: memory
-  type: project
   originSessionId: 2216b035-7289-4281-87a6-61f64386a636
 ---
 

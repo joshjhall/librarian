@@ -1,9 +1,9 @@
 ---
 name: review-wedge-root-cause
 description: "Why golems keep wedging in unbounded ship-issue reviews (3× in one batch) — root cause is #307's wall-time bound being PROSE not code, compounded by a stale /opt install; filed as #327"
+type: project
 metadata:
   node_type: memory
-  type: project
   originSessionId: 10478e43-b9c4-4a7c-a620-83c6efd01629
   modified: 2026-08-01T04:13:40.208Z
 ---

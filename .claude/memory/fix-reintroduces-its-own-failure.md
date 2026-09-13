@@ -1,9 +1,9 @@
 ---
 name: fix-reintroduces-its-own-failure
 description: A fix for a silent-data-loss bug tends to reintroduce that same loss by a new route; re-ask the original question of the fix itself
-metadata: 
+type: feedback
+metadata:
   node_type: memory
-  type: feedback
   originSessionId: 11132429-3014-4a1a-816f-781c2d7c5f7a
   modified: 2026-08-18T16:15:45.814Z
 ---

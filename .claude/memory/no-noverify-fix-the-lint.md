@@ -1,9 +1,9 @@
 ---
 name: no-noverify-fix-the-lint
 description: "Operator directive: never commit memory/docs with --no-verify to skip rumdl/typos — FIX the lint (wrap prose); only per-file exceptions where wrapping is genuinely wrong (the index)"
-metadata: 
+type: feedback
+metadata:
   node_type: memory
-  type: feedback
   originSessionId: 6d918ba8-345b-412b-97b7-b48ec4226971
   modified: 2026-07-21T21:09:50.626Z
 ---

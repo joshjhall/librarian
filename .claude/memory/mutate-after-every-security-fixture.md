@@ -1,9 +1,9 @@
 ---
 name: mutate-after-every-security-fixture
 description: "An injection/collision fixture must be mutation-checked — two of mine passed with AND without the fix (#596)"
-metadata: 
+type: feedback
+metadata:
   node_type: memory
-  type: feedback
   originSessionId: e27f9ded-9f74-48fe-ba56-da0a45c3cf33
   modified: 2026-07-31T23:52:59.234Z
 ---
