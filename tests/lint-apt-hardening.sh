@@ -53,13 +53,21 @@ CUR_VIOLATIONS=""
 scan_file() {
     local file="$1"
     CUR_VIOLATIONS=""
-    local entry lineno line
+    local entry lineno line code
     while IFS= read -r entry; do
         [ -n "$entry" ] || continue
         lineno="${entry%%:*}"
         line="${entry#*:}"
-        # Routed through the installer -> fine. Pure-bash glob, no eval.
-        if [[ "$line" == *"$INSTALLER"* ]]; then
+        # Routed through the installer -> fine.
+        #
+        # NOT a substring test on the whole line. `[[ "$line" == *"$INSTALLER"* ]]`
+        # would accept `run: sudo apt-get install -y jq  # not using
+        # bin/apt-install.sh`, i.e. exactly the direct invocation this gate
+        # exists to catch, because the excusing comment names the script. Strip
+        # any trailing comment first, then require the remaining COMMAND to
+        # invoke the installer.
+        code="${line%%#*}"
+        if [[ "$code" == *"$INSTALLER"* ]]; then
             continue
         fi
         CUR_VIOLATIONS="${CUR_VIOLATIONS}    ${lineno}: ${line}
@@ -93,6 +101,8 @@ test_negative_case_fires() {
       - name: Bad direct install
         run: sudo apt-get update && sudo apt-get install -y jq
       # a comment mentioning apt-get is not an invocation
+      - name: Excused direct install
+        run: sudo apt-get install -y curl  # deliberately not bin/apt-install.sh
       - name: Good routed install
         run: bash bin/apt-install.sh jq shellcheck
 FIXTURE
@@ -101,10 +111,19 @@ FIXTURE
 
     assert_contains "$CUR_VIOLATIONS" "sudo apt-get update" \
         "A direct apt-get invocation IS flagged"
-    assert_not_contains "$CUR_VIOLATIONS" "bin/apt-install.sh" \
+    # Anchored on the routed line's own arguments, not on the installer path:
+    # the excused line below legitimately carries that path in its comment, so
+    # matching the path alone would conflate "the routed line was flagged" with
+    # "some flagged line mentions the script".
+    assert_not_contains "$CUR_VIOLATIONS" "jq shellcheck" \
         "A routed install is NOT flagged"
     assert_not_contains "$CUR_VIOLATIONS" "a comment mentioning" \
         "A YAML comment mentioning apt-get is NOT flagged"
+    # The substring-match trap: a direct call whose trailing comment names the
+    # installer must still be flagged, or the gate can be talked out of firing
+    # by the very line it is meant to catch.
+    assert_contains "$CUR_VIOLATIONS" "install -y curl" \
+        "A direct apt-get is flagged even when a comment names the installer"
 }
 
 # The installer must actually exist — otherwise every workflow "routes" to a

@@ -38,14 +38,17 @@
 # Usage: bash bin/apt-install.sh <package> [package...]
 #
 # Env overrides (for tests; both default to real behaviour):
-#   APT_SOURCES_LIST_D   directory to disable sources in (default
-#                        /etc/apt/sources.list.d) — lets the suite exercise the
-#                        disable step in a sandbox, unprivileged.
-#   APT_INSTALL_DRY_RUN  when 1, print the constructed apt-get commands instead
-#                        of running them. The sources are still disabled (in
-#                        whatever APT_SOURCES_LIST_D points at), so the suite
-#                        covers both halves without root and without touching
-#                        the host's apt.
+#   APT_SOURCES_LIST_D    directory to disable sources in (default
+#                         /etc/apt/sources.list.d) — lets the suite exercise the
+#                         disable step in a sandbox it already owns.
+#   APT_INSTALL_SKIP_APT  when 1, print the constructed apt-get commands instead
+#                         of running them.
+#
+# APT_INSTALL_SKIP_APT is deliberately NOT called a "dry run": it skips the
+# apt-get calls only. The source-disabling step above still runs for real, which
+# is what lets the suite assert the renames actually happened — so a manual
+# invoker who sets it without also pointing APT_SOURCES_LIST_D at a sandbox WILL
+# rename their real sources aside. The name says what it does.
 #
 # Pure bash + coreutils. bash-3.2 clean and BSD-clean per CLAUDE.md § Runtime
 # policy: no `env --unset=`, no GNU-only regex, no `realpath -m`, no `grep -q`
@@ -54,7 +57,7 @@
 set -euo pipefail
 
 SOURCES_LIST_D="${APT_SOURCES_LIST_D:-/etc/apt/sources.list.d}"
-DRY_RUN="${APT_INSTALL_DRY_RUN:-0}"
+SKIP_APT="${APT_INSTALL_SKIP_APT:-0}"
 
 if [ "$#" -eq 0 ]; then
     command printf 'ERROR: bin/apt-install.sh needs at least one package name.\n' >&2
@@ -69,6 +72,20 @@ if [ "$(command id -u)" -ne 0 ]; then
     SUDO="sudo"
 fi
 
+# The RENAME needs root only when the sources directory itself is not writable
+# by us — which is true of /etc/apt/sources.list.d on a runner and false of the
+# sandbox directory the test suite creates and owns. Deciding from `id -u` alone
+# would make the suite shell out to a real `sudo mv` on a directory it already
+# owns: harmless where sudo is passwordless (this devcontainer, CI) but an
+# interactive password prompt on a contributor's machine, hanging `just test`
+# for a test whose whole subject is renaming files in a temp dir.
+#
+# Checked with -w on the DIRECTORY, since that is what a rename requires.
+SUDO_MV="$SUDO"
+if [ -d "$SOURCES_LIST_D" ] && [ -w "$SOURCES_LIST_D" ]; then
+    SUDO_MV=""
+fi
+
 # --- Disable bundled third-party sources -------------------------------------
 # A missing or empty directory is NOT an error: a minimal image may ship no
 # sources.list.d at all, and there is nothing to harden in that case.
@@ -81,7 +98,7 @@ if [ -d "$SOURCES_LIST_D" ]; then
     shopt -s nullglob
     for src in "$SOURCES_LIST_D"/*.list "$SOURCES_LIST_D"/*.sources; do
         [ -f "$src" ] || continue
-        if $SUDO mv "$src" "$src.disabled"; then
+        if $SUDO_MV mv "$src" "$src.disabled"; then
             command printf 'apt-install: disabled third-party source %s\n' "$src"
             disabled_count=$((disabled_count + 1))
         else
@@ -102,8 +119,8 @@ command printf 'apt-install: disabled %d third-party source(s) in %s\n' \
 UPDATE_CMD="$SUDO apt-get -o Acquire::Retries=3 update"
 INSTALL_CMD="$SUDO apt-get -o Acquire::Retries=3 install -y $*"
 
-if [ "$DRY_RUN" = "1" ]; then
-    command printf 'apt-install: DRY RUN, not executing\n'
+if [ "$SKIP_APT" = "1" ]; then
+    command printf 'apt-install: APT_INSTALL_SKIP_APT=1, not invoking apt-get\n'
     command printf '%s\n' "$UPDATE_CMD"
     command printf '%s\n' "$INSTALL_CMD"
     exit 0

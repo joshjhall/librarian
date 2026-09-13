@@ -7,14 +7,21 @@
 # before updating, and constructs an install command carrying the retry option
 # and every requested package.
 #
-# HOW IT RUNS UNPRIVILEGED. The script takes two env overrides that exist purely
-# for this suite: APT_SOURCES_LIST_D points the disable step at a sandbox
-# directory, and APT_INSTALL_DRY_RUN=1 prints the constructed apt-get commands
-# instead of running them. So both halves are exercised for real — the renames
-# happen on actual files in the sandbox — without root and without touching the
-# host's apt.
+# HOW IT RUNS UNPRIVILEGED. Two env overrides exist for this suite:
+# APT_SOURCES_LIST_D points the disable step at a sandbox directory, and
+# APT_INSTALL_SKIP_APT=1 prints the constructed apt-get commands instead of
+# running them. The renames then happen for real, on actual files in the
+# sandbox, with no root and without touching the host's apt.
 #
-# WHAT THE DRY-RUN ARM CANNOT COVER, stated plainly rather than implied: whether
+# "Unprivileged" is a real claim here, not a comment. The script decides whether
+# to prefix `mv` with sudo from whether the sources DIRECTORY is writable, not
+# from `id -u` — so against a sandbox this suite owns, no sudo is invoked at
+# all. That distinction is what keeps `just test` from stopping at an
+# interactive password prompt on a machine without passwordless sudo (macOS is
+# the repo's stated second target). Verify it by putting a failing `sudo` first
+# on PATH and re-running: the renames must still succeed.
+#
+# WHAT SKIPPING APT CANNOT COVER, stated plainly rather than implied: whether
 # apt itself then succeeds. That is the AC3 live-run evidence, captured in
 # docs/verification/apt-hardening-e2e-983.md from the PR's own CI run. This
 # suite covers the decision, not the download.
@@ -47,7 +54,7 @@ new_sources_dir() {
     command printf '%s\n' "$d"
 }
 
-# run_installer <sources-dir> <args...> — run the script in dry-run mode against
+# run_installer <sources-dir> <args...> — run the script with the apt-get calls skipped, against
 # the given sandbox, setting LAST_OUT and LAST_STATUS in the CALLER's shell.
 #
 # Deliberately not `out="$(run_installer ...)"`: a command substitution runs in a
@@ -62,7 +69,7 @@ run_installer() {
     shift
     local outfile="$SANDBOX_ROOT/out.$$"
     set +e
-    APT_SOURCES_LIST_D="$dir" APT_INSTALL_DRY_RUN=1 \
+    APT_SOURCES_LIST_D="$dir" APT_INSTALL_SKIP_APT=1 \
         bash "$APT_INSTALL" "$@" >"$outfile" 2>&1
     LAST_STATUS=$?
     set -e
@@ -207,6 +214,32 @@ test_no_packages_is_an_error() {
         "The error message is actionable"
 }
 
+# The claim the header makes, asserted rather than asserted-in-prose: against a
+# directory we own, the rename must not go through sudo. Pinned with a failing
+# `sudo` shim first on PATH — if the script ever reverts to deciding from
+# `id -u`, this fails here instead of hanging a contributor's `just test` on a
+# password prompt.
+test_rename_does_not_invoke_sudo() {
+    local dir shim
+    dir="$(new_sources_dir)"
+    command printf 'deb https://a.invalid/ stable main\n' >"$dir/a.list"
+    shim="$(command mktemp -d "$SANDBOX_ROOT/shimXXXXXX")"
+    command printf '#!/bin/sh\nexit 99\n' >"$shim/sudo"
+    command chmod +x "$shim/sudo"
+
+    local outfile="$SANDBOX_ROOT/sudoprobe.$$"
+    set +e
+    PATH="$shim:$PATH" APT_SOURCES_LIST_D="$dir" APT_INSTALL_SKIP_APT=1 \
+        bash "$APT_INSTALL" jq >"$outfile" 2>&1
+    local status=$?
+    set -e
+    command rm -f "$outfile"
+
+    assert_equals "0" "$status" "Exits 0 with a failing sudo on PATH"
+    assert_file_exists "$dir/a.list.disabled" \
+        "The rename succeeds without invoking sudo on a directory we own"
+}
+
 test_script_is_executable_shell() {
     assert_file_exists "$APT_INSTALL" "bin/apt-install.sh exists"
     assert_true "bash -n '$APT_INSTALL'" "The script parses as valid bash"
@@ -227,5 +260,6 @@ run_test test_rerun_is_idempotent "Re-running does not re-disable or double-rena
 run_test test_command_carries_retries "apt-get carries Acquire::Retries=3 and the packages"
 run_test test_multiple_packages_preserved "Multiple package arguments are preserved"
 run_test test_no_packages_is_an_error "No packages fails loud with a usage error"
+run_test test_rename_does_not_invoke_sudo "A sandbox rename does not shell out to sudo"
 
 generate_report
