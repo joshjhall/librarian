@@ -66,6 +66,28 @@ bundle for broken cross-links or missing `index.md` files. Non-zero exits are re
 tool-side failures — an unresolvable version pin, a usage error, or an
 unreadable file list. See `SKILL.md` § "Permissive conformance".
 
+### `type` is read at the TOP LEVEL only — no accepted deviation
+
+`okf-missing-type` fires on a concept whose frontmatter has no **top-level**
+`type`, per §4.1. A `type` nested under `metadata:` does not satisfy it, and
+**that is not a configurable tolerance** — there is deliberately no
+accepted-shape escape hatch, because this scanner validates any OKF bundle and
+relaxing the floor to fit one corpus would make it wrong about every other.
+
+This is recorded because the question was actually raised and decided (#991).
+This repo's own bundle nested `type` under `metadata:` in ~246 files, and the
+scanner correctly reported every one of them. The resolution was to **migrate
+the bundle**, not to teach the scanner a deviation — so behavior for other
+bundles is unchanged, and no consumer inherits a looser floor.
+
+Note the **health** pass is deliberately different and stays that way:
+`bundle_graph.py`'s `field()` resolves `status` / `stale_after` / `stale_check`
+/ `type` at the top level **or** under `metadata.`, because those keys are
+conveniences this scanner defines rather than schema floor, and a consuming repo
+may legitimately nest them. Tolerating both spellings for a health lookup is not
+in tension with enforcing one for conformance — the first decides how well a
+bundle reads, the second whether it conforms.
+
 ## Finding Format
 
 Each finding extends the standard finding-schema.md:

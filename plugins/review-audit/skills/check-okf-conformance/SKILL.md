@@ -27,7 +27,8 @@ sizing is delegated below.
 conformance-vs-health distinction the certainty tiers carry. See
 `thresholds.yml` for the OKF version pin, the health pass's configurable index
 names and per-type body requirements, and severity levels. The whole-bundle pass
-lives in `bundle_graph.py` (mirrored by a section of `patterns.sh`).
+lives in `bundle_graph.py`, mirrored by `bundle-graph.sh` — a sourced fragment of
+`patterns.sh`, not a standalone tool (#991).
 
 ## The floor
 

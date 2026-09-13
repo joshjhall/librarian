@@ -638,12 +638,16 @@ test_fail_loud_runtime() {
     # it. This is the arm that would otherwise only ever run in a broken checkout.
     local fake="$WORKDIR/fake-skill"
     command mkdir -p "$fake"
-    # bundle_graph.py travels with patterns.py (#669): it is a REQUIRED sibling
-    # imported at module load, not an optional add-on, so a copy of the skill
-    # without it is not a copy of the skill. Omitting it here made the pin
-    # assertions fail on a ModuleNotFoundError — which would have passed the
-    # "exits non-zero" half for entirely the wrong reason.
-    command cp "$SK/patterns.py" "$SK/patterns.sh" "$SK/bundle_graph.py" "$fake/"
+    # bundle_graph.py travels with patterns.py (#669) and bundle-graph.sh with
+    # patterns.sh (#991): both are REQUIRED siblings, loaded at import/source
+    # time rather than optional add-ons, so a copy of the skill without them is
+    # not a copy of the skill. Omitting the python one made the pin assertions
+    # fail on a ModuleNotFoundError — which would have passed the "exits
+    # non-zero" half for entirely the wrong reason. The bash arm below now has
+    # the same trap available to it: without bundle-graph.sh, patterns.sh exits
+    # non-zero on its own missing-sibling guard instead of on the absent pin.
+    command cp "$SK/patterns.py" "$SK/patterns.sh" "$SK/bundle_graph.py" \
+        "$SK/bundle-graph.sh" "$fake/"
     command printf -- 'severity:\n  okf-missing-type:\n    absent_or_empty: medium\n' >"$fake/thresholds.yml"
     rc=0
     err="$(/usr/bin/env -u OKF_PINNED_VERSION PATTERNS_FORCE_BASH=1 \
@@ -755,7 +759,8 @@ test_pin_resolution_parity() {
     command mkdir -p "$cfg"
     # bundle_graph.py travels with patterns.py — see the note at the fake-skill
     # copy above; a skill copy missing it fails on an import, not on the pin.
-    command cp "$SK/patterns.py" "$SK/patterns.sh" "$SK/bundle_graph.py" "$cfg/"
+    command cp "$SK/patterns.py" "$SK/patterns.sh" "$SK/bundle_graph.py" \
+        "$SK/bundle-graph.sh" "$cfg/"
     command printf -- 'okf:\n  other: x\n- a top-level list item\n  pinned_version: "9.9"\n' \
         >"$cfg/thresholds.yml"
     rc_sh=0
