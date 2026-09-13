@@ -45,6 +45,7 @@
 #                         of running them.
 #   APT_INSTALL_SUDO      the command used to elevate (default `sudo`) — lets
 #                         the suite observe whether elevation was reached.
+#                         Honored ONLY when APT_INSTALL_SKIP_APT=1; see below.
 #
 # APT_INSTALL_SKIP_APT is deliberately NOT called a "dry run": it skips the
 # apt-get calls only. The source-disabling step above still runs for real, which
@@ -75,9 +76,19 @@ fi
 # repo's devcontainer sets BASH_ENV=/etc/bash_env, which re-derives PATH for
 # every non-interactive bash, so a PATH-shim assertion silently tests nothing.
 # That is the vacuous-assertion shape (#538/#571) in test clothing.
+#
+# It is honored ONLY under APT_INSTALL_SKIP_APT=1. Unlike the other two
+# overrides, this one names the command we ELEVATE with, and the rename it feeds
+# is real even in skip mode — so a value leaking in from a CI matrix or a parent
+# job's env block would silently substitute the privileged command in a
+# production run. Requiring the test flag means a stray variable alone cannot do
+# that: an unset-or-ignored override falls back to plain `sudo`.
 SUDO=""
 if [ "$(command id -u)" -ne 0 ]; then
-    SUDO="${APT_INSTALL_SUDO:-sudo}"
+    SUDO="sudo"
+    if [ "$SKIP_APT" = "1" ] && [ -n "${APT_INSTALL_SUDO:-}" ]; then
+        SUDO="$APT_INSTALL_SUDO"
+    fi
 fi
 
 # The RENAME needs root only when the sources directory itself is not writable

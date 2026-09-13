@@ -141,6 +141,10 @@ test_negative_case_fires() {
         run: sudo apt-get install -y curl  # deliberately not bin/apt-install.sh
       - name: Chained past the installer
         run: bash bin/apt-install.sh jq && sudo apt-get install -y ripgrep
+      - name: Chained with a semicolon
+        run: bash bin/apt-install.sh jq; sudo apt-get install -y fd-find
+      - name: Chained through a pipe
+        run: bash bin/apt-install.sh jq | tee log; sudo apt-get install -y bat
       - name: Good routed install
         run: bash bin/apt-install.sh jq shellcheck
 FIXTURE
@@ -167,6 +171,12 @@ FIXTURE
     # check can see the second command at all.
     assert_contains "$CUR_VIOLATIONS" "install -y ripgrep" \
         "A bare apt-get chained after a routed call is still flagged"
+    # All three separators the split covers, asserted individually: a typo that
+    # dropped one character from IFS would still pass the `&&` case alone.
+    assert_contains "$CUR_VIOLATIONS" "install -y fd-find" \
+        "A semicolon-chained bare apt-get is flagged"
+    assert_contains "$CUR_VIOLATIONS" "install -y bat" \
+        "A pipe-chained bare apt-get is flagged"
 }
 
 # The installer must actually exist — otherwise every workflow "routes" to a

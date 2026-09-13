@@ -18,8 +18,9 @@
 # from `id -u` — so against a sandbox this suite owns, no sudo is invoked at
 # all. That distinction is what keeps `just test` from stopping at an
 # interactive password prompt on a machine without passwordless sudo (macOS is
-# the repo's stated second target). Verify it by putting a failing `sudo` first
-# on PATH and re-running: the renames must still succeed.
+# the repo's stated second target). Both branches of that decision are pinned
+# below, through APT_INSTALL_SUDO rather than a PATH shim — see the note on
+# test_rename_does_not_invoke_sudo for why PATH cannot be trusted here.
 #
 # WHAT SKIPPING APT CANNOT COVER, stated plainly rather than implied: whether
 # apt itself then succeeds. That is the AC3 live-run evidence, captured in
@@ -260,6 +261,16 @@ test_rename_invokes_sudo_when_dir_unwritable() {
     # what real sudo would achieve.
     command chmod 555 "$dir"
 
+    # `-w` consults access(2), which grants root write permission regardless of
+    # the mode bits — so as root the chmod above does not make the directory
+    # unwritable and this test would assert the opposite of what it means. Skip
+    # with a diagnosis rather than fail, or (worse) pass vacuously.
+    if [ -w "$dir" ]; then
+        command chmod 755 "$dir"
+        skip_test "running as root (uid $(command id -u)); -w ignores mode bits"
+        return 0
+    fi
+
     local outfile="$SANDBOX_ROOT/sudoreq.$$"
     set +e
     APT_SOURCES_LIST_D="$dir" APT_INSTALL_SKIP_APT=1 \
@@ -274,6 +285,45 @@ test_rename_invokes_sudo_when_dir_unwritable() {
     command rm -f "$marker"
     assert_equals "1" "$sudo_used" \
         "Elevation IS reached when the sources directory is not writable"
+}
+
+# The fail-loud branch of the rename itself. This repo's runtime policy is that
+# a tool exits non-zero with an actionable message rather than continuing on a
+# half-done job — and for the disable step, this is the branch that implements
+# it. Left untested, a rename that silently stopped failing loud would leave CI
+# running apt-get against sources it believed it had disabled.
+#
+# Forced with an elevation stand-in that always fails, against a directory the
+# predicate will not let us write.
+test_mv_failure_is_loud() {
+    local dir failing_sudo out
+    dir="$(new_sources_dir)"
+    command printf 'deb https://a.invalid/ stable main\n' >"$dir/a.list"
+    failing_sudo="$SANDBOX_ROOT/failing-sudo"
+    command printf '#!/bin/sh\nexit 1\n' >"$failing_sudo"
+    command chmod +x "$failing_sudo"
+    command chmod 555 "$dir"
+
+    if [ -w "$dir" ]; then
+        command chmod 755 "$dir"
+        skip_test "running as root (uid $(command id -u)); -w ignores mode bits"
+        return 0
+    fi
+
+    local outfile="$SANDBOX_ROOT/mvfail.$$"
+    set +e
+    APT_SOURCES_LIST_D="$dir" APT_INSTALL_SKIP_APT=1 \
+        APT_INSTALL_SUDO="$failing_sudo" \
+        bash "$APT_INSTALL" jq >"$outfile" 2>&1
+    local status=$?
+    set -e
+    out="$(command cat "$outfile")"
+    command rm -f "$outfile"
+    command chmod 755 "$dir"
+
+    assert_equals "1" "$status" "A failed rename exits non-zero"
+    assert_contains "$out" "failed to disable apt source" \
+        "The failure names what could not be disabled"
 }
 
 test_script_is_executable_shell() {
@@ -311,5 +361,6 @@ run_test test_multiple_packages_preserved "Multiple package arguments are preser
 run_test test_no_packages_is_an_error "No packages fails loud with a usage error"
 run_test test_rename_does_not_invoke_sudo "A sandbox rename does not shell out to sudo"
 run_test test_rename_invokes_sudo_when_dir_unwritable "An unwritable sources dir DOES use sudo"
+run_test test_mv_failure_is_loud "A failed rename exits non-zero with a named source"
 
 generate_report
