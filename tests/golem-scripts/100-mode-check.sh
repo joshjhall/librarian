@@ -499,6 +499,210 @@ test_mode_verify_send_detects_swallowed() {
     assert_contains "$RUN_OUT" "NOT CONFIRMED" "a swallowed send is reported, not assumed delivered"
 }
 
+# --- verify-text: the free-text directive relay (#974) ----------------------
+
+# _pane_composer <text> — a pane whose COMPOSER line carries <text> (empty for a
+# submitted/idle prompt), plus the auto-mode footer.
+#
+# THE GLYPH AND THE NBSP ARE REAL BYTES, and both are load-bearing — same rule as
+# the mode footers above, one level deeper. The borrowed classifier
+# (pane_prompt_line_class) anchors on the prompt glyph + NBSP *pair*, so a
+# fixture writing either as an escape sequence, or padding with a plain space,
+# would classify `unknown` and the test would pass with OR without the fix.
+# ❯ = e29daf, NBSP = c2a0.
+_pane_composer() {
+    command printf 'work output\n\n\342\235\257\302\240%s\n  %s\n' "$1" "$(_footer_auto)"
+}
+
+# plant_text_tmux <sandbox> <pane-file> <submits-needed> — a tmux stub that
+# models the MEASURED #974 behavior rather than an idealized one.
+#
+#   * a `-l` (literal) send writes the payload into the composer line
+#   * a bare `Enter` counts as a submit attempt, and clears the composer only
+#     once <submits-needed> of them have arrived
+#
+# <submits-needed>=2 is the reported bug: the first Enter does not take. =1 is a
+# healthy golem. A large value models a genuinely stuck composer. Every send is
+# appended to send-keys.log as "$*", so a test can assert the payload and the
+# submit went out as SEPARATE invocations — the property that actually fixes
+# this, and the one a single combined call would silently lose.
+plant_text_tmux() {
+    local sb="$1" panefile="$2" needed="$3"
+    command mkdir -p "$sb/bin"
+    command printf '0\n' >"$sb/submits"
+    command cat >"$sb/bin/tmux" <<EOF
+#!/usr/bin/env bash
+# Test stub: a composer that needs <needed> Enters before it submits.
+case "\$1" in
+    ls) printf 'golem-7: 1 windows\n' ;;
+    capture-pane) command cat "$panefile" ;;
+    send-keys)
+        printf '%s\n' "\$*" >>"$sb/send-keys.log"
+        case "\$*" in
+            *-l*)
+                # The payload is typed into the composer — visible, unsubmitted.
+                printf 'work output\n\n\342\235\257\302\240typed directive\n  \342\217\265\342\217\265 auto mode on (shift+tab to cycle)\n' >"$panefile"
+                ;;
+            *Enter*)
+                n=\$(( \$(command cat "$sb/submits") + 1 ))
+                printf '%s\n' "\$n" >"$sb/submits"
+                if [ "\$n" -ge "$needed" ]; then
+                    printf 'work output\n\n\342\235\257\302\240\n  \342\217\265\342\217\265 auto mode on (shift+tab to cycle)\n' >"$panefile"
+                fi
+                ;;
+        esac
+        ;;
+esac
+exit 0
+EOF
+    command chmod +x "$sb/bin/tmux"
+}
+
+# THE REPORTED BUG (#974): the first Enter does not submit. The relay must notice
+# and send another, rather than returning "delivered" on a directive still
+# sitting in the composer.
+test_mode_verify_text_retries_second_enter() {
+    local sb
+    new_sandbox sb
+    _pane_composer "" >"$sb/pane.txt"
+    plant_text_tmux "$sb" "$sb/pane.txt" 2
+    run_mode_check "$sb" verify-text 7 "OPERATOR DIRECTIVE: ship it"
+    assert_exit 0 "$RUN_RC" "a directive needing a second Enter still succeeds"
+    assert_contains "$RUN_OUT" "composer empty" "success is reported as the composer emptying"
+    assert_equals 2 "$(command grep -c 'Enter' "$sb/send-keys.log")" \
+        "the relay sent a SECOND Enter after the first did not submit"
+}
+
+# THE FIX ITSELF: payload and submit must go out as SEPARATE send-keys calls.
+# Combined, the trailing CR arrives in the same read() as the payload and the
+# composer treats it as a newline within the message — which is the whole bug. A
+# test asserting only the exit code would pass on the combined form too, so this
+# is the case that makes send-and-hope impossible to reintroduce.
+test_mode_verify_text_splits_payload_from_submit() {
+    local sb
+    new_sandbox sb
+    _pane_composer "" >"$sb/pane.txt"
+    plant_text_tmux "$sb" "$sb/pane.txt" 1
+    run_mode_check "$sb" verify-text 7 "OPERATOR DIRECTIVE: ship it"
+    assert_exit 0 "$RUN_RC" "a directive that submits first time succeeds"
+    local payload_line
+    payload_line="$(command grep -- '-l' "$sb/send-keys.log")"
+    assert_contains "$payload_line" "OPERATOR DIRECTIVE" "the payload went out literally (-l)"
+    assert_not_contains "$payload_line" "Enter" \
+        "the payload send carries NO Enter — combined, the CR is read as a newline, not a submit"
+}
+
+# A composer that never empties must FAIL LOUD after the bound, not spin and not
+# report delivery. The operator guidance matters as much as the exit code: the
+# text is sitting unsent, so re-sending the payload would double it.
+test_mode_verify_text_unsubmitted_fails_loud() {
+    local sb
+    new_sandbox sb
+    _pane_composer "" >"$sb/pane.txt"
+    plant_text_tmux "$sb" "$sb/pane.txt" 99
+    run_mode_check "$sb" verify-text 7 "OPERATOR DIRECTIVE: ship it"
+    assert_exit 1 "$RUN_RC" "a directive that never submits exits non-zero"
+    assert_contains "$RUN_OUT" "NOT SUBMITTED" "the stall is reported, not assumed delivered"
+    assert_not_contains "$RUN_OUT" "composer empty" "it must NOT claim the composer emptied"
+}
+
+# THE CONTROL, and the reason verify-text exists as a separate subcommand.
+# verify-send's predicate asks only whether the pane CHANGED — and typed-but-
+# unsubmitted text changes it, because the characters appear in the composer. So
+# the old guard reports "confirmed" on exactly the #974 failure. This test pins
+# that blindness deliberately: it fails if someone later collapses the two
+# subcommands, which would quietly restore the false confirm.
+test_mode_verify_send_blind_to_unsubmitted_text() {
+    local sb
+    new_sandbox sb
+    _pane_composer "" >"$sb/pane.txt"
+    plant_text_tmux "$sb" "$sb/pane.txt" 99
+    run_mode_check "$sb" verify-send 7 -l "OPERATOR DIRECTIVE: ship it"
+    assert_exit 0 "$RUN_RC" "verify-send confirms a merely-changed pane (why verify-text exists)"
+    assert_contains "$RUN_OUT" "confirmed" "the pane-changed predicate cannot see an unsubmitted directive"
+}
+
+# A directive beginning with a dash must reach the golem as TEXT, not be eaten as
+# a tmux flag — which is what `-l --` buys. Operator directives realistically
+# start with one ("--force ...", "-- revert that").
+test_mode_verify_text_dash_payload_is_literal() {
+    local sb
+    new_sandbox sb
+    _pane_composer "" >"$sb/pane.txt"
+    plant_text_tmux "$sb" "$sb/pane.txt" 1
+    run_mode_check "$sb" verify-text 7 "--force: revert the last commit"
+    assert_exit 0 "$RUN_RC" "a dash-leading directive is delivered, not parsed as a flag"
+    assert_contains "$(command cat "$sb/send-keys.log")" "--force: revert the last commit" \
+        "the dash-leading payload reached tmux intact"
+}
+
+# Typing APPENDS. Relaying onto a composer that already holds text would submit
+# one MERGED directive — a decision the operator never wrote, delivered
+# confidently. That is worse than the bug being fixed, where the text at least
+# sat visible and unsent. So the relay refuses, and must leave the queued text
+# untouched: what is already there is someone's input, not ours to discard.
+test_mode_verify_text_refuses_occupied_composer() {
+    local sb
+    new_sandbox sb
+    _pane_composer "half-typed operator text" >"$sb/pane.txt"
+    plant_text_tmux "$sb" "$sb/pane.txt" 1
+    run_mode_check "$sb" verify-text 7 "SECOND DIRECTIVE"
+    assert_exit 1 "$RUN_RC" "relaying onto an occupied composer is refused"
+    assert_contains "$RUN_OUT" "NOT SENT" "the refusal says nothing was sent, not that delivery failed"
+    assert_equals "half-typed operator text" \
+        "$(command sed -n '3p' "$sb/pane.txt" | command tr -d '\342\235\257\302\240')" \
+        "the queued text is left untouched — not appended to, not submitted"
+    # No log at all is the STRONGEST form of this assertion (not one send was
+    # made), so read it through a default rather than guarding on the file's
+    # existence — a trailing `[ -f ] && ...` would return the test body's status
+    # as non-zero precisely when the guard held.
+    assert_not_contains "$(command cat "$sb/send-keys.log" 2>/dev/null || true)" \
+        "SECOND DIRECTIVE" "the payload never reached tmux"
+}
+
+# Arity is exact: the directive is ONE quoted argument. An unquoted multi-word
+# directive would otherwise arrive as N arguments and silently relay only the
+# first word — a wrong directive delivered confidently.
+test_mode_verify_text_requires_single_text_arg() {
+    local sb
+    new_sandbox sb
+    _pane_composer "" >"$sb/pane.txt"
+    plant_text_tmux "$sb" "$sb/pane.txt" 1
+    run_mode_check "$sb" verify-text 7 OPERATOR DIRECTIVE ship it
+    assert_exit 2 "$RUN_RC" "an unquoted multi-word directive is refused, not truncated"
+    assert_contains "$RUN_OUT" "ONE argument" "the message says to quote the whole directive"
+}
+
+# An EMPTY directive is its own guard, distinct from the arity check above: the
+# arg count is right, the content is not. Relaying it would submit a blank turn
+# to the golem — a no-op that still consumes the operator's brokered decision.
+test_mode_verify_text_empty_directive_exits_2() {
+    local sb
+    new_sandbox sb
+    _pane_composer "" >"$sb/pane.txt"
+    plant_text_tmux "$sb" "$sb/pane.txt" 1
+    run_mode_check "$sb" verify-text 7 ""
+    assert_exit 2 "$RUN_RC" "an empty directive is refused"
+    assert_contains "$RUN_OUT" "non-empty" "the message names the empty payload"
+    assert_not_contains "$(command cat "$sb/send-keys.log" 2>/dev/null || true)" "send-keys" \
+        "nothing was sent for an empty directive"
+}
+
+# The golem-id validation is now SHARED by both subcommands (resolve_golem_session),
+# so a loosened character class would silently affect both. It guards a real
+# hazard: the id becomes a `tmux -t` target, so it must not carry metacharacters.
+test_mode_verify_text_invalid_id_exits_2() {
+    local sb
+    new_sandbox sb
+    _pane_composer "" >"$sb/pane.txt"
+    plant_text_tmux "$sb" "$sb/pane.txt" 1
+    run_mode_check "$sb" verify-text "7/../evil" "OPERATOR DIRECTIVE: ship it"
+    assert_exit 2 "$RUN_RC" "a malformed golem id is refused"
+    assert_contains "$RUN_OUT" "invalid golem id" "the refusal names the bad id"
+    assert_not_contains "$(command cat "$sb/send-keys.log" 2>/dev/null || true)" "OPERATOR DIRECTIVE" \
+        "no payload is sent to an unvalidated target"
+}
+
 # --- fail-loud + usage ------------------------------------------------------
 
 # Absent tmux must FAIL LOUD, never report a clean "no drift". A check that says
