@@ -179,24 +179,43 @@ test_bidi_override_in_a_label_name_is_neutralized() {
 }
 
 test_zero_width_chars_in_a_label_name_are_neutralized() {
-    local box zwsp lri bom raw
+    local box zwsp bom raw
     box="$(make_sandbox status/in-progress)"
     # The rest of the family, which disguises a name rather than reversing it: a
     # zero-width space renders as NOTHING, so `status/a<ZWSP>b` and `status/ab`
-    # are indistinguishable on screen while being different labels. Three
-    # different sub-ranges of the enumeration in one fixture — zero-width
-    # (U+200B), isolate (U+2066) and BOM (U+FEFF) — so an off-by-one between the
-    # three printf chunks building _MD_BIDI_BYTES cannot hide.
+    # are indistinguishable on screen while being different labels.
+    #
+    # EVERY ONE OF THE FIFTEEN ENUMERATED CODE POINTS, in one label, for exactly
+    # the reason test_all_md_safe_metacharacters_are_neutralized covers all
+    # thirteen `tr`-mapped ASCII characters in one: _MD_BIDI_BYTES is three
+    # separately-typed chunks of octal escapes concatenated into one alternation,
+    # and a sampled fixture cannot distinguish "the chunk is right" from "the one
+    # byte I happened to pick is right". A first draft tested four (U+202E,
+    # U+200B, U+2066, U+FEFF) and its comment claimed an off-by-one "cannot hide"
+    # — but the untested members included each group's own BOUNDARY (U+200F,
+    # U+202A, U+2069), which is precisely where a fencepost error lands. Widened
+    # so the claim is true rather than merely plausible.
+    #
+    # Order matches the enumeration: zero-width U+200B-200F, embeddings/overrides
+    # U+202A-202E, isolates U+2066-2069, BOM U+FEFF.
     zwsp="$(command printf '\342\200\213')"
-    lri="$(command printf '\342\201\246')"
     bom="$(command printf '\357\273\277')"
-    raw="status/a${zwsp}b${lri}c${bom}d"
+    raw="status/a${zwsp}b$(command printf '\342\200\214')c$(command printf '\342\200\215')"
+    raw="${raw}d$(command printf '\342\200\216')e$(command printf '\342\200\217')"
+    raw="${raw}f$(command printf '\342\200\252')g$(command printf '\342\200\253')"
+    raw="${raw}h$(command printf '\342\200\254')i$(command printf '\342\200\255')"
+    raw="${raw}j$(command printf '\342\200\256')k$(command printf '\342\201\246')"
+    raw="${raw}l$(command printf '\342\201\247')m$(command printf '\342\201\250')"
+    raw="${raw}n$(command printf '\342\201\251')o${bom}p"
     stub_gh "$box" ok status/in-progress "$raw"
 
     run_reconcile "$box"
     assert_exit 1 "$RC_CODE" "the undeclared label is still reported as drift"
-    assert_contains "$RC_OUT" "status/a?b?c?d" \
-        "all three sub-ranges are replaced, so the hidden characters become visible"
+    # MEASURED from the real pipeline, never hand-written. Fifteen separators, so
+    # fifteen `?` between the sixteen ASCII letters — a missing member of any
+    # chunk collapses its pair and this string stops matching.
+    assert_contains "$RC_OUT" "status/a?b?c?d?e?f?g?h?i?j?k?l?m?n?o?p" \
+        "all FIFTEEN enumerated code points are replaced, including each group's boundary"
     assert_not_contains "$RC_OUT" "$zwsp" "no raw zero-width space reaches the report"
     assert_not_contains "$RC_OUT" "$bom" "no raw BOM reaches the report"
 }
