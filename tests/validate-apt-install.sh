@@ -300,7 +300,13 @@ test_mv_failure_is_loud() {
     dir="$(new_sources_dir)"
     command printf 'deb https://a.invalid/ stable main\n' >"$dir/a.list"
     failing_sudo="$SANDBOX_ROOT/failing-sudo"
-    command printf '#!/bin/sh\nexit 1\n' >"$failing_sudo"
+    # Heredoc rather than `printf '#!/bin/sh\n...'`: the portability gate reads
+    # an interpreter path inside a printf format as a hardcoded core-utility
+    # path (#443) and fails the file. Same shape as MARKER_SUDO below.
+    command cat >"$failing_sudo" <<'FAILING'
+#!/bin/sh
+exit 1
+FAILING
     command chmod +x "$failing_sudo"
     command chmod 555 "$dir"
 
