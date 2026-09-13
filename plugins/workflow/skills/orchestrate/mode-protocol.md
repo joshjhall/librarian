@@ -214,6 +214,12 @@ For any brokered send whose delivery matters, confirm it:
 ${CLAUDE_PLUGIN_ROOT}/scripts/golem-mode-check.sh verify-send {N} 1 Enter
 ```
 
+**A free-text directive needs the other subcommand — `verify-text` (#974).**
+Sent as one combined `send-keys "<text>" Enter`, the trailing CR is read as a
+newline *within* the message and the directive sits in the composer unsubmitted;
+`verify-send` cannot see this, because a typed-but-unsent directive does change
+the pane. Recipe and rationale: `monitor-protocol.md` § *Path B*.
+
 The `golem-resolve.sh` step is not optional bookkeeping: the send-keys approval
 fires no `Notification`, so without it the golem's `gate` feed line is never
 superseded and `golem-status.sh` renders it BLOCKED for the whole

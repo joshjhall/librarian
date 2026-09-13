@@ -501,6 +501,39 @@ decisions: (1) Commit-back = Auto-MR … (2) Frontmatter = Surgical …"). Prove
 across three live incidents (2026-07-21 golem-13, and two more brokering #816
 and #793).
 
+**Never send a text directive as one `send-keys` call (#974).** The obvious
+spelling is wrong:
+
+```bash
+# WRONG — the directive lands in the composer UNSUBMITTED.
+tmux send-keys -t golem-{N} "OPERATOR DIRECTIVE: ..." Enter
+```
+
+Combined, the payload and the trailing CR arrive in the **same** `read()`, and
+the composer treats a CR inside one input chunk as a newline *within* the
+message rather than a submit. The text sits in the prompt, `tmux` reports
+success, and the golem idles until a **second** `Enter`. This is not
+length-dependent (measured at 200 chars) and has nothing to do with
+bracketed-paste. Use the helper, which splits the payload from the submit and
+confirms the composer emptied:
+
+```bash
+${CLAUDE_PLUGIN_ROOT}/scripts/golem-mode-check.sh verify-text {N} "OPERATOR DIRECTIVE: ..."
+```
+
+Quote the whole directive as **one** argument, and keep the payload
+**operator-authored** — `-l` stops tmux resolving it as key names, but it does
+not strip terminal escapes, and the text is painted into a pane a human later
+reads over `golem-attach.sh`. Relay a summary you wrote, never an untrusted
+issue or comment body piped straight through. **`verify-send` does not cover
+this** — its predicate asks only whether the pane *changed*, and typed-but-
+unsubmitted text changes it, so it reports `send confirmed` on exactly this
+failure. Two refusals to read correctly, because they call for opposite moves:
+`NOT SUBMITTED` means the text **was** typed and is sitting unsent — attach and
+press Enter, do **not** re-send the payload (it would double). `NOT SENT` means
+the composer already held text so nothing was typed at all — attach, clear the
+prompt, then retry.
+
 **What actually breaks — the constraints both paths are built on.** Backward
 navigation is the move that fails, not keystrokes in general:
 

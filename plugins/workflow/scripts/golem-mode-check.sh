@@ -73,6 +73,10 @@
 #   golem-mode-check.sh verify-send <N> <keys...>
 #                                          send keys to golem-N and CONFIRM the
 #                                          pane changed (the swallowed-send guard)
+#   golem-mode-check.sh verify-text <N> <text>
+#                                          relay a free-text directive to golem-N
+#                                          as payload-then-submit, and CONFIRM the
+#                                          composer emptied (the unsubmitted guard)
 #
 # Exit status (one-shot): 0 no drift · 1 drift found (report mode) or a golem
 # could not be corrected (--fix) · 2 usage/environment error (fail-loud).
@@ -289,6 +293,141 @@ _expect_not_plan() {
 }
 
 # ---------------------------------------------------------------------------
+# Text-directive relay (#974)
+# ---------------------------------------------------------------------------
+
+# A brokered FREE-TEXT directive is a different failure from the swallowed send
+# above, and verify_send cannot cover it.
+#
+# MEASURED CAUSE (tmux 3.5a, raw-mode reader behind the pane, logging read()):
+# `tmux send-keys -t golem-N "<text>" Enter` delivers the payload and the CR in
+# ONE read() — 200 bytes ending \r. The composer's paste heuristic treats a CR
+# arriving inside a single input chunk as a newline WITHIN the message rather
+# than a submit, so the text sits in the composer and the golem idles until a
+# second Enter arrives. Splitting the call delivers the CR as its own 1-byte
+# read, which submits. Reproduced at 200 chars, so it is NOT length-dependent
+# (tmux does split its own writes above 4095 bytes, but that boundary is
+# unrelated), and no bracketed-paste wrapper is ever emitted.
+#
+# WHY verify_send's PREDICATE IS BLIND TO IT. `_expect_changed` asks only
+# whether the pane text differs from before. Typed-but-unsubmitted text SATISFIES
+# that — the characters visibly appear in the composer — so verify-send reports
+# "send confirmed" for precisely this bug. Asserting the composer went EMPTY is
+# the only read that distinguishes "submitted" from "typed"; that is the AC's
+# "not merely that the pane changed".
+#
+# _composer_class <session> — echo empty | input | suggestion | unknown for the
+# golem's live composer line.
+#
+# The classifier is BORROWED, not re-derived: golem-gate-watch.sh's
+# pane_prompt_line_class already parses this exact line, and its parse is subtle
+# (anchors on the prompt glyph + NBSP PAIR, takes the FIRST occurrence, strips
+# SGR — each choice reached by measurement after getting it wrong). A second
+# hand-copy of that is the duplication #663 exists to kill.
+#
+# Sourced LAZILY rather than at file scope, and the real invariant is NARROWER
+# than "function scope protects the caller" — that is false, and measured false:
+# gate-watch assigns ~20 top-level globals of its own (`interval`, `ttl`,
+# `pane_error_lines`, `SLEEP`, `GREP`, `SCRIPT_DIR`, ...), and sourcing from
+# inside a function CLOBBERS them in the caller too unless the caller declared
+# them `local`. Nothing here does, and the dispatch arms below are top-level
+# code, where `local` is not even available. Setting `interval=SENTINEL` before
+# the call and reading it after returns gate-watch's `5`, not the sentinel.
+#
+# What actually makes this safe is control flow, so state it as such:
+#   the `verify-text` and `verify-send` arms `exit` immediately after their one
+#   use, BEFORE the flag-parsing loop or the watch loop ever read `$interval`.
+#
+# So: do NOT call _composer_class from a path that afterwards reads `$interval`
+# or any other gate-watch top-level name. Doing so would silently pick up
+# gate-watch's 5s watch cadence in place of the operator's `--interval` — no
+# error, just the wrong number. Lazy sourcing still buys something real (a
+# `--once`/`--watch` run never loads gate-watch at all); it is simply not what
+# bounds the clobber.
+#
+# gate-watch is main-guarded, has no side effects at load, and costs ~25ms.
+_composer_class() {
+    if [ "${_MC_GATE_WATCH_LOADED:-0}" != "1" ]; then
+        if [ ! -r "$SCRIPT_DIR/golem-gate-watch.sh" ]; then
+            command echo "unknown"
+            return 0
+        fi
+        # shellcheck source=./golem-gate-watch.sh
+        . "$SCRIPT_DIR/golem-gate-watch.sh" || {
+            command echo "unknown"
+            return 0
+        }
+        _MC_GATE_WATCH_LOADED=1
+    fi
+    pane_prompt_line_class "$1"
+}
+
+# verify_text <session> <text> — relay a free-text directive and CONFIRM it was
+# submitted. Returns 0 once the composer is empty, 1 when it never emptied.
+#
+# The payload goes out with `-l --`: `-l` sends it LITERALLY, so a word like
+# "Enter" inside the prose is not resolved as a key name, and `--` ends option
+# parsing, so a directive beginning with a dash is not eaten as a tmux flag.
+# verify_send passes "$@" through with neither, which is right for `1 Enter` and
+# `BTab` and wrong for arbitrary operator text.
+#
+# TRUST BOUNDARY: the payload must be OPERATOR-AUTHORED text. `-l` stops tmux
+# from resolving it as key names, but it does not strip terminal escape
+# sequences, and the text is painted into a pane a human later reads over
+# golem-attach.sh. Do not pipe untrusted content (an issue or comment body, a
+# web fetch) straight into this — filter it first, or relay a summary you wrote.
+#
+# The submit is retried up to GOLEM_MODE_FIX_ATTEMPTS times — the same bound the
+# auto-correct uses — because the observed failure is precisely that the FIRST
+# Enter does not take. Bounded-then-escalate, never spin: a submit that will not
+# land is a genuine stall and looping keystrokes at it forever is the failure
+# mode this script exists to avoid.
+verify_text() {
+    _vt_sess="$1"
+    _vt_text="$2"
+    _vt_attempt=0
+
+    # REFUSE to type into an occupied composer. Typing appends, so relaying onto
+    # leftover text would submit ONE merged directive — a decision the operator
+    # never wrote, delivered confidently. That is strictly worse than the bug
+    # being fixed (there the text at least sat visible and unsent), so this is a
+    # refusal rather than a clear-and-continue: whatever is already queued is
+    # someone's input, and this helper must not silently discard it.
+    #
+    # `unknown` does NOT block here — the composer is unreadable on a pane that
+    # has not repainted, and refusing on it would make the relay unusable exactly
+    # when a golem is busy. The submit-side check below is what actually
+    # confirms delivery, and it treats `unknown` as a failure.
+    #
+    # Returns 3, not 1, so the caller can say "nothing was sent" — the generic
+    # failure message tells the operator not to re-send the payload, which is
+    # exactly the wrong advice when the payload never went out.
+    case "$(_composer_class "$_vt_sess")" in
+        input | suggestion) return 3 ;;
+    esac
+
+    # Payload first, on its own — never combined with the submit.
+    tmux send-keys -t "$_vt_sess" -l -- "$_vt_text" 2>/dev/null || return 1
+    "$SLEEP" 1
+
+    while [ "$_vt_attempt" -lt "$GOLEM_MODE_FIX_ATTEMPTS" ]; do
+        _vt_attempt=$((_vt_attempt + 1))
+        tmux send-keys -t "$_vt_sess" Enter 2>/dev/null || return 1
+        # Let the pane repaint before re-scraping; a same-instant capture races
+        # the redraw and would read the PRE-submit composer, reporting a false
+        # "not submitted" for a send that actually worked.
+        "$SLEEP" 1
+        # `unknown` deliberately consumes a retry rather than passing. It is the
+        # documented cannot-tell state (pane not repainted, a modal overlay), and
+        # reading it as success would confirm a directive that was never
+        # submitted — the assume-the-keystroke-worked failure this whole file
+        # exists to close. Same rule as _expect_not_plan above.
+        [ "$(_composer_class "$_vt_sess")" = "empty" ] && return 0
+    done
+    return 1
+}
+
+# ---------------------------------------------------------------------------
 # Check + correct
 # ---------------------------------------------------------------------------
 
@@ -405,16 +544,46 @@ require_tmux() {
     return 0
 }
 
+# resolve_golem_session <N|golem-N> — set _rgs_sess to the tmux session name;
+# return 1 (after a loud message) when the id is not a safe session name. Shared
+# by the verify-send and verify-text arms so the two cannot drift apart on what
+# counts as a valid golem id.
+#
+# It assigns rather than echoes, and the caller exits: a `$(...)` wrapper would
+# run the validation in a SUBSHELL, where an `exit 2` kills only that subshell
+# and the parent sails on with an empty session name — a rejected id would then
+# be sent to `tmux -t ""`. Assign-and-return keeps the refusal in the one process
+# that can act on it.
+resolve_golem_session() {
+    case "$1" in
+        golem-*) _rgs_sess="$1" ;;
+        *) _rgs_sess="golem-$1" ;;
+    esac
+    case "$_rgs_sess" in
+        *[!A-Za-z0-9_.-]*)
+            command echo "golem-mode-check: invalid golem id '$1'" >&2
+            return 1
+            ;;
+    esac
+    return 0
+}
+
 usage() {
     command cat >&2 <<'EOF'
 usage: golem-mode-check.sh [--once|--watch] [--fix] [--interval S]
        golem-mode-check.sh verify-send <N|golem-N> <keys...>
+       golem-mode-check.sh verify-text <N|golem-N> <text>
 
   Detect golems left in plan mode past their planning phase (#659), and with
   --fix correct them (bounded by GOLEM_MODE_FIX_ATTEMPTS, verified by re-scrape).
 
   verify-send sends keystrokes to a golem and confirms the pane actually changed
   — a send to a golem with a modal open is silently swallowed.
+
+  verify-text relays a free-text directive: payload and submit as SEPARATE sends
+  (combined, the trailing Enter is read as a newline and the text sits unsent),
+  confirmed by the composer emptying rather than by the pane merely changing
+  (#974). Use it for every brokered text directive.
 EOF
 }
 
@@ -440,16 +609,8 @@ if [ "${1:-}" = "verify-send" ]; then
     require_tmux || exit 2
     vs_arg="$1"
     shift
-    case "$vs_arg" in
-        golem-*) vs_sess="$vs_arg" ;;
-        *) vs_sess="golem-$vs_arg" ;;
-    esac
-    case "$vs_sess" in
-        *[!A-Za-z0-9_.-]*)
-            command echo "golem-mode-check: invalid golem id '$vs_arg'" >&2
-            exit 2
-            ;;
-    esac
+    resolve_golem_session "$vs_arg" || exit 2
+    vs_sess="$_rgs_sess"
     # Confirm the pane simply CHANGED — the generic swallowed-send guard, with no
     # opinion about what the keys were meant to do.
     vs_before="$(tmux capture-pane -p -t "$vs_sess" 2>/dev/null || true)"
@@ -461,6 +622,44 @@ if [ "${1:-}" = "verify-send" ]; then
     command echo "$vs_sess — SEND NOT CONFIRMED: the pane did not change." >&2
     command echo "  A send to a golem with a permission modal open is silently swallowed —" >&2
     command echo "  the keys never reach the transcript. Attach and check: golem-attach.sh ${vs_sess#golem-}" >&2
+    exit 1
+fi
+
+# `verify-text` — the free-text sibling (#974). Same subcommand shape, different
+# delivery (payload and submit split) and a different predicate (the composer
+# emptied, not merely that the pane changed).
+if [ "${1:-}" = "verify-text" ]; then
+    shift
+    if [ "$#" -ne 2 ]; then
+        command echo "golem-mode-check: verify-text needs <N|golem-N> and exactly one <text> argument" >&2
+        command echo "  Quote the whole directive as ONE argument: verify-text 7 \"OPERATOR DIRECTIVE ...\"" >&2
+        exit 2
+    fi
+    require_tmux || exit 2
+    resolve_golem_session "$1" || exit 2
+    vt_sess="$_rgs_sess"
+    vt_text="$2"
+    if [ -z "$vt_text" ]; then
+        command echo "golem-mode-check: verify-text needs a non-empty directive" >&2
+        exit 2
+    fi
+    vt_rc=0
+    verify_text "$vt_sess" "$vt_text" || vt_rc=$?
+    if [ "$vt_rc" -eq 0 ]; then
+        command echo "$vt_sess — directive submitted (composer empty)"
+        exit 0
+    fi
+    if [ "$vt_rc" -eq 3 ]; then
+        command echo "$vt_sess — NOT SENT: the composer already holds text." >&2
+        command echo "  Typing appends, so relaying now would submit ONE merged directive the" >&2
+        command echo "  operator never wrote. Nothing was sent. Attach and clear the prompt," >&2
+        command echo "  then retry: golem-attach.sh ${vt_sess#golem-}" >&2
+        exit 1
+    fi
+    command echo "$vt_sess — DIRECTIVE NOT SUBMITTED: the composer did not empty after" >&2
+    command echo "  $GOLEM_MODE_FIX_ATTEMPTS submit attempt(s). The text is most likely sitting UNSENT in the" >&2
+    command echo "  golem's prompt — it will idle until submitted. Do NOT re-send the payload" >&2
+    command echo "  (that would double it). Attach and press Enter: golem-attach.sh ${vt_sess#golem-}" >&2
     exit 1
 fi
 
