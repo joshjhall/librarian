@@ -46,11 +46,14 @@ test_skip_patterns:
 
   # check-okf-conformance's slice-B pass (bundle graph + health), extracted from
   # patterns.sh when it went over its production-LOC budget (#991). Sourced, not
-  # executed: it has no shebang, reads `$TAB`/`$_here` and calls `emit` from its
-  # parent, and patterns.sh fails loud if it is missing. Covered through the
-  # parent's suites — tests/validate-okf-detectors.sh drives it end-to-end in
-  # both runtimes, and tests/validate-python-ports.sh pins its TSV parity with
-  # bundle_graph.py, the python sibling it mirrors.
+  # executed: it reads `$TAB`/`$_here` and calls `emit` from its parent, and
+  # patterns.sh fails loud if it is missing. It carries a shebang and the
+  # executable bit like golem-status-signals.sh above — the bundled-script gates
+  # require both of every plugins/**/*.sh — so the shebang is not the signal
+  # here; having no entry point is. Covered through the parent's suites:
+  # tests/validate-okf-detectors.sh drives it end-to-end in both runtimes, and
+  # tests/validate-python-ports.sh pins its TSV parity with bundle_graph.py,
+  # the python sibling it mirrors.
   - "plugins/review-audit/skills/check-okf-conformance/bundle-graph.sh"
 
   # DELIBERATELY ABSENT — these still fire, and should:
