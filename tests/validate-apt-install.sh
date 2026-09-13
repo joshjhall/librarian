@@ -326,6 +326,32 @@ test_mv_failure_is_loud() {
         "The failure names what could not be disabled"
 }
 
+# The elevation override is honored ONLY under APT_INSTALL_SKIP_APT=1, so that a
+# value leaking in from a CI matrix cannot substitute the privileged command in a
+# production run.
+#
+# THE TRUE BRANCH is what the three tests above exercise. The FALSE branch —
+# override set, skip mode off — cannot be driven end-to-end here: with the gate
+# closed the script proceeds to a real `apt-get update`, which this suite must
+# not run. So the assertion is structural: the guard must still be spelled with
+# the SKIP_APT conjunct. That is weaker than a behavioural test and is stated as
+# such rather than dressed up — it catches the regression that matters (the
+# conjunct being dropped or weakened to `||`, which no other test would notice)
+# and nothing subtler.
+#
+# assert_file_defines is deliberate: a plain grep would be satisfied by the
+# explanatory comment directly above the guard, which names the same variable
+# (#830). Here it anchors the SUDO assignment itself.
+test_sudo_override_is_gated_on_skip_mode() {
+    assert_file_defines "$APT_INSTALL" "SKIP_APT" \
+        "SKIP_APT is assigned from the environment"
+    # The pattern is a BRE, so `[` would open a character class — match on the
+    # unambiguous middle of the conjunction instead of the bracketed tests.
+    assert_file_contains "$APT_INSTALL" \
+        '"$SKIP_APT" = "1" .* -n "${APT_INSTALL_SUDO:-}"' \
+        "The elevation override is conjoined with skip mode, not honored alone"
+}
+
 test_script_is_executable_shell() {
     assert_file_exists "$APT_INSTALL" "bin/apt-install.sh exists"
     assert_true "bash -n '$APT_INSTALL'" "The script parses as valid bash"
@@ -362,5 +388,6 @@ run_test test_no_packages_is_an_error "No packages fails loud with a usage error
 run_test test_rename_does_not_invoke_sudo "A sandbox rename does not shell out to sudo"
 run_test test_rename_invokes_sudo_when_dir_unwritable "An unwritable sources dir DOES use sudo"
 run_test test_mv_failure_is_loud "A failed rename exits non-zero with a named source"
+run_test test_sudo_override_is_gated_on_skip_mode "The elevation override is gated on skip mode"
 
 generate_report
