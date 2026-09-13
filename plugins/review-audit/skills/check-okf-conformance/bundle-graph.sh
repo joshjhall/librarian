@@ -1,10 +1,13 @@
-# shellcheck shell=bash
+#!/usr/bin/env bash
 # bundle-graph.sh — slice B: bundle graph + health (#669).
 #
-# SOURCED, NOT EXECUTED. No shebang on purpose: this is a fragment of
-# patterns.sh, sourced by it, exactly as bundle_graph.py is imported by
-# patterns.py. Running it standalone does nothing useful — it defines functions
-# that read globals (`$TAB`, `$_here`) and call helpers (`emit`) its parent owns.
+# SOURCED, NOT EXECUTED. It is a fragment of patterns.sh, sourced by it, exactly
+# as bundle_graph.py is imported by patterns.py. Running it standalone does
+# nothing useful — it defines functions that read globals (`$TAB`, `$_here`) and
+# call helpers (`emit`) its parent owns. It carries a shebang and the executable
+# bit anyway, matching plugins/workflow/scripts/golem-status-signals.sh: the
+# repo's bundled-script gates (tests/lint-skills-agents.sh) require both of every
+# `.sh` under plugins/, and a sourced fragment is not exempt.
 #
 # WHY IT IS A SEPARATE FILE (#991). The python twin has always been split this
 # way (patterns.py:58-66 seeds sys.path and imports this file's counterpart), so
