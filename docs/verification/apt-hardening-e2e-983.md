@@ -17,13 +17,13 @@ devcontainer ships neither that source nor that runner's apt state.
 ## What the in-session suite does and does not cover
 
 `tests/validate-apt-install.sh` drives `bin/apt-install.sh` against a sandbox
-`APT_SOURCES_LIST_D` in `APT_INSTALL_DRY_RUN=1` mode. That covers the **decision**
+`APT_SOURCES_LIST_D` with `APT_INSTALL_SKIP_APT=1`. That covers the **decision**
 — which files get disabled, that a deb822 `.sources` is caught alongside a
 legacy `.list`, that a re-run does not double-rename, that the constructed
 command carries `Acquire::Retries=3` and every package argument.
 
-It does **not** cover whether `apt-get` then succeeds, because the dry-run arm
-never invokes apt. That is precisely the half this file records.
+It does **not** cover whether `apt-get` then succeeds, because that arm never
+invokes apt. That is precisely the half this file records.
 
 `tests/lint-apt-hardening.sh` covers the other acceptance criterion (AC2 — the
 fix applied to _every_ workflow step running `apt-get`) offline and permanently,

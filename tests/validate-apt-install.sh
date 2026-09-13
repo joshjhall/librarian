@@ -214,30 +214,66 @@ test_no_packages_is_an_error() {
         "The error message is actionable"
 }
 
-# The claim the header makes, asserted rather than asserted-in-prose: against a
-# directory we own, the rename must not go through sudo. Pinned with a failing
-# `sudo` shim first on PATH — if the script ever reverts to deciding from
-# `id -u`, this fails here instead of hanging a contributor's `just test` on a
-# password prompt.
+# The claim the header makes, asserted rather than left as prose: against a
+# directory we own, the rename must not go through sudo at all.
+#
+# Asserted via APT_INSTALL_SUDO rather than a PATH shim. This repo's devcontainer
+# sets BASH_ENV=/etc/bash_env, which re-derives PATH for every non-interactive
+# bash — so a `PATH="$shim:$PATH"` assertion resolves the REAL sudo and passes no
+# matter what the script does. A first draft of this test did exactly that and
+# proved nothing; injecting the command name is immune to how PATH is rebuilt.
 test_rename_does_not_invoke_sudo() {
-    local dir shim
+    local dir marker
     dir="$(new_sources_dir)"
     command printf 'deb https://a.invalid/ stable main\n' >"$dir/a.list"
-    shim="$(command mktemp -d "$SANDBOX_ROOT/shimXXXXXX")"
-    command printf '#!/bin/sh\nexit 99\n' >"$shim/sudo"
-    command chmod +x "$shim/sudo"
+    marker="$SANDBOX_ROOT/nosudo-marker.$$"
 
     local outfile="$SANDBOX_ROOT/sudoprobe.$$"
     set +e
-    PATH="$shim:$PATH" APT_SOURCES_LIST_D="$dir" APT_INSTALL_SKIP_APT=1 \
+    APT_SOURCES_LIST_D="$dir" APT_INSTALL_SKIP_APT=1 \
+        APT_INSTALL_SUDO="$MARKER_SUDO" MARKER_FILE="$marker" \
         bash "$APT_INSTALL" jq >"$outfile" 2>&1
     local status=$?
     set -e
     command rm -f "$outfile"
 
-    assert_equals "0" "$status" "Exits 0 with a failing sudo on PATH"
-    assert_file_exists "$dir/a.list.disabled" \
-        "The rename succeeds without invoking sudo on a directory we own"
+    assert_equals "0" "$status" "Exits 0 against a directory we own"
+    assert_file_exists "$dir/a.list.disabled" "The rename still happens"
+    local sudo_used=0
+    [ -f "$marker" ] && sudo_used=1
+    command rm -f "$marker"
+    assert_equals "0" "$sudo_used" \
+        "Elevation is NOT reached for a directory we own"
+}
+
+# The OTHER half of the predicate, and the one that matters in production:
+# /etc/apt/sources.list.d on a runner is root-owned, so the rename MUST still
+# elevate there. Without this, inverting or dropping the predicate would leave
+# the suite green while CI began failing with "failed to disable apt source".
+test_rename_invokes_sudo_when_dir_unwritable() {
+    local dir marker
+    dir="$(new_sources_dir)"
+    command printf 'deb https://a.invalid/ stable main\n' >"$dir/a.list"
+    marker="$SANDBOX_ROOT/sudo-marker.$$"
+    # Make the directory unwritable so the predicate must choose elevation. The
+    # marker command re-opens it and then performs the rename, standing in for
+    # what real sudo would achieve.
+    command chmod 555 "$dir"
+
+    local outfile="$SANDBOX_ROOT/sudoreq.$$"
+    set +e
+    APT_SOURCES_LIST_D="$dir" APT_INSTALL_SKIP_APT=1 \
+        APT_INSTALL_SUDO="$MARKER_SUDO" MARKER_FILE="$marker" TARGET_DIR="$dir" \
+        bash "$APT_INSTALL" jq >"$outfile" 2>&1
+    set -e
+    command rm -f "$outfile"
+    command chmod 755 "$dir"
+
+    local sudo_used=0
+    [ -f "$marker" ] && sudo_used=1
+    command rm -f "$marker"
+    assert_equals "1" "$sudo_used" \
+        "Elevation IS reached when the sources directory is not writable"
 }
 
 test_script_is_executable_shell() {
@@ -250,6 +286,19 @@ SANDBOX_ROOT="$(command mktemp -d)" || {
     exit 1
 }
 
+# A stand-in for sudo, passed to the script as APT_INSTALL_SUDO. It touches
+# $MARKER_FILE so the caller can tell whether elevation was reached, re-opens
+# $TARGET_DIR when one is given (what real sudo would achieve for a root-owned
+# sources dir), then runs the command it was handed.
+MARKER_SUDO="$SANDBOX_ROOT/marker-sudo"
+command cat >"$MARKER_SUDO" <<'MARKER'
+#!/bin/sh
+[ -n "${MARKER_FILE:-}" ] && touch "$MARKER_FILE"
+[ -n "${TARGET_DIR:-}" ] && chmod u+w "$TARGET_DIR"
+exec "$@"
+MARKER
+command chmod +x "$MARKER_SUDO"
+
 run_test test_script_is_executable_shell "Script exists and parses"
 run_test test_disables_list_file "A .list third-party source is disabled"
 run_test test_disables_sources_file "A deb822 .sources source is disabled"
@@ -261,5 +310,6 @@ run_test test_command_carries_retries "apt-get carries Acquire::Retries=3 and th
 run_test test_multiple_packages_preserved "Multiple package arguments are preserved"
 run_test test_no_packages_is_an_error "No packages fails loud with a usage error"
 run_test test_rename_does_not_invoke_sudo "A sandbox rename does not shell out to sudo"
+run_test test_rename_invokes_sudo_when_dir_unwritable "An unwritable sources dir DOES use sudo"
 
 generate_report

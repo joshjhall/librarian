@@ -46,6 +46,51 @@ _apt_lines() {
         command grep -vE '^[0-9]+:[[:space:]]*#' || true
 }
 
+# line_is_routed <line> — true when EVERY apt-get occurrence on the line is
+# routed through the installer.
+#
+# Two bypasses make this a per-CLAUSE question rather than a per-line one, and
+# both are the same shape: a line that contains the installer path somewhere,
+# while still running a bare apt-get somewhere else.
+#
+#   run: sudo apt-get install -y jq  # deliberately not bin/apt-install.sh
+#   run: bash bin/apt-install.sh jq && sudo apt-get install -y curl
+#
+# The first excuses itself in a comment, the second chains past the routed call.
+# A naive `[[ "$line" == *"$INSTALLER"* ]]` accepts both — and they are the two
+# lines most likely to BE a real bypass, since each is what someone writes when
+# they know about the rule and are working around it.
+#
+# So: drop the comment, split the rest on the shell's own separators, and
+# require each clause that mentions apt-get to also invoke the installer.
+#
+# The comment split is a plain `%%#*` and is NOT quote-aware — a routed line
+# carrying a literal `#` in an earlier quoted argument would be truncated and
+# flagged. That direction is deliberate and safe: truncation only ever REMOVES
+# text before a containment test, so it can add a false positive (a loud CI
+# failure on a line a human then rewrites) but can never hide a bare apt-get. A
+# fail-closed misfire is the right side to err on for a gate whose whole job is
+# to notice a bypass.
+line_is_routed() {
+    local code="${1%%#*}"
+    local clause
+    # IFS split on the separators a compound `run:` line can use. Word-splitting
+    # here is intentional, hence the disable.
+    local old_ifs="$IFS"
+    IFS=';&|'
+    # shellcheck disable=SC2086
+    set -- $code
+    IFS="$old_ifs"
+    for clause in "$@"; do
+        case "$clause" in
+            *apt-get*)
+                [[ "$clause" == *"$INSTALLER"* ]] || return 1
+                ;;
+        esac
+    done
+    return 0
+}
+
 # scan_file <path> — populate CUR_VIOLATIONS with one indented line per
 # unrouted apt-get invocation (empty when the file is clean).
 CUR_FILE=""
@@ -53,21 +98,12 @@ CUR_VIOLATIONS=""
 scan_file() {
     local file="$1"
     CUR_VIOLATIONS=""
-    local entry lineno line code
+    local entry lineno line
     while IFS= read -r entry; do
         [ -n "$entry" ] || continue
         lineno="${entry%%:*}"
         line="${entry#*:}"
-        # Routed through the installer -> fine.
-        #
-        # NOT a substring test on the whole line. `[[ "$line" == *"$INSTALLER"* ]]`
-        # would accept `run: sudo apt-get install -y jq  # not using
-        # bin/apt-install.sh`, i.e. exactly the direct invocation this gate
-        # exists to catch, because the excusing comment names the script. Strip
-        # any trailing comment first, then require the remaining COMMAND to
-        # invoke the installer.
-        code="${line%%#*}"
-        if [[ "$code" == *"$INSTALLER"* ]]; then
+        if line_is_routed "$line"; then
             continue
         fi
         CUR_VIOLATIONS="${CUR_VIOLATIONS}    ${lineno}: ${line}
@@ -103,6 +139,8 @@ test_negative_case_fires() {
       # a comment mentioning apt-get is not an invocation
       - name: Excused direct install
         run: sudo apt-get install -y curl  # deliberately not bin/apt-install.sh
+      - name: Chained past the installer
+        run: bash bin/apt-install.sh jq && sudo apt-get install -y ripgrep
       - name: Good routed install
         run: bash bin/apt-install.sh jq shellcheck
 FIXTURE
@@ -124,6 +162,11 @@ FIXTURE
     # by the very line it is meant to catch.
     assert_contains "$CUR_VIOLATIONS" "install -y curl" \
         "A direct apt-get is flagged even when a comment names the installer"
+    # The other half of the same shape: a bare apt-get chained AFTER a routed
+    # call. The installer path is genuinely on the line, so only a per-clause
+    # check can see the second command at all.
+    assert_contains "$CUR_VIOLATIONS" "install -y ripgrep" \
+        "A bare apt-get chained after a routed call is still flagged"
 }
 
 # The installer must actually exist — otherwise every workflow "routes" to a

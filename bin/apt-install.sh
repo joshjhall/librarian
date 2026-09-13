@@ -43,6 +43,8 @@
 #                         disable step in a sandbox it already owns.
 #   APT_INSTALL_SKIP_APT  when 1, print the constructed apt-get commands instead
 #                         of running them.
+#   APT_INSTALL_SUDO      the command used to elevate (default `sudo`) — lets
+#                         the suite observe whether elevation was reached.
 #
 # APT_INSTALL_SKIP_APT is deliberately NOT called a "dry run": it skips the
 # apt-get calls only. The source-disabling step above still runs for real, which
@@ -67,9 +69,15 @@ fi
 
 # Run apt as root when we are not already (containers often are; runners are
 # not). Resolved once into a variable rather than branching at each call site.
+#
+# APT_INSTALL_SUDO overrides which command that is. It exists so the test suite
+# can observe whether sudo was reached, WITHOUT prepending a shim to PATH — this
+# repo's devcontainer sets BASH_ENV=/etc/bash_env, which re-derives PATH for
+# every non-interactive bash, so a PATH-shim assertion silently tests nothing.
+# That is the vacuous-assertion shape (#538/#571) in test clothing.
 SUDO=""
 if [ "$(command id -u)" -ne 0 ]; then
-    SUDO="sudo"
+    SUDO="${APT_INSTALL_SUDO:-sudo}"
 fi
 
 # The RENAME needs root only when the sources directory itself is not writable
