@@ -198,3 +198,16 @@ run_stage "Shellcheck (bundled shell scripts)" bash "$SCRIPT_DIR/lint-shellcheck
 # check different things and neither depends on the other's outcome.
 run_stage "bounded_run behavior (capture bound)" bash "$SCRIPT_DIR/validate-bounded-run.sh"
 run_stage "coverage-driver listener start attempt" bash "$SCRIPT_DIR/validate-cov-listener.sh"
+
+# apt hardening (#983). Two gates over one fix: the lint checks that every
+# workflow apt-get is ROUTED through bin/apt-install.sh (the acceptance criterion
+# is a property of the workflow files, not of the script), the validate suite
+# checks that what they route to actually disables the runner image's bundled
+# third-party sources. Both are ~1s.
+#
+# Here rather than beside lint-action-pins/validate-merge-gate in 10-portability,
+# which would be the thematic home as the other structural readers of
+# .github/workflows/: that shard's own header says to prefer 30-scanners for a
+# new gate, and at this size neither placement can reorder the matrix.
+run_stage "apt hardening (workflow routing)" bash "$SCRIPT_DIR/lint-apt-hardening.sh"
+run_stage "apt-install.sh behavior" bash "$SCRIPT_DIR/validate-apt-install.sh"

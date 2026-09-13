@@ -38,8 +38,12 @@ jobs:
       # superset of the PR gate (jq + shellcheck for the shell gates, ruff for
       # the Python lint gate) — otherwise those gates would skip-if-absent here
       # and a tag could publish Python/shell the PR suite would have linted.
+      #
+      # Routed through bin/apt-install.sh (#983) for the same reason as ci.yml's
+      # copy: a bundled third-party source in the runner image must not be able
+      # to fail an install of packages that do not come from it.
       - name: Install jq + shellcheck
-        run: sudo apt-get update && sudo apt-get install -y jq shellcheck
+        run: bash bin/apt-install.sh jq shellcheck
 
       # PINNED (#542) from ruff.toml's required-version via bin/ruff-version.sh,
       # same as ci.yml — a release must not be gated by a different ruff than the
