@@ -94,3 +94,5 @@ plugins/workflow/skills/orchestrate/mode-protocol.md 883 # carries all orchestra
 #     to trim; and the 382 cross-harness duplicated lines stay the BUDGET_FLOOR
 #     class, because the generated artifact still cannot import — fragments are
 #     shareable within a harness, never across them.
+||||||| parent of 6ddd4a7 (fix(review-audit): resolve both plugin layouts in the cross-plugin stager call)
+plugins/workflow/skills/orchestrate/mode-protocol.md 877 # carries all orchestration modes; splitting per-mode would scatter one decision table an operator reads end-to-end

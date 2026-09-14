@@ -95,16 +95,34 @@ The `Workflow` tool only accepts a `scriptPath` under the session's cwd, and the
 installed plugin root never is — so the bundled path must be staged, not handed
 over directly (#973):
 
+The stager ships with the **`workflow`** plugin, so this is the one site that
+reaches across a plugin boundary — and the two layouts put a sibling plugin in
+different places. **Try both, in order:**
+
 ```bash
+# First: dev checkout — plugins/<plugin>/ are siblings, no version segment
 ${CLAUDE_PLUGIN_ROOT}/../workflow/scripts/harness-stage.sh stage codebase-audit
+# Then: installed — an installed plugin root carries a <version> segment, so the
+#   sibling is one level deeper. ${CLAUDE_PLUGIN_ROOT} here is
+#   .../review-audit/<version>, hence ../../workflow/<version>/…
+${CLAUDE_PLUGIN_ROOT}/../../workflow/*/scripts/harness-stage.sh stage codebase-audit
 # -> path=…  source=…  staged=true|false
 ```
 
-**Fallback when `workflow` is not installed.** That script ships with the
-`workflow` plugin, which installs independently of this one — so if it is
-absent, copy this skill's own sibling `workflow.js` to `.claude/tmp/harness/`
-under the session cwd and use that path. The staging requirement is a property
-of the `Workflow` tool, not of either plugin; only the helper is optional.
+**Do not collapse these to the first one alone.** On an installed tree the
+sibling has a `<version>` path segment that spelling has no way to name, so it
+resolves to a file that does not exist and the call dies `No such file or
+directory` — on the *most common* deployment. That is the same class of defect
+that #973 exists to fix: a path that only works in a dev checkout, failing into
+a fallback that then looks like the ordinary case. (Every other call site in the
+pipeline stays inside its own plugin — `<skill-base-dir>/../../scripts/…` or
+`${CLAUDE_PLUGIN_ROOT}/scripts/…` — and never needs another plugin's version,
+because `harness-stage.sh` does that resolution internally in its probe 3.)
+
+**Fallback when `workflow` is genuinely not installed** (both spellings miss):
+copy this skill's own sibling `workflow.js` to `.claude/tmp/harness/` under the
+session cwd and use that path. The staging requirement is a property of the
+`Workflow` tool, not of either plugin; only the helper is optional.
 
 Pass the resolved parameters:
 
