@@ -20,7 +20,11 @@ the bundle as a whole.
 Semantic quality — near-duplicate concepts, tier placement, derivable content —
 is **slice C (#670)**, and it is deliberately not a scanner: it lives in the
 `audit-memory` agent, which consumes these rows (see § Pass 2). Migration is
-separate. **Index SIZING is out of scope too, deliberately** — see § Index
+separate: the `okf-migrate` skill (slice D, #671) **fixes** what this one
+reports, via `check`/`plan`/`apply` with deterministic transforms. The
+relationship runs one way — this scanner never writes, and that engine's
+reversibility fixtures drive **this** validator to prove a transform did what it
+claimed. **Index SIZING is out of scope too, deliberately** — see § Index
 sizing is delegated below.
 
 **Companion files**: See `contract.md` for the output format and the

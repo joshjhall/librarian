@@ -536,3 +536,90 @@ if [ -f "$TOKEN_ATTR_PY" ]; then
     unset _tarpt
     run_count=$((run_count + 1))
 fi
+
+# --- okf-migrate/migrate.py — the OKF migration engine (slice D, #671) -------
+#
+# THE ONLY WRITING TOOL IN THIS CORPUS, and that changes the driver's shape. Each
+# `apply` MUTATES its bundle, so every apply arm gets a FRESH COPY of the
+# pristine template built in 70-okf.sh. Reusing one bundle would run the second
+# apply against an already-migrated tree — every transform would find nothing to
+# do, the arms would report as covered, and the measurement would be of the
+# early-return paths rather than the transforms. Quietly wrong coverage, which is
+# worse than none.
+#
+# transforms.py is measured TRANSITIVELY here: migrate.py imports it at module
+# load, so its lines execute under every invocation below. That is why it is
+# declared in IMPORTED_MODULES rather than given a driver of its own — it has no
+# CLI, and a bespoke one would measure a path no caller takes.
+MIGRATE_PY="$PLUGINS_DIR/review-audit/skills/okf-migrate/migrate.py"
+if [ -f "$MIGRATE_PY" ]; then
+    # check + plan over the read-only template: both renderers, every transform's
+    # planning arm, and the plan-only notes.
+    OKF_BUNDLE_ROOT="$OKF_MIGRATE_SRC" OKF_PINNED_VERSION="0.2" \
+        run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
+        "$MIGRATE_PY" check >/dev/null 2>&1 || true
+    OKF_BUNDLE_ROOT="$OKF_MIGRATE_SRC" OKF_PINNED_VERSION="0.2" \
+        run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
+        "$MIGRATE_PY" plan >/dev/null 2>&1 || true
+
+    # A full apply on a throwaway copy — all three transforms' WRITE arms.
+    OKF_MIG_A="$WORKDIR/okf-mig-a/.claude/memory"
+    mkdir -p "$(dirname "$OKF_MIG_A")"
+    cp -R "$OKF_MIGRATE_SRC" "$OKF_MIG_A"
+    OKF_BUNDLE_ROOT="$OKF_MIG_A" OKF_PINNED_VERSION="0.2" \
+        run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
+        "$MIGRATE_PY" apply --confirm --allow-dirty >/dev/null 2>&1 || true
+    # A SECOND apply on the now-migrated tree — the idempotent no-edit arms.
+    OKF_BUNDLE_ROOT="$OKF_MIG_A" OKF_PINNED_VERSION="0.2" \
+        run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
+        "$MIGRATE_PY" apply --confirm --allow-dirty >/dev/null 2>&1 || true
+
+    # --transform filtering, on its own fresh copy.
+    OKF_MIG_B="$WORKDIR/okf-mig-b/.claude/memory"
+    mkdir -p "$(dirname "$OKF_MIG_B")"
+    cp -R "$OKF_MIGRATE_SRC" "$OKF_MIG_B"
+    OKF_BUNDLE_ROOT="$OKF_MIG_B" OKF_PINNED_VERSION="0.2" \
+        run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
+        "$MIGRATE_PY" apply --transform wikilink-convert --confirm --allow-dirty \
+        >/dev/null 2>&1 || true
+
+    # Refusal + ambiguity arms: missing --confirm (2), a plan-only transform (2),
+    # an unmatched type (3). None writes, so they share a bundle.
+    OKF_BUNDLE_ROOT="$OKF_MIGRATE_SRC" OKF_PINNED_VERSION="0.2" \
+        run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
+        "$MIGRATE_PY" apply >/dev/null 2>&1 || true
+    OKF_BUNDLE_ROOT="$OKF_MIGRATE_SRC" OKF_PINNED_VERSION="0.2" \
+        run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
+        "$MIGRATE_PY" apply --transform split-index --confirm >/dev/null 2>&1 || true
+    OKF_BUNDLE_ROOT="$OKF_MIGRATE_AMBIG" OKF_PINNED_VERSION="0.2" \
+        run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
+        "$MIGRATE_PY" apply --transform backfill-type --confirm --allow-dirty \
+        >/dev/null 2>&1 || true
+    OKF_BUNDLE_ROOT="$OKF_MIGRATE_AMBIG" OKF_PINNED_VERSION="0.2" \
+        run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
+        "$MIGRATE_PY" check >/dev/null 2>&1 || true
+
+    # adopt_bundle's idempotent early return (an index already exists).
+    OKF_BUNDLE_ROOT="$OKF_MIGRATE_ADOPTED" OKF_PINNED_VERSION="0.2" \
+        run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
+        "$MIGRATE_PY" check >/dev/null 2>&1 || true
+
+    # Negative / edge arms: usage, unknown mode, unknown flag, a flag missing its
+    # value, an absent bundle root, an empty root, and an unresolvable pin.
+    run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
+        "$MIGRATE_PY" --help >/dev/null 2>&1 || true
+    run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
+        "$MIGRATE_PY" bogus-mode >/dev/null 2>&1 || true
+    OKF_BUNDLE_ROOT="$OKF_MIGRATE_SRC" run_coverage run --parallel-mode \
+        --source="$PLUGINS_DIR" "$MIGRATE_PY" check --bogus-flag >/dev/null 2>&1 || true
+    OKF_BUNDLE_ROOT="$OKF_MIGRATE_SRC" run_coverage run --parallel-mode \
+        --source="$PLUGINS_DIR" "$MIGRATE_PY" check --transform >/dev/null 2>&1 || true
+    OKF_BUNDLE_ROOT="$OKF_MIGRATE_SRC" run_coverage run --parallel-mode \
+        --source="$PLUGINS_DIR" "$MIGRATE_PY" check --format >/dev/null 2>&1 || true
+    OKF_BUNDLE_ROOT="$OKF_MIGRATE_ABSENT" OKF_PINNED_VERSION="0.2" \
+        run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
+        "$MIGRATE_PY" check >/dev/null 2>&1 || true
+    OKF_BUNDLE_ROOT="" run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
+        "$MIGRATE_PY" check >/dev/null 2>&1 || true
+    run_count=$((run_count + 1))
+fi
