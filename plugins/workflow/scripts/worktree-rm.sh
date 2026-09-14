@@ -631,6 +631,14 @@ leftover_is_worktree_residue() {
 # repairs it, and no amount of bindfs reconfiguration will help. Do not go
 # refactoring the FUSE layer looking for this.
 #
+# NOT MACOS-ONLY (#1017). The same shape — EBADF on `ls`/`stat`/`unlink`, with
+# `lsof` showing no process holding the paths — reproduced on a LINUX
+# devcontainer overlay, so the attribution above is the measured macOS
+# mechanism rather than the full set of platforms that can produce it. The
+# handling is platform-independent (tolerate, report, quarantine), so this
+# widening is about not misleading the next reader into thinking a Linux
+# occurrence means something different is wrong.
+#
 # Nothing is at risk: git has no record of those files, `.worktrees/` is
 # gitignored, and the golem collision guard reads `git worktree list`, not the
 # directory. So an undeletable directory is an EXPECTED outcome on that
@@ -782,19 +790,43 @@ remove_leftover_dir() {
         # than claiming a quarantine that did not happen.
         command echo "  $wtdir could not be moved aside either, so the path stays occupied"
     fi
-    command echo "  (expected on the macOS virtiofs mount stack — nothing git-tracked is at risk)"
+    command echo "  (expected on the macOS virtiofs mount stack, and reproduced on a Linux"
+    command echo "   devcontainer overlay — nothing git-tracked is at risk)"
     removed=1
 }
 
-# A worktree git no longer lists cannot hold unmerged commits to lose, so there
-# is nothing git-tracked left to protect — but the directory may still be on
-# disk. Before this fix the whole removal block was gated on being listed, so
-# such a leftover was NEVER cleaned: re-running worktree-rm.sh reported "nothing
-# to remove" while the directory sat there, which is why the #813 reporter had to
-# `rm -rf` by hand. Clean it up and prune, then continue to branch/tmux teardown
-# — but only once the guard above confirms it really is worktree residue.
-if [ "$listed" -eq 0 ] && { [ -e "$wt" ] || [ -L "$wt" ]; }; then
-    residue_reason="$(leftover_is_worktree_residue "$root" "$wt")" || true
+# cleanup_leftover_dir <root> <worktree> — the whole leftover-directory
+# sequence: residue guard, removal/quarantine, prune. Returns 0 when the caller
+# should CONTINUE to the branch and tmux steps; EXITS 1 on a refusal.
+#
+# EXTRACTED BY #1017, which gave it a second caller. It was two top-level
+# `listed -eq 0` blocks, reachable only by a teardown that found the worktree
+# already deregistered on entry — so a LIVE golem worktree never reached it.
+# That is the common case: `git worktree remove --force` deregisters the
+# worktree and THEN fails the delete, and the force-failure branch below exited
+# 1 at that point, leaving the `issue-N` path occupied and the #936 quarantine
+# unreached. Four consecutive teardowns in one orchestrate run ended that way.
+# The sequence is identical at both call sites, so it is one function rather
+# than a copy that can drift.
+#
+# THE RESIDUE GUARD RUNS ON BOTH PATHS, and the force-failure caller does not
+# get an exemption for having just seen git register the path. "git had it a
+# moment ago" is an inference about a path this script is about to `rm -rf`,
+# and the guard exists precisely because such inferences are what cost an
+# operator their data (see leftover_is_worktree_residue's header). A refusal is
+# equally correct at either call site: an unrecognized path is refused wherever
+# it is found.
+#
+# THE LEAD-IN IS AN ARGUMENT, not something the caller echoes first, and it is
+# printed only AFTER the guard passes. The two callers describe different
+# situations — one found the worktree already gone, the other just deregistered
+# it — but neither should announce "removing the leftover directory" ahead of a
+# refusal that removes nothing. Echoing it at the call site would do exactly
+# that, and the resulting transcript would state an action the script then
+# declined to take: the misreporting class this whole region exists to avoid.
+cleanup_leftover_dir() {
+    local rootdir="$1" wtdir="$2" lead_in="$3" residue_reason
+    residue_reason="$(leftover_is_worktree_residue "$rootdir" "$wtdir")" || true
     if [ "$residue_reason" != "residue" ]; then
         # Name the guard that actually tripped. One sentence covering all three
         # would misdescribe two of them — a symlinked path may well HAVE a valid
@@ -805,37 +837,50 @@ if [ "$listed" -eq 0 ] && { [ -e "$wt" ] || [ -L "$wt" ]; }; then
         # not commit it.
         case "$residue_reason" in
             symlink)
-                command echo "worktree-rm: $wt is a symlink, not a worktree directory." >&2
+                command echo "worktree-rm: $wtdir is a symlink, not a worktree directory." >&2
                 command echo "  Teardown never deletes through a symlink." >&2
                 ;;
             outside-root)
-                command echo "worktree-rm: $wt resolves outside the repo root ($root)." >&2
+                command echo "worktree-rm: $wtdir resolves outside the repo root ($rootdir)." >&2
                 command echo "  Check GOLEM_WORKTREE_DIR — teardown only removes paths inside the repo." >&2
                 ;;
             no-fingerprint)
-                command echo "worktree-rm: $wt has no .git entry, so it may never have been a worktree." >&2
+                command echo "worktree-rm: $wtdir has no .git entry, so it may never have been a worktree." >&2
                 command echo "  It is not registered either, so there is nothing to confirm it is stale residue." >&2
                 ;;
             *)
-                command echo "worktree-rm: $wt could not be resolved for the residue check." >&2
+                command echo "worktree-rm: $wtdir could not be resolved for the residue check." >&2
                 ;;
         esac
         command echo "  Refusing to delete it — inspect and remove by hand if it is stale." >&2
         exit 1
     fi
-fi
 
-# The condition here is `-e` alone while the refusal above is `-e || -L`, and
-# the asymmetry is deliberate: a symlink (dangling or not) can never reach this
-# point, because leftover_is_worktree_residue refuses every symlink and the
-# block above exits on that refusal. Widening this one to match would therefore
-# change nothing today — but it would quietly become the branch that `rm -rf`s a
-# symlink if that guard were ever relaxed, so it stays narrow on purpose.
-if [ "$listed" -eq 0 ] && [ -e "$wt" ]; then
-    command echo "worktree-rm: $wt is no longer registered as a worktree" >&2
-    command echo "  (nothing git-tracked left to lose) — removing the leftover directory" >&2
-    remove_leftover_dir "$wt"
-    command git worktree prune || true
+    # The condition here is `-e` alone while the refusal above is `-e || -L`,
+    # and the asymmetry is deliberate: a symlink (dangling or not) can never
+    # reach this point, because leftover_is_worktree_residue refuses every
+    # symlink and the refusal above exits on that. Widening this one to match
+    # would therefore change nothing today — but it would quietly become the
+    # branch that `rm -rf`s a symlink if that guard were ever relaxed, so it
+    # stays narrow on purpose.
+    if [ -e "$wtdir" ]; then
+        command echo "$lead_in" >&2
+        remove_leftover_dir "$wtdir"
+        command git worktree prune || true
+    fi
+}
+
+# A worktree git no longer lists cannot hold unmerged commits to lose, so there
+# is nothing git-tracked left to protect — but the directory may still be on
+# disk. Before this fix the whole removal block was gated on being listed, so
+# such a leftover was NEVER cleaned: re-running worktree-rm.sh reported "nothing
+# to remove" while the directory sat there, which is why the #813 reporter had to
+# `rm -rf` by hand. Clean it up and prune, then continue to branch/tmux teardown
+# — but only once the guard confirms it really is worktree residue.
+if [ "$listed" -eq 0 ] && { [ -e "$wt" ] || [ -L "$wt" ]; }; then
+    cleanup_leftover_dir "$root" "$wt" \
+        "worktree-rm: $wt is no longer registered as a worktree
+  (nothing git-tracked left to lose) — removing the leftover directory"
 fi
 
 if [ "$listed" -eq 1 ]; then
@@ -929,13 +974,10 @@ if [ "$listed" -eq 1 ]; then
         else
             # The tree was verified clean, so this is NOT uncommitted work — it
             # is a removal that failed for some other reason (an undeletable
-            # path on the macOS virtiofs mount stack is the observed one — see
-            # remove_leftover_dir's header for why virtiofs, not the overlay
-            # above it). Report what
-            # git actually said instead of the false dirtiness claim #813 was
-            # filed about. Note git may ALREADY have deregistered the worktree
-            # while failing, so a re-run takes the leftover-directory path above
-            # rather than looping on this message.
+            # path is the observed one — see remove_leftover_dir's header for
+            # the platforms and why virtiofs, not the overlay above it). Report
+            # what git actually said instead of the false dirtiness claim #813
+            # was filed about.
             command echo "worktree-rm: could not remove $wt (the tree was verified clean)." >&2
             # Sanitized for the same reason the tmux failure text is: captured
             # subprocess stderr embeds PATHS, so a crafted filename could
@@ -950,7 +992,94 @@ if [ "$listed" -eq 1 ]; then
                 rm_err_safe="$(sanitize_stderr "$rm_err")"
                 command echo "  then, with --force: ${rm_err_safe:-(unprintable)}" >&2
             fi
-            exit 1
+
+            # FINISH THE TEARDOWN INSTEAD OF STOPPING HALF-DONE (#1017). A
+            # failing `git worktree remove --force` usually DEREGISTERS the
+            # worktree before reporting the failure (measured in #813 on git
+            # 2.55.0), which leaves exactly the leftover-directory state the
+            # block above handles — quarantine included. Before this change the
+            # script exited 1 right here, and the recovery (re-run the same
+            # command, which then takes that block) lived only in a source
+            # comment. Four consecutive teardowns in one orchestrate run ended
+            # with an agent finishing by hand and inventing a worse quarantine
+            # name than #936's, so the recovery was clearly not discoverable.
+            #
+            # RE-READ THE REGISTRATION RATHER THAN REUSING `listed`. The force
+            # is precisely the mutation that changes it, so the value captured
+            # at the top of the script is wrong here by construction — it says
+            # 1 in both the deregistered and the still-registered case. Same
+            # here-string capture as that first read, and for the same #928
+            # reason: piping into `grep -q` lets a match SIGPIPE the writer, and
+            # pipefail then inverts "IS listed" into listed=0.
+            #
+            # FAIL CLOSED on a re-read that ERRORS, and note this needs its own
+            # branch rather than falling out of the match (#1017 review). An
+            # errored `git worktree list` yields an EMPTY capture, and an empty
+            # capture does not match — which reads as "not listed" and routes
+            # to the cleanup arm. That is failing OPEN: it hands a path to the
+            # removal on the strength of a read that did not happen. (The
+            # residue guard downstream would still have to pass, so this was
+            # defense-in-depth rather than an exposure — but an earlier version
+            # of this comment claimed the fail-closed property the code did not
+            # have, which is the misreporting class this whole region exists to
+            # avoid. Caught by the test below, written because the review noted
+            # the branch was untested.)
+            #
+            # So keep the STATUS, not just the output, and treat an unreadable
+            # registration state as still-registered: refuse, and let the
+            # operator look.
+            post_rc=0
+            post_list="$(command git worktree list --porcelain 2>/dev/null)" || post_rc=$?
+            if [ "$post_rc" -ne 0 ] ||
+                command grep -qx "worktree $root/$wt" <<<"$post_list"; then
+                # Either git failed WITHOUT deregistering, or the re-read
+                # could not be evaluated at all. Both mean there is no leftover
+                # directory this run may adopt, so keep the refusal — but state
+                # the next action, so this exit stops being the one that leaves
+                # an operator guessing.
+                #
+                # The two are NOT reported with one sentence: claiming "still
+                # registered" about a state that could not be read would assert
+                # something unmeasured, which is the defect this region keeps
+                # being filed about.
+                if [ "$post_rc" -ne 0 ]; then
+                    command echo "  Could not re-read the worktree list afterwards, so whether the" >&2
+                    command echo "  worktree is still registered is unknown — nothing was removed." >&2
+                else
+                    command echo "  The worktree is still registered and nothing was removed." >&2
+                fi
+                command echo "  Next: inspect it, then retry — git -C $wt status; git worktree list" >&2
+                exit 1
+            fi
+
+            # Deregistered by the failed removal. Nothing git-tracked is left
+            # to lose, so teardown CONTINUES to the branch and tmux steps
+            # either way. Which message it prints depends on whether anything
+            # is actually still on disk.
+            #
+            # THE EXISTENCE GUARD MIRRORS THE FIRST CALL SITE, and it is not
+            # redundant (#1017 review). `cleanup_leftover_dir` runs the residue
+            # check BEFORE its own `-e` test, and the fingerprint arm of that
+            # check is `[ ! -e "$wtdir/.git" ]` — which is equally true when
+            # the whole directory is gone. So handing it an absent path exits 1
+            # with "has no .git entry, so it may never have been a worktree"
+            # about a path that both WAS a worktree and needs no cleanup:
+            # a false refusal, and precisely the misreporting class #813/#834
+            # exist to prevent. Reproduced before fixing, with a --force that
+            # removed the tree completely and still exited non-zero.
+            if [ -e "$wt" ] || [ -L "$wt" ]; then
+                cleanup_leftover_dir "$root" "$wt" \
+                    "  The worktree WAS deregistered by the failed removal, and the remnant
+  holds nothing git-tracked — completing the teardown now."
+            else
+                # Deregistered AND already gone: the removal actually completed
+                # and the non-zero status was about something else. There is
+                # nothing to clean, so say that rather than inventing residue.
+                command echo "  The worktree WAS deregistered and its directory is already gone," >&2
+                command echo "  so the removal completed despite the error — continuing teardown." >&2
+                command git worktree prune || true
+                removed=1
+            fi
         fi
     fi
 fi
