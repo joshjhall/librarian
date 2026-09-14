@@ -218,11 +218,18 @@ STAGED_BUNDLE="$WORKDIR/$BUNDLE_REL"
 if [ -n "${OKF_BUNDLE_BASELINE:-}" ]; then
     BASELINE="$OKF_BUNDLE_BASELINE"
 else
+    # NO DISK FALLBACK. An earlier draft fell back to $PROJECT_ROOT when the
+    # staged tree held no baseline, with a comment claiming the absent case was
+    # read as all-zeros — the comment described the intent and the code did the
+    # opposite, which is B1's own defect surviving in the one branch B1's fix did
+    # not cover. Staging the baseline's DELETION would have been judged against
+    # the copy still on disk.
+    #
+    # The path is passed through unconditionally instead: the gate treats a
+    # missing baseline as all-zeros, and that is the TIGHTER reading — removing
+    # the ratchet must fail loudly, never silently widen the allowance to
+    # whatever the desk happens to hold.
     BASELINE="$WORKDIR/$BASELINE_REL"
-    # Staged-for-deletion, or never tracked. The gate treats an absent baseline
-    # as all-zeros, which is the TIGHTER reading — deleting the ratchet must not
-    # silently widen it.
-    [ -f "$BASELINE" ] || BASELINE="$PROJECT_ROOT/$BASELINE_REL"
 fi
 
 # The bundle is staged-for-DELETION down to nothing, or was never tracked.
@@ -247,10 +254,27 @@ if [ "$GATE_RC" -eq 0 ]; then
     exit 0
 fi
 
-# The gate distinguishes its exits: 1 is "findings above the allowance", and
-# anything else (2, or the 77 sentinel for an absent scanner) means the gate
-# itself did not run. Conflating them would report a dirty bundle when the real
-# problem is a broken tool, sending the author to edit a file that is fine.
+# Anything but 0 or 1 (2, or the 77 sentinel for an absent scanner) means the
+# gate never ran. Conflating that with findings would report a dirty bundle when
+# the real problem is a broken tool, sending the author to edit a file that is
+# fine.
+#
+# BUT EXIT 1 IS NOT ONE CAUSE, and an earlier draft of this comment asserted it
+# was. tests/validate-okf-bundle.sh exits 1 from THREE places: findings above the
+# allowance (the case below), a bundle filename containing a newline (an
+# unrepresentable file list), and a scanner CRASH — and it documents the last two
+# as tool failures where "nothing was actually checked". Both of those arrive
+# here with no `exceed the allowance` line and no category rows, so the
+# per-category diagnostic below fell through to "the count rose elsewhere in the
+# bundle" and then listed memory-content remedies. Measured against a crashing
+# gate: actively wrong guidance, pointing at memory prose when nothing was
+# scanned. The commit was still blocked, so this misdirects rather than
+# mis-permits — but a diagnostic that names the wrong cause is how an author
+# spends an hour on the wrong file, which is most of what #1007 cost.
+#
+# Keyed off the gate's OWN tool-failure phrases rather than re-deriving the
+# conditions, for the same reason the rows below are forwarded rather than
+# recomputed.
 if [ "$GATE_RC" -ne 1 ]; then
     command printf 'check-memory-baselines: the OKF bundle gate did not run (exit %s).\n' \
         "$GATE_RC" >&2
@@ -258,6 +282,18 @@ if [ "$GATE_RC" -ne 1 ]; then
     command printf '\nNothing was verified — this is a broken gate, not a clean bundle.\n' >&2
     exit 2
 fi
+
+case "$GATE_OUT" in
+    *'scanner failed (exit'* | *'file-list line(s)'*)
+        command printf '\n' >&2
+        command printf 'check-memory-baselines: the OKF bundle gate FAILED for a tool reason,\n' >&2
+        command printf 'not because of your memory content. Nothing was actually checked:\n\n' >&2
+        command printf '%s\n' "$GATE_OUT" >&2
+        command printf '\nFix the tool (or the unrepresentable filename) — editing a memory\n' >&2
+        command printf 'file will not clear this.\n\n' >&2
+        exit 1
+        ;;
+esac
 
 # --- the diagnostic ---------------------------------------------------------
 #

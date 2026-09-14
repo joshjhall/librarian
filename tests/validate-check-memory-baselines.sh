@@ -636,6 +636,123 @@ test_non_git_directory_fails_loud() {
         "and names the reason"
 }
 
+# --- exit 1 is not one cause ------------------------------------------------
+
+# validate-okf-bundle.sh exits 1 from THREE places: findings above the
+# allowance, an unrepresentable file list (a filename containing a newline), and
+# a scanner CRASH — the last two documented there as tool failures where
+# "nothing was actually checked". Both reach the guard with no `exceed the
+# allowance` line and no category rows, so the per-category diagnostic used to
+# fall through to "the count rose elsewhere in the bundle" and then list memory
+# remedies: guidance that points at prose when nothing was scanned.
+#
+# Still blocked (the commit must not land on an unverified bundle) — what is
+# pinned here is that the REASON is named correctly.
+test_a_tool_failure_is_not_reported_as_memory_findings() {
+    local repo=""
+    make_repo repo
+
+    conformant_memory "$repo/.claude/memory/omicron.md" omicron
+    index_line "$repo" omicron.md Omicron
+    command git -C "$repo" add -A 2>/dev/null
+
+    # A gate that fails the way the real one does when its scanner crashes.
+    command cat >"$repo/tests/crash-gate.sh" <<'EOF'
+#!/usr/bin/env bash
+command printf 'validate-okf-bundle: scanner failed (exit 3):\n'
+command printf '  patterns.sh: unresolvable version pin\n'
+command printf 'The scanner reports a TOOL failure, not a dirty bundle.\n'
+exit 1
+EOF
+
+    run_guard "$repo" MEMORY_BASELINE_GATE="$repo/tests/crash-gate.sh"
+
+    assert_true "[ '$GUARD_RC' -eq 1 ]" \
+        "a scanner crash still blocks the commit (exit $GUARD_RC) — an unverified bundle must not land"
+    assert_contains "$GUARD_OUT" "FAILED for a tool reason" \
+        "and names the cause as a tool failure"
+    assert_not_contains "$GUARD_OUT" "count rose" \
+        "never claiming a count rose when nothing was counted"
+    assert_not_contains "$GUARD_OUT" "FIX THE FILE FIRST" \
+        "and never offering memory-content remedies for a broken scanner"
+}
+
+# --- the baseline staged for deletion ---------------------------------------
+
+# The one branch B1's fix did not initially cover: with no baseline in the
+# staged tree, an earlier draft fell back to the copy on DISK while its comment
+# claimed the absent case read as all-zeros — the comment stated the intent and
+# the code did the opposite. Staging the ratchet's deletion would then have been
+# judged against the file still sitting on the author's desk.
+test_deleting_the_baseline_does_not_fall_back_to_disk() {
+    local repo=""
+    make_repo repo
+
+    # beta.md already trips memory-missing-why, and the committed baseline
+    # allows 1. Remove the baseline: absent reads as all-zeros, so 1 > 0 fails.
+    #
+    # `--cached`, NOT a plain `git rm`, and that is what makes this a test.
+    # A plain `git rm` deletes the DISK copy too, so a disk-fallback has nothing
+    # to find and behaves identically to no fallback — the case passes either way
+    # and pins nothing (measured: the mutant survived it). Staged-for-deletion
+    # while the file remains on disk is both the real-world shape and the only
+    # one where the two implementations diverge.
+    # ORDER MATTERS: the memory is staged FIRST, because a later `git add -A`
+    # would re-add the baseline straight back from disk and silently undo the
+    # staged deletion this case is about. (It did, on the first draft — the
+    # assertion then failed for both implementations, which is a broken fixture
+    # rather than a caught bug.) Stage the deletion last, and never with -A.
+    conformant_memory "$repo/.claude/memory/pi.md" pi
+    index_line "$repo" pi.md Pi
+    command git -C "$repo" add -A 2>/dev/null
+    command git -C "$repo" rm -q --cached "$repo/tests/okf-bundle.baseline" 2>/dev/null
+
+    run_guard_default_baseline "$repo"
+
+    assert_true "[ '$GUARD_RC' -eq 1 ]" \
+        "deleting the baseline is judged as all-zeros, not against the disk copy (exit $GUARD_RC) — removing the ratchet must not silently widen the allowance"
+}
+
+# --- several categories at once ---------------------------------------------
+
+# Every other blocking case stages exactly ONE defect, so the diagnostic's
+# `awk '/exceed the allowance/, /^$/'` range and the per-file narrowing are only
+# ever exercised against a single row. A commit tripping two categories is a
+# plausible shape and exactly where a range pattern goes subtly wrong (stopping
+# at the first blank line between blocks).
+test_two_categories_are_both_reported() {
+    local repo=""
+    make_repo repo
+
+    # One memory missing its why sections; another conformant but unindexed.
+    command cat >"$repo/.claude/memory/rho.md" <<'EOF'
+---
+name: rho
+description: a memory with no why sections
+type: feedback
+---
+
+Body with no why sections.
+EOF
+    index_line "$repo" rho.md Rho
+    conformant_memory "$repo/.claude/memory/sigma.md" sigma
+    # sigma deliberately gets NO index line.
+    command git -C "$repo" add -A 2>/dev/null
+
+    run_guard "$repo"
+
+    assert_true "[ '$GUARD_RC' -eq 1 ]" \
+        "a commit tripping two categories is blocked (exit $GUARD_RC)"
+    assert_contains "$GUARD_OUT" "memory-missing-why" \
+        "the first category is reported"
+    assert_contains "$GUARD_OUT" "memory-orphan" \
+        "the second category is reported too — not truncated at the first block"
+    assert_contains "$GUARD_OUT" "rho.md" \
+        "and the first offending staged file is named"
+    assert_contains "$GUARD_OUT" "sigma.md" \
+        "as is the second"
+}
+
 # --- the whole-bundle-gone branch -------------------------------------------
 
 # A separately-coded early exit: if the staged tree has no bundle directory at
@@ -756,6 +873,12 @@ run_test test_absent_git_fails_loud \
     "an absent git fails loud"
 run_test test_non_git_directory_fails_loud \
     "a non-git directory fails loud"
+run_test test_a_tool_failure_is_not_reported_as_memory_findings \
+    "a tool failure is not reported as memory findings"
+run_test test_deleting_the_baseline_does_not_fall_back_to_disk \
+    "deleting the baseline does not fall back to the disk copy"
+run_test test_two_categories_are_both_reported \
+    "two simultaneously-exceeded categories are both reported"
 run_test test_deleting_the_whole_bundle_passes \
     "removing the entire bundle in one commit exits 0"
 run_test test_missing_gate_fails_loud \
