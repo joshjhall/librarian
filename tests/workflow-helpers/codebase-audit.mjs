@@ -523,6 +523,10 @@ export async function run() {
     eq(red.certainty.confidence, 0.6, "redactMemoryFindings: certainty object preserved");
     ok(red.description.includes(".claude/memory/retries.md"), "redactMemoryFindings: description names the file");
     ok(/audit\//.test(red.description), "redactMemoryFindings: description points the reader at the artifact path");
+    ok(
+      !red.description.includes("{timestamp}"),
+      "redactMemoryFindings: no unsubstituted {placeholder} in text a reader sees in a filed issue",
+    );
 
     // `tags` is clamped per-element as defense-in-depth. Today's ISSUE_TEMPLATE
     // does not render it, but issue-writer receives the whole object and composes
@@ -568,6 +572,38 @@ export async function run() {
       "redactMemoryFindings: NO string on a redacted memory finding carries body text (whole-object invariant)",
     );
 
+    // THE CROSS-DOMAIN CASE (#698 review cycle 2). The Step 2 routing table sends
+    // every bundle file to BOTH `memory` and `decomposition`, so audit-decomposition
+    // reads the same bodies and emits ai-file-bloat / decomposition-seam rows under
+    // a `decomposition:` ref — matching neither the domain key nor the okf-*/memory-*
+    // category key — and that agent has no redaction rule of its own. Keying on the
+    // FILE PATH is what closes it for every domain routed over the bundle.
+    const decomp = {
+      ref: "decomposition:.claude/memory/retries.md:1:ai-file-bloat#0",
+      category: "ai-file-bloat",
+      file: ".claude/memory/retries.md",
+      line_start: 1,
+      description: BODY,
+      evidence: BODY,
+      suggestion: BODY,
+      title: "memory concept exceeds its budget",
+      tags: [],
+      related_files: [],
+    };
+    ok(isMemoryFinding(decomp), "isMemoryFinding: a DECOMPOSITION finding over a bundle file is memory (path key)");
+    const [redDecomp] = redactMemoryFindings([decomp]);
+    ok(
+      !JSON.stringify(redDecomp).includes(leaked),
+      "redactMemoryFindings: a decomposition-domain finding over a bundle file IS redacted (cross-domain gap)",
+    );
+
+    // ...and the path key must not over-reach: an ordinary file is untouched even
+    // when its own path merely contains the bundle root as a substring.
+    ok(
+      !isMemoryFinding({ ref: "docs:docs/claude-memory-notes.md:1:stale-comment#0", category: "stale-comment", file: "docs/claude-memory-notes.md" }),
+      "isMemoryFinding: a non-bundle path is not swept in by the path key",
+    );
+
     // A malformed `ref` with no colon must not slice into a false domain match,
     // and must still fall through to the category key rather than throwing.
     ok(
@@ -577,6 +613,13 @@ export async function run() {
     ok(
       !isMemoryFinding({ ref: "memorynocolon", category: "dead-code" }),
       "isMemoryFinding: a colon-less ref does not itself create a domain match",
+    );
+    // THE BOUNDARY the shipped test originally missed: `indexOf` returns -1 when
+    // the colon is absent, and slice(0, -1) is "all but the last character" — so
+    // exactly `memory` + one char sliced to `"memory"` and matched the domain.
+    ok(
+      !isMemoryFinding({ ref: "memoryZ", category: "dead-code", file: "src/a.js" }),
+      "isMemoryFinding: 'memoryZ' does not slice into a false domain match (off-by-one)",
     );
 
     // clampFragment's exact boundary: at the cap it must pass through untouched,

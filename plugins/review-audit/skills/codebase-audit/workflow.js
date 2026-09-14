@@ -640,11 +640,47 @@ const MEMORY_CATEGORY_RE = /^(okf|memory)-/
 // self-reported `category`, which a project-level scanner could spell anything.
 const MEMORY_DOMAIN = 'memory'
 
+// The resolved memory-bundle root, matching the resolution order every other
+// bundle-aware consumer shares (orchestration-protocol.md Step 1): $OKF_BUNDLE_ROOT
+// -> $MEMORY_BUNDLE_ROOT -> .claude/memory. An EMPTY root means no bundle is
+// configured, and must therefore match NOTHING — never every path by prefix.
+const memoryBundleRoot = (() => {
+  const env = typeof process !== 'undefined' && process.env ? process.env : {}
+  const raw = env.OKF_BUNDLE_ROOT || env.MEMORY_BUNDLE_ROOT
+  const root = raw === undefined ? '.claude/memory' : String(raw)
+  return root.replace(/^\.\//, '').replace(/\/+$/, '')
+})()
+
+// Is this finding's FILE a memory-bundle file, regardless of which domain
+// produced the finding? This is the half a domain check cannot see (#698 review
+// cycle 2): the Step 2 routing table sends every bundle file to BOTH `memory`
+// AND `decomposition`, so audit-decomposition reads the same bodies and emits
+// `ai-file-bloat` / `decomposition-seam` rows about them under a
+// `decomposition:` ref — matching neither the domain key nor the okf-*/memory-*
+// category key. That agent carries no redaction rule of its own, so those
+// findings reached the tracker unredacted while the guarantee read as complete.
+// Keying on the path closes it for every present and future domain routed over
+// the bundle, which is the only form of the check that does not need updating
+// each time the routing table grows.
+const isMemoryBundlePath = (v) => {
+  if (!memoryBundleRoot) return false
+  const path = String(v == null ? '' : v).replace(/^\.\//, '')
+  return path === memoryBundleRoot || path.startsWith(`${memoryBundleRoot}/`)
+}
+
 const isMemoryFinding = (f) => {
   if (!f || typeof f !== 'object') return false
   const ref = typeof f.ref === 'string' ? f.ref : ''
-  if (ref.slice(0, ref.indexOf(':')) === MEMORY_DOMAIN) return true
-  return MEMORY_CATEGORY_RE.test(String(f.category || ''))
+  // Guard the missing-colon case explicitly. `indexOf` returns -1 when absent,
+  // and `slice(0, -1)` is "all but the last character" rather than the empty
+  // string — so a colon-less `'memoryZ'` slices to exactly `'memory'` and would
+  // match the domain. Unreachable via stampRefs today (it always delimits), and
+  // it errs toward redacting, but a helper whose contract is wrong is a trap for
+  // the next caller.
+  const colon = ref.indexOf(':')
+  if (colon !== -1 && ref.slice(0, colon) === MEMORY_DOMAIN) return true
+  if (MEMORY_CATEGORY_RE.test(String(f.category || ''))) return true
+  return isMemoryBundlePath(f.file)
 }
 
 // The redaction cap from audit-memory.md § Redaction: a fragment of a
@@ -697,8 +733,8 @@ const redactMemoryFindings = (findings) =>
       ...f,
       description:
         `Memory-bundle finding in ${where} (category: ${clampFragment(f.category)}). ` +
-        `Body withheld — run the audit with the files objective to read the full ` +
-        `finding under ./audit/{timestamp}/.`,
+        `Body withheld — re-run the audit with the files objective to read the ` +
+        `full finding locally under ./audit/.`,
       title: clampFragment(f.title, MEMORY_TITLE_CAP),
       evidence: clampFragment(f.evidence),
       suggestion: clampFragment(f.suggestion),

@@ -751,6 +751,26 @@ test_memory_redaction_is_enforced_in_the_harness() {
             "the redactor rewrites \`$field\` (required field — rewritten, never dropped)"
     done
 
+    # THE CROSS-DOMAIN KEY. The Step 2 routing table sends bundle files to BOTH
+    # `memory` and `decomposition`, and audit-decomposition — which has no
+    # redaction rule of its own — emits rows about those same bodies under a
+    # `decomposition:` ref with an ai-file-bloat category. Neither the domain key
+    # nor the category key sees it, so without a PATH key the guarantee read as
+    # complete while one of the two bundle-reading domains leaked.
+    local is_memory_body
+    is_memory_body="$(command awk '/^const isMemoryFinding/ { c = 1 } c { print } c && /^\}$/ { exit }' "$harness" | flatten)"
+    assert_not_empty "$is_memory_body" "the domain predicate is extractable"
+    assert_contains "$is_memory_body" "isMemoryBundlePath" \
+        "detection also keys on the bundle PATH, covering every domain routed over the bundle"
+    local detect_body
+    detect_body="$(command awk '/^const isMemoryBundlePath/ { c = 1 } c { print } c && /^\}$/ { exit }' "$harness" | flatten)"
+    assert_not_empty "$detect_body" "the path predicate is extractable"
+    # An empty root means NO bundle is configured, so it must match NOTHING —
+    # a prefix test against "" would match every path in the repo and redact the
+    # entire audit.
+    assert_contains "$detect_body" "if (!memoryBundleRoot) return false" \
+        "an empty bundle root matches nothing, rather than every path by prefix"
+
     # Locations survive. A finding stripped of its path is unactionable, and
     # paths are explicitly PERMITTED by audit-memory.md § Redaction — so their
     # absence from the rewrite list is the assertion, not their presence.

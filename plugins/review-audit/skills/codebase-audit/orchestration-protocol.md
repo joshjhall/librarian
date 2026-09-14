@@ -339,15 +339,28 @@ convention — is what guarantees it. A memory bundle holds operator-specific
 working notes and, in a consuming repo, material this repo has never seen;
 `issue-writer` posts to a remote, so one leak is public and irreversible.
 
-The harness therefore redacts every memory-domain finding **on the `issues` path
+The harness therefore redacts every memory-bundle finding **on the `issues` path
 only**, in code, before the agent is dispatched: `redactMemoryFindings`
 (`workflow.src/40-injection-utils.js`) rewrites `description`, `evidence` and
-`suggestion` — the three content-bearing fields, all of them *required* by
-`finding-schema.md`, hence rewritten rather than dropped — leaving the path,
-line, category and certainty intact. A finding is identified as memory-domain by
-the `<domain>:` prefix `stampRefs` stamps on its `ref`, with the `okf-*` /
-`memory-*` category slugs as a secondary key; the domain prefix comes from the
-harness's own map step rather than from a scanner's self-reported category.
+`suggestion` — the content-bearing fields, all of them *required* by
+`finding-schema.md`, hence rewritten rather than dropped — and additionally
+bounds `title`, `category`, `tags` and `related_files`, which no schema
+constraint limits and which the same bundle-reading agent populates. The rule it
+restores is checkable in one line: **no string on a memory finding reaches
+`issueWriterPrompt` without passing through the clamp.** Only `file`,
+`line_start`, `line_end` and `certainty` pass through untouched — locations are
+safe and are what make a redacted finding actionable.
+
+A finding qualifies three ways, and the **third is the one that matters**: the
+`<domain>:` prefix `stampRefs` stamps on its `ref`, the `okf-*` / `memory-*`
+category slugs, **or its `file` lying under the resolved bundle root**. The path
+key is not redundant with the other two — the Step 2 routing table sends every
+bundle file to **both** `memory` *and* `decomposition`, so `audit-decomposition`
+reads the same bodies and emits `ai-file-bloat` / `decomposition-seam` rows about
+them under a `decomposition:` ref, matching neither of the first two keys. That
+agent carries no redaction rule of its own. Keying on the path covers every
+domain routed over the bundle, present and future, instead of needing an edit
+each time that table grows.
 
 The **`files` path is deliberately not redacted**. It writes to
 `./audit/{timestamp}/` on the operator's own disk, which is where the full
