@@ -90,8 +90,63 @@ objective; pass `report: false` only if the user asked to suppress the file
 
 ### Invoke the Harness
 
-**Invoke the `Workflow` tool** with the script bundled alongside this skill at
-`~/.claude/skills/codebase-audit/workflow.js`, passing the resolved parameters:
+**Stage the harness, then invoke the `Workflow` tool** on the `path=` it prints.
+The `Workflow` tool only accepts a `scriptPath` under the session's cwd, and the
+installed plugin root never is — so the bundled path must be staged, not handed
+over directly (#973).
+
+The stager ships with the **`workflow`** plugin, so this is the one site that
+reaches across a plugin boundary — and the two layouts put a sibling plugin in
+different places. **Try both, in order:**
+
+```bash
+# First: dev checkout — plugins/<plugin>/ are siblings, no version segment
+${CLAUDE_PLUGIN_ROOT}/../workflow/scripts/harness-stage.sh stage codebase-audit
+
+# Then: installed — an installed plugin root carries a <version> segment, so the
+#   sibling is one level deeper. List the candidates, then run ANY ONE of them
+#   (see below — which one does not matter):
+ls -d ${CLAUDE_PLUGIN_ROOT}/../../workflow/*/scripts/harness-stage.sh
+# then invoke a single printed path:
+<one of those paths> stage codebase-audit
+# -> path=…  source=…  staged=true|false
+```
+
+**Two rules here, and both were learned the hard way.**
+
+**Never put the glob in command position.** A `*` there is expanded before the
+command runs, so with two `workflow` version directories present bash produces
+two words: the first is executed and **the second becomes its first argument**.
+`harness-stage.sh` then sees a path where it expects a subcommand and exits 2
+`unknown subcommand`. Measured: two versions present yields
+`ARGS: …/1.0.0/scripts/harness-stage.sh stage codebase-audit`.
+
+**Do not try to pick the "newest" candidate.** It is tempting to append
+`| tail -1`, and it is wrong: `ls` sorts lexicographically, so it selects `0.9.0`
+over `0.10.0` — the same defect `harness-stage.sh`'s own `_ver_gt` exists to
+avoid and the reason `sort -V` is banned repo-wide. **You do not need to choose.**
+Any copy of the stager resolves the *target* harness by its own probes, which
+already implement the numeric comparison; the stager's own version has no bearing
+on which `codebase-audit/workflow.js` it finds. Re-deriving version selection in
+prose is how a second, worse copy of that logic gets written — so this recipe
+deliberately does not have one.
+
+**Do not collapse these to the first one alone.** On an installed tree the
+sibling has a `<version>` path segment that spelling has no way to name, so it
+resolves to a file that does not exist and the call dies `No such file or
+directory` — on the *most common* deployment. That is the same class of defect
+that #973 exists to fix: a path that only works in a dev checkout, failing into
+a fallback that then looks like the ordinary case. (Every other call site in the
+pipeline stays inside its own plugin — `<skill-base-dir>/../../scripts/…` or
+`${CLAUDE_PLUGIN_ROOT}/scripts/…` — and never needs another plugin's version,
+because `harness-stage.sh` does that resolution internally in its probe 3.)
+
+**Fallback when `workflow` is genuinely not installed** (both spellings miss):
+copy this skill's own sibling `workflow.js` to `.claude/tmp/harness/` under the
+session cwd and use that path. The staging requirement is a property of the
+`Workflow` tool, not of either plugin; only the helper is optional.
+
+Pass the resolved parameters:
 
 ```text
 args: {

@@ -85,6 +85,14 @@ run_stage "Namespaced slash-command refs" bash "$SCRIPT_DIR/lint-command-refs.sh
 run_stage "READONLY harness wording" bash "$SCRIPT_DIR/lint-readonly-harness.sh"
 run_stage "Prose-vs-code env var drift" bash "$SCRIPT_DIR/lint-env-var-drift.sh"
 run_stage "Adversarial-review harness refs" bash "$SCRIPT_DIR/lint-harness-refs.sh"
+# #681's sibling, one layer down (#973): lint-harness-refs.sh checks that the
+# review prose NAMES the harness; this checks that the named path is REACHABLE.
+# Eleven sites spelled `~/.claude/…/workflow.js`, which resolves on no tree, and
+# the Workflow tool refuses any scriptPath outside the session cwd — so the
+# review was skipped on every run and read as a pass. Its R3 resolvability arm
+# is what makes this assert truth rather than self-consistency.
+run_stage "Harness-path reachability" bash "$SCRIPT_DIR/lint-harness-paths.sh"
+run_stage "harness-stage.sh units" bash "$SCRIPT_DIR/validate-harness-stage.sh"
 # The same prose-drift class as the line above (#890): background-work.md named
 # ship-issue/ as a consumer while ship-issue referenced it ZERO times, and all
 # five measured false-idles happened there. The classifier fix (#954) and the

@@ -58,8 +58,16 @@ find_ship_protocol() {
         2>/dev/null | command sort | command head -1
 }
 
+# The Step 3.5 check-6 contract this gate pins — the harness invocation, the
+# degradation clause, the cap-exhaustion bullet — moved from
+# pre-ship-validation.md into its adversarial-review-step.md companion in #973,
+# when the parent passed its prose budget. The locator follows the CONTENT, not
+# the old filename; pre-ship-validation.md now holds only checks 1-5 plus a
+# pointer, so pointing at it would assert the contract against a file that no
+# longer states it (and would pass only if someone duplicated the clause back —
+# exactly the second-copy drift #973 removed).
 find_pre_ship() {
-    command find "$PLUGINS_DIR" -type f -path '*/skills/ship-issue/pre-ship-validation.md' \
+    command find "$PLUGINS_DIR" -type f -path '*/skills/ship-issue/adversarial-review-step.md' \
         2>/dev/null | command sort | command head -1
 }
 

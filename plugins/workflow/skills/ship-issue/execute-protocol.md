@@ -158,6 +158,14 @@ Continue here once `gh pr create` / `glab mr create` has opened the PR.
    mechanical-failure-only conditions under which a skip is even legitimate are in
    `pre-ship-validation.md` Step 3.5 item 6 and `ci-review-protocol.md`.
 
+   **An unavailable review does not reach delivery at all (#973).** `unavailable:
+   {reason}` is the narrower status for a harness that could not be resolved or
+   staged — a broken environment rather than an absent plugin. It does not park
+   and it does not fall back: **stop**, report the probe list, and leave delivery
+   for after the environment is fixed. The distinction exists because the old
+   single condition was permanently satisfied, so the skip fired on every run and
+   the review silently never happened.
+
    With the invariant satisfied, dispatch by level:
 
    - **L3–L4 — auto-merge, then prune (worktree-aware).** Merge the PR yourself
@@ -379,7 +387,7 @@ Continue here once `gh pr create` / `glab mr create` has opened the PR.
    - **CI fixes applied**: {count} — {one-line summaries}
    - **Review cycles**: {cycles} run (ceiling {REVIEW_MAX_CYCLES}); stopped on
      {deciding `rule` from review-convergence.sh, e.g. `C4-zero` or `C1-cap`}
-   - **Review status**: {clean | stopped-with-blocking: {detail} | skipped: {reason}}
+   - **Review status**: {clean | stopped-with-blocking: {detail} | skipped: {reason} | unavailable: {reason}}
    - **Findings fixed**: {count} blocking, on this PR
    - **Findings deferred**: {#A, #B (filed), or "none"}
    - **Comments resolved-or-deferred**: {n}/{total}
