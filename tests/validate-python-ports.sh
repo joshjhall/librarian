@@ -192,12 +192,37 @@ command printf 'const awsKey = "%s";\n' "$AWS_TOK" >>"$FIXDIR/app.ts"
 
 # app.go exercises loop-make-it-documented's fixed Go GoDoc arm and
 # loop-make-it-work's fixed empty-brace whitespace class (#183).
+#
+# It also carries ONE LINE PER check-lifecycle Go arm (#871). Before that it
+# held no lifecycle-shaped line at all, so every Go arm in that scanner was
+# compared over two silences -- the vacuous-parity trap this file warns about
+# for Rust at the block below. One line per arm, so a divergence in any single
+# arm surfaces as a diff instead of being masked by its siblings; the two
+# signal.Notify spellings drive the terminate arm's exclusion from both sides,
+# and NewTimer/AfterFunc drive the listener arm's reject path.
 command cat >"$FIXDIR/app.go" <<'EOF'
 package main
 
 func Undocumented() {}
 
 func Spaced() { }
+
+func lifecycle() {
+	cmd := exec.Command("ls")
+	p.Signal(syscall.SIGTERM)
+	signal.Notify(c, os.Interrupt)
+	signal.Notify(c, syscall.SIGTERM)
+	ticker := time.NewTicker(d)
+	ln, err := net.Listen("tcp", addr)
+	l2, err := net.ListenUnix("unix", a)
+	l3, err := net.ListenTCP("tcp", a)
+	sig.Notify(c, syscall.SIGTERM)
+	watcher.Notify(fsnotify.Write)
+	f, err := os.Open("x.txt")
+	g, err := os.Create("y.txt")
+	t := time.NewTimer(d)
+	time.AfterFunc(d, fn)
+}
 EOF
 
 command cat >"$FIXDIR/view.html" <<'EOF'

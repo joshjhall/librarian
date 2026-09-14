@@ -480,6 +480,17 @@ each other once 1 is in.
    and the single-alternation parity constraint are in
    `check-lifecycle/contract.md`.
 
+   **Go's `unpaired-listener` was the same cell one language over, and it was
+   closed separately in [#871](https://github.com/joshjhall/librarian/issues/871)
+   — a *category* gap inside an already-modeled language, which is why no
+   language-coverage phase owned it.** The half worth recording in this ADR is
+   that the empty cell was not the worst part: Go's `terminate-without-kill`
+   keyed on `os.Interrupt`, a token that in Go appears as an argument to
+   `signal.Notify` rather than at a send site, so a listener registration was
+   filed under the terminate category. A row under the wrong category is worse
+   than a `—`: an empty cell is a known gap, while a mis-filed row reads as
+   evidence of a different defect. Both matrix cells moved in one change.
+
    **The docstring question, answered: NO — line-prefix is sufficient**, for
    these scanners and for `loc_engine.COMMENT_RE` alike. The short reason: a
    `"""…"""` block is a string literal, not a comment, and

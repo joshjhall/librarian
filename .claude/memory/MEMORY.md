@@ -29,6 +29,7 @@
 
 ## How I get things wrong (applies to every task)
 
+- [A filled cell can emit under the wrong category](filled-cell-can-emit-under-the-wrong-category.md) — an `M` cell that mis-files its evidence hides worse than an honest `—`; audit by column-name match, not just by which cells are empty (#871)
 - [Comments assert intent, not code](comment-asserts-intent-not-code.md) — the comment claims what the code lacks, and HIDES the defect (#542/#498)
 - [Doc claims a consumer that never adopted](doc-claims-a-consumer-that-never-adopted.md) — a header naming its consumers reads as integration evidence; grep from the CONSUMER side, per call site (#890)
 - [A comment can assert a SAFETY property](comment-asserts-a-safety-property.md) — "safe because the twin does Z" is a testable claim about the twin; measure it or it pre-marks the gap as safe

@@ -20,7 +20,7 @@
 # shellcheck disable=SC2034  # consumed by the driver in tests/coverage-python.sh
 
 # --- check-lifecycle corpus (#435) ------------------------------------------
-# The lifecycle port's per-language arms (swift/py/js/go subprocess-spawn,
+# The lifecycle port's per-language arms (swift/py/js/go/rs/sh subprocess-spawn,
 # terminate, unclosed-handle, unpaired-listener) never execute under the generic
 # corpus. These fixtures drive those branches under measurement, in lockstep with
 # the behavioral assertions in tests/validate-lifecycle-detectors.sh (the #204
@@ -81,13 +81,31 @@ mkdir -p "$LIFEDIR/tests"
     printf '%s\n' 'emitter.on("data", cb)'
 } >"$LIFEDIR/worker.js"
 
-# Go: exec.Command spawn, os.Interrupt, os.Open + os.Create handles.
+# Go: exec.Command spawn, syscall.SIGTERM send site, os.Open + os.Create
+# handles, and all three unpaired-listener alternation members (#871).
+#
+# The signal.Notify lines drive BOTH sides of the terminate arm's exclusion --
+# without them the exclusion branch is never measured, and it is the whole
+# reason a registration no longer mis-files as terminate-without-kill. The
+# NewTimer/AfterFunc line drives the listener arm's reject path, so the
+# deliberate decline is measured rather than assumed.
 {
     printf '%s\n' 'package main'
     printf '%s\n' 'cmd := exec.Command("ls")'
+    printf '%s\n' 'p.Signal(syscall.SIGTERM)'
     printf '%s\n' 'signal.Notify(c, os.Interrupt)'
+    printf '%s\n' 'signal.Notify(c, syscall.SIGTERM)'
+    printf '%s\n' 'ticker := time.NewTicker(d)'
+    printf '%s\n' 'ln, err := net.Listen("tcp", addr)'
+    printf '%s\n' 'l2, err := net.ListenUnix("unix", a)'
+    printf '%s\n' 'l3, err := net.ListenTCP("tcp", a)'
+    printf '%s\n' 'sig.Notify(c, syscall.SIGTERM)'
+    printf '%s\n' 'watcher.Notify(fsnotify.Write)'
     printf '%s\n' 'f, err := os.Open("x.txt")'
     printf '%s\n' 'g, err := os.Create("y.txt")'
+    # Boundary negatives -- the listener arm's reject path executes too.
+    printf '%s\n' 't := time.NewTimer(d)'
+    printf '%s\n' 'time.AfterFunc(d, fn)'
 } >"$LIFEDIR/proc.go"
 
 # A test file: check-lifecycle must SUPPRESS the whole file (wholesale skip) —

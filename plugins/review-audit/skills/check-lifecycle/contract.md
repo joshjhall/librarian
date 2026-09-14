@@ -45,7 +45,7 @@ per-language dispatch to declare.
 | Python     | py              | M                   | M                      | M               | M                 |
 | JavaScript | js, jsx, mjs, cjs | M                 | M                      | M               | M                 |
 | TypeScript | ts, tsx         | M                   | M                      | M               | M                 |
-| Go         | go              | M                   | M                      | M               | —                 |
+| Go         | go              | M                   | M                      | M               | M                 |
 | Rust       | rs              | M                   | M                      | M               | M                 |
 | Bash       | sh, bash        | M                   | M                      | —               | —                 |
 | every other | —               | —                   | —                      | —               | —                 |
@@ -66,9 +66,9 @@ file yields zero rows and no error. This scanner therefore carries **no
 false-positive risk** on an unmodeled language — only missing coverage. It is the
 clean end of the spectrum described in ADR 0002 § Context.
 
-One gap remains visible above: **Go** has no `unpaired-listener` arm, though the
-language has registration idioms worth detecting. **Python's was filled in Phase
-4 (#841)** — see below.
+All four categories are now modeled for every modeled language. **Python's
+`unpaired-listener` was filled in Phase 4 (#841)** and **Go's in #871** — see
+below.
 
 **Python was audited against this matrix in Phase 4 (#841).** The three
 subprocess/terminate/handle arms were confirmed firing in both runtimes and
@@ -147,6 +147,83 @@ runners this scanner targets — the two runtimes agree exactly, on that shape a
 on multibyte **punctuation** alike. Both the agreement and the gap are
 fixture-pinned, so a locale change surfaces in the suite instead of silently
 widening the divergence.
+
+**Go was completed in #871, and the interesting half was a MIS-CATEGORISATION
+rather than a missing arm.** The `unpaired-listener` cell was `—`, but
+`terminate-without-kill` keyed on the bare token `os.Interrupt` — and in Go that
+token does not appear at a send site on its own line. Its ordinary spelling is as
+an **argument to a registration**, `signal.Notify(c, os.Interrupt)`, so the
+scanner reported a listener registration under the terminate category. That is a
+worse failure than the empty cell beside it: silence is a known gap, whereas a
+row filed under the wrong category reads as evidence of a different defect.
+
+So the arm was **re-keyed** rather than supplemented. `terminate-without-kill`
+now matches `syscall.SIGTERM`, reading the category exactly as the Rust arm
+below does — flag the graceful send, let pass-2 confirm the escalation.
+
+The re-key alone would have reproduced the same bug under a new token, because
+`signal.Notify(c, syscall.SIGTERM)` is just as common a registration and matches
+that pattern too. The terminate arm therefore **excludes** the registration,
+which leaves it to the listener arm and is what makes it emit exactly one row of
+the right category. The exclusion is **unanchored**: it is matched against
+`grep -n` output on the bash side, where a `^` would bind to the line-number
+prefix and silently stop excluding — see `emit_rows_unless`.
+
+It matches a **qualified `.Notify(`**, not the literal `signal.Notify(`. Pre-PR
+review found the literal spelling defeated by an **aliased import** — `import sig
+"os/signal"` is ordinary Go, and `sig.Notify(c, syscall.SIGTERM)` then missed
+*both* arms: mis-filed under terminate and absent from `unpaired-listener`, a
+silent double loss rather than a category swap. The listener arm is widened the
+same way so the two stay in step, and both halves are fixture-pinned.
+
+The widening has a cost, named here for the same reason `Command::new`'s is
+below: a qualified `.Notify(` also matches unrelated methods — an fsnotify
+watcher's `watcher.Notify(...)`, or any type with a `Notify` method. Measured on
+a probe file, both runtimes agreeing exactly. That is within this scanner's
+declared tolerance — every row is `MEDIUM`, a candidate pass-2 confirms or
+dismisses — and it is the **cheap** direction: the alternative false *negative*
+is what #871 was filed about, and it was silent. Worth knowing before reading a
+report.
+
+The trade runs **both ways**, and the second direction is worth stating because
+it is the quieter one. The same widened test sits in the terminate arm's
+*exclusion*, so a line carrying `syscall.SIGTERM` **and** any qualified
+`.Notify(` is dropped from `terminate-without-kill` — measured, not reasoned
+about: `watcher.Notify(syscall.SIGTERM)` emits `unpaired-listener` and nothing
+else. Constructing that in real Go is hard (a method literally named `.Notify(`
+taking a signal-shaped argument is almost certainly a registration), which is
+why the widening is still the right call — but it is a false *negative*, the
+expensive direction, so it is named here rather than left for someone to
+rediscover.
+
+**The remaining gap is per-line, and is recorded rather than papered over.** Both
+runtimes test one line at a time, so a `Notify` call whose argument list is
+**wrapped** across lines puts `Notify(` and `syscall.SIGTERM` on different lines,
+and the second is mis-filed exactly as before the fix. Closing it needs
+multi-line state this scanner does not have — every arm here is a single-line
+regex. A fixture pins the current behaviour, so a future change that gains that
+state fails the assertion and forces the decision again instead of silently
+altering it.
+
+The `unpaired-listener` arm keys on three idioms, each a registration that
+outlives its statement and wants a named teardown: `signal.Notify`
+(`signal.Stop`), `time.NewTicker` (`ticker.Stop()`) and
+`net.Listen`/`ListenTCP`/`ListenUnix` (`ln.Close()`).
+
+**`time.NewTimer` and `time.AfterFunc` are deliberately omitted**, recorded here
+with the reason as #838 did for `let _ =`. A one-shot timer that fires is
+self-retiring, so flagging one would report the ordinary case as the defect.
+`NewTicker` is different in kind — it re-arms forever and leaks until stopped —
+which is the line this arm draws between the two.
+
+**One caveat stated rather than papered over.** #841 chose Python's idioms by
+measured rate over the 3.12 stdlib. That was not reproducible here: this repo has
+**no Go toolchain and zero tracked `.go` files**, so there is no corpus to
+measure and none of the hit counts above the Python section have a Go
+counterpart. These three idioms are justified by shape — each has a named,
+documented teardown in the standard library — and by the reproduction in #871,
+not by a frequency measurement. Read the absence of numbers here as honest rather
+than as an omission.
 
 Rust (#838) is `M` for all four, but two of its arms are spelled differently from
 every other language's and the reason is worth recording:
