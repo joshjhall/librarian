@@ -367,9 +367,13 @@ inferred**: a suggestion is rendered in **SGR 2 (dim)**, real typed input is not
   silently loosen the anchoring the gate matchers depend on.
 - It answers `unknown`, never `empty`, when it could not read the pane — an
   unreadable golem must not gain a false all-clear.
-- **Do not blind-send keystrokes to clear a phantom line.** A suggestion is inert
-  while nothing sends `Enter`, but the plan-gate broker sends `1 Enter` into
-  these very panes; treat it as a latent hazard, not noise. Teardown disposes it.
+- **Do not blind-send keystrokes to clear a phantom line** — not because it is
+  dangerous but because nothing works. Measured (#995): `Enter` does **not**
+  submit a suggestion, and the plan-gate broker's `1 Enter` submits the digit
+  while **discarding** the suggestion, so the broker needs no guard. Every
+  disposal keystroke tried (`Esc`, `C-u`, `C-c`, type-then-clear,
+  `Right`-then-`C-u`) leaves it or lets it return within a second; only teardown
+  disposes it. Evidence: `docs/verification/phantom-suggestion-e2e-995.md`.
 - **The annotation is a rendering heuristic, not a security control.** It reports
   how the pane's bytes are *attributed*, which is whatever the writing process
   emitted — so never treat "inert" as clearance to send. If the broker is ever
