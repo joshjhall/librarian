@@ -35,6 +35,8 @@
 - [A comment can assert a SAFETY property](comment-asserts-a-safety-property.md) — "safe because the twin does Z" is a testable claim about the twin; measure it or it pre-marks the gap as safe
 - [An issue's symbol inventory needs re-measuring](issue-symbol-inventory-needs-remeasuring.md) — the table counts NAMES and has drifted; grep declarations, diff bodies
 - [Gate header claims an unimplemented check](gate-header-claims-an-unimplemented-check.md) — grep for the enforcing code; a rule written before it was testable stays prose
+- [A vacuous scan reads as a clean verdict](vacuous-scan-reads-as-a-clean-verdict.md) — zero findings can mean "never looked"; assert the corpus was non-empty BEFORE reporting clean (#934)
+- [Targeted gates miss what only the suite checks](targeted-gates-miss-what-only-the-suite-checks.md) — repo-wide invariants (file modes, manifests) belong to no per-area gate; run the full suite when a change ADDS a file (#934)
 - [Detector needs a certainty tier](detector-needs-a-certainty-tier.md) — measure the idiom's hit rate before implementing; 723 FPs vs 2 TPs is "not at this tier"
 - [An issue's stated cause can be false](issue-cause-may-be-falsified-by-measurement.md) — A/B the SUGGESTED fix; a no-op fix means the diagnosis is wrong (#766)
 - [An issue's premise may undercount defects](issue-premise-may-undercount-defects.md) — run the issue's OWN repro; if removing the named cause still fails, there are two

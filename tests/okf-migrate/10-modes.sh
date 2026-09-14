@@ -110,7 +110,7 @@ test_absent_bundle_is_silent_exit_zero() {
 }
 
 test_missing_transforms_fragment_fails_loud() {
-    local root copy out rc=0
+    local root copy copy2 out rc=0
     root="$(modes_bundle)"
 
     # AC8's "runtime-missing fails loud". The transform bodies are a SOURCED
@@ -144,9 +144,27 @@ test_missing_transforms_fragment_fails_loud() {
     out="$(OKF_BUNDLE_ROOT="$root" OKF_PINNED_VERSION="0.2" \
         command python3 "$copy/migrate.py" check 2>&1)" || rc=$?
     assert_exit 1 "$rc" "a missing transforms.py is a loud TOOL-side failure too"
-    assert_contains "$out" "transforms.py not found" \
+    # The message names BOTH transform modules: python cannot tell which import
+    # failed from a single ImportError, and naming only one would send the
+    # operator to check a file that is present.
+    assert_contains "$out" "transforms.py/moves.py not found" \
         "python gives the SAME actionable message, not a raw traceback"
     assert_not_contains "$out" "Traceback" "no stack trace reaches the operator"
+
+    # THE SAME GUARD FOR moves.sh, which is a SECOND sourced sibling and would
+    # otherwise fail differently: a bare `.` of a missing file under `set -e`
+    # aborts with bash's own message, which names neither the consequence nor
+    # the fact that no transform ran (#934).
+    copy2="$(command mktemp -d "$WORKDIR/broke2.XXXXXX")"
+    command cp -R "$SKILL_DIR/." "$copy2/"
+    command rm -f "$copy2/moves.sh"
+    rc=0
+    out="$(PATTERNS_FORCE_BASH=1 OKF_BUNDLE_ROOT="$root" OKF_PINNED_VERSION="0.2" \
+        command bash "$copy2/migrate.sh" check 2>&1)" || rc=$?
+    assert_exit 1 "$rc" "a missing moves.sh is a loud TOOL-side failure too"
+    assert_contains "$out" "moves.sh not found" "the message names the missing file"
+    assert_contains "$out" "needing no migration" \
+        "and names the consequence for moves.sh as well"
 }
 
 test_unresolvable_pin_fails_loud() {

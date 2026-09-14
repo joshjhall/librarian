@@ -71,6 +71,11 @@ test_skip_patterns:
   # preference-not-structure move rule 2 forbids.
   - "plugins/review-audit/skills/okf-migrate/transforms.sh"
   - "plugins/review-audit/skills/okf-migrate/transforms.py"
+  # moves.{sh,py} (slice J, #934) — the same structural fact: transform bodies
+  # with no entry point, sourced/imported by migrate.{sh,py} and covered
+  # end-to-end through tests/validate-okf-migrate.sh.
+  - "plugins/review-audit/skills/okf-migrate/moves.sh"
+  - "plugins/review-audit/skills/okf-migrate/moves.py"
 
   # DELIBERATELY ABSENT — these still fire, and should:
   #

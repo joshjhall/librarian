@@ -160,6 +160,17 @@ index_targets() {
             s = $0
             while (match(s, /\]\([^)]*\.md\)/)) {
                 t = substr(s, RSTART + 2, RLENGTH - 3)
+                # A `<dir>/index.md` target keeps its directory — it names a §8
+                # SUB-INDEX, and collapsing it to `index.md` like any other
+                # target made every sub-index read as dangling (#934).
+                sub(/^\//, "", t)
+                sub(/^\.\//, "", t)
+                if (t ~ /^[^\/]+\/index\.md$/) {
+                    print t "\t" NR
+                    n++
+                    s = substr(s, RSTART + RLENGTH)
+                    continue
+                }
                 sub(/^.*\//, "", t)
                 print t "\t" NR
                 n++
@@ -332,6 +343,19 @@ EOF
             *"|$target|"*) continue ;;
         esac
         seen_targets="${seen_targets}|$target|"
+        # A `<dir>/index.md` target is a §8 SUB-INDEX: present iff the file
+        # exists. It is not a concept and must never be judged as one.
+        case "$target" in
+            */index.md)
+                if [ ! -f "$root/$target" ]; then
+                    first_idx="$(command printf '%s' "$named" | command awk -F"$TAB" -v t="$target" '$1 == t { print $2; exit }')"
+                    first_line="$(command printf '%s' "$named" | command awk -F"$TAB" -v t="$target" '$1 == t { print $3; exit }')"
+                    emit "$root/$first_idx" "$first_line" "$C_DANGLING_INDEX" \
+                        "Index names a subdirectory index that does not exist: $target" "HIGH"
+                fi
+                continue
+                ;;
+        esac
         # An index pointing at another INDEX is ordinary structure (a root index
         # naming its sub-indexes), so it is neither dangling nor multi-indexed.
         case "
@@ -381,6 +405,75 @@ $base$TAB"*) continue ;;
 $concepts
 EOF
     fi
+
+    # Each SUBDIRECTORY against its own index.md (§8). ONE LEVEL PER INDEX: a
+    # directory's index routes that directory's concepts exactly as the root
+    # index routes the root's, so this is the same rule at two levels rather
+    # than a special case.
+    #
+    # A DIRECTORY WITHOUT AN index.md IS SKIPPED ENTIRELY. §8 makes the directory
+    # index the routing mechanism, so a directory that has not adopted one has
+    # nothing to be judged against; reporting there would fire on every repo
+    # keeping unrelated markdown beside its bundle.
+    local sub sub_dir sub_index sub_named sub_concepts sub_base sub_targets
+    for sub_dir in "$root"/*/; do
+        [ -d "$sub_dir" ] || continue
+        sub="${sub_dir%/}"
+        sub="${sub##*/}"
+        case "$sub" in .*) continue ;; esac
+        sub_index="$root/$sub/index.md"
+        [ -f "$sub_index" ] || continue
+
+        sub_named=""
+        sub_targets="$(index_targets "$sub_index")"
+        while IFS="$TAB" read -r target line_no; do
+            [ -n "$target" ] || continue
+            target="${target##*/}"
+            case "$sub_named" in
+                *"
+$target$TAB"*) continue ;;
+            esac
+            sub_named="${sub_named}
+${target}${TAB}${line_no}"
+        done <<EOF
+$sub_targets
+EOF
+
+        sub_concepts=""
+        for sub_base in "$root/$sub"/*.md; do
+            [ -f "$sub_base" ] || continue
+            sub_base="${sub_base##*/}"
+            case "$sub_base" in index.md | log.md) continue ;; esac
+            sub_concepts="${sub_concepts}${sub_base}
+"
+        done
+
+        while IFS="$TAB" read -r target line_no; do
+            [ -n "$target" ] || continue
+            case "$target" in index.md) continue ;; esac
+            case "
+$sub_concepts" in
+                *"
+$target
+"*) continue ;;
+            esac
+            emit "$sub_index" "$line_no" "$C_DANGLING_INDEX" \
+                "$L_DANGLING: $target" "HIGH"
+        done <<EOF
+$(command printf '%s' "$sub_named")
+EOF
+
+        while IFS= read -r sub_base; do
+            [ -n "$sub_base" ] || continue
+            case "$sub_named" in
+                *"
+$sub_base$TAB"*) continue ;;
+            esac
+            emit "$root/$sub/$sub_base" 1 "$C_ORPHAN" "$L_ORPHAN" "HIGH"
+        done <<EOF
+$sub_concepts
+EOF
+    done
 
     # Health: staleness and per-type body requirements.
     #

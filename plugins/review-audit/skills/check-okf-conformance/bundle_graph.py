@@ -222,6 +222,11 @@ def index_targets(lines: list[str]) -> list[tuple[str, int]]:
     linked index and a plain-list index both work. Only the BASENAME is kept: an
     index may write `./foo.md` or `sub/foo.md` for the same concept, and the
     graph is keyed by basename throughout.
+
+    A `<dir>/index.md` target is the ONE case where the directory survives, kept
+    as `"<dir>/index.md"` so the caller can tell a §8 SUB-INDEX from a concept.
+    Collapsing it to `index.md` like any other target is what made every
+    sub-index read as a dangling pointer (#934).
     """
     out: list[tuple[str, int]] = []
     for i, line in enumerate(lines, start=1):
@@ -229,6 +234,12 @@ def index_targets(lines: list[str]) -> list[tuple[str, int]]:
         if not hits:
             hits = _BARE_MD_RE.findall(line)
         for target in hits:
+            cleaned = target.lstrip("/")
+            if cleaned.startswith("./"):
+                cleaned = cleaned[2:]
+            if cleaned.endswith("/index.md") and cleaned.count("/") == 1:
+                out.append((cleaned, i))
+                continue
             out.append((target.rsplit("/", 1)[-1], i))
     return out
 
@@ -313,13 +324,24 @@ def scan_bundle(root: str, emit, thresholds_path: str) -> None:
     examines is the bundle on disk. split-verify.py:340-345 reads indexes from
     disk for the same reason and records the same argument.
 
-    THE ROOT LEVEL ONLY, not a recursive walk — a deliberate scope limit rather
-    than an oversight. OKF §8 gives each directory its own `index.md`, so a
-    concept in `sub/` is routed by `sub/index.md`, and judging it against the
-    ROOT index would report an orphan for every correctly-nested file. Checking
-    each subdirectory against its own index is a coherent extension, but it is a
-    different rule from the one this pass implements, so it stays out until
-    someone needs it. Verified: a nested concept produces no orphan row.
+    ONE LEVEL PER INDEX, which is §8's actual rule. The root index routes the
+    root's concepts AND names each subdirectory's `index.md`; that subdirectory's
+    index routes its own concepts. Judging a nested concept against the ROOT
+    index would report an orphan for every correctly-nested file, so each
+    directory is checked against its own index instead.
+
+    THIS USED TO BE ROOT-LEVEL-ONLY, and the docstring here said per-directory
+    checking "stays out until someone needs it". #934 needed it: okf-migrate's
+    move-concept transform relocates concepts into a directory tree, and without
+    this every bundle it produced — including a HAND-BUILT, spec-correct one —
+    emitted a memory-dangling-index row for each sub-index, because the graph
+    keyed targets by basename and `golem/index.md` reduced to `index.md`, which
+    is not a root-level concept.
+
+    A SUBDIRECTORY WITH NO index.md IS NOT JUDGED. Its files are not orphans:
+    §8 makes the directory index the routing mechanism, so a directory that has
+    not adopted one has no claim to check against, and reporting there would
+    fire on every repo that keeps unrelated markdown beside its bundle.
 
     An absent or unreadable root produces nothing: "no bundle" is exit 0 with no
     findings, never an error.
@@ -338,6 +360,11 @@ def scan_bundle(root: str, emit, thresholds_path: str) -> None:
 
     indexes: list[str] = []
     concepts: list[str] = []
+    subdirs = [
+        name
+        for name in entries
+        if os.path.isdir(os.path.join(root, name)) and not name.startswith(".")
+    ]
     for name in entries:
         if not name.endswith(".md"):
             continue
@@ -374,8 +401,22 @@ def scan_bundle(root: str, emit, thresholds_path: str) -> None:
 
     concept_set = set(concepts)
     index_set = set(indexes)
+    for target in sorted(named):
+        if target.endswith("/index.md"):
+            if not os.path.isfile(os.path.join(root, target)):
+                src, line_no = named[target][0]
+                emit(
+                    os.path.join(root, src),
+                    line_no,
+                    C_DANGLING_INDEX,
+                    "Index names a subdirectory index that does not exist: " + target,
+                    "HIGH",
+                )
+            continue
 
     for target in sorted(named):
+        if target.endswith("/index.md"):
+            continue
         # An index pointing at another INDEX is ordinary structure (a root index
         # naming its sub-indexes — this repo's own MEMORY.md does exactly that),
         # so it is neither dangling nor multi-indexed.
@@ -416,6 +457,57 @@ def scan_bundle(root: str, emit, thresholds_path: str) -> None:
         for name in concepts:
             if name not in named:
                 emit(os.path.join(root, name), 1, C_ORPHAN, L_ORPHAN, "HIGH")
+
+    # --- graph: each SUBDIRECTORY against its own index.md (§8) --------------
+    #
+    # ONE LEVEL PER INDEX. A directory's index routes that directory's concepts,
+    # exactly as the root index routes the root's — so the two passes are the
+    # same rule applied at two levels, not a special case.
+    #
+    # A DIRECTORY WITHOUT AN index.md IS SKIPPED ENTIRELY, never walked for
+    # orphans. §8 makes the directory index the routing mechanism, so a directory
+    # that has not adopted one has nothing to be judged against; reporting there
+    # would fire on every repo keeping unrelated markdown beside its bundle —
+    # the "fires on everything" shape the root-level pass guards against above,
+    # arriving one level down.
+    for sub in subdirs:
+        sub_dir = os.path.join(root, sub)
+        sub_index = os.path.join(sub_dir, "index.md")
+        if not os.path.isfile(sub_index):
+            continue
+        try:
+            sub_entries = sorted(os.listdir(sub_dir))
+        except OSError:
+            continue
+        sub_concepts = [
+            n
+            for n in sub_entries
+            if n.endswith(".md")
+            and n not in RESERVED
+            and os.path.isfile(os.path.join(sub_dir, n))
+        ]
+        try:
+            with open(sub_index, "r", encoding="utf-8", errors="replace") as fh:
+                sub_lines = fh.read().splitlines()
+        except OSError:
+            continue
+        sub_named: dict[str, int] = {}
+        for target, line_no in index_targets(sub_lines):
+            sub_named.setdefault(target.rsplit("/", 1)[-1], line_no)
+        sub_set = set(sub_concepts)
+        for target in sorted(sub_named):
+            if target == "index.md" or target in sub_set:
+                continue
+            emit(
+                sub_index,
+                sub_named[target],
+                C_DANGLING_INDEX,
+                L_DANGLING + ": " + target,
+                "HIGH",
+            )
+        for name in sub_concepts:
+            if name not in sub_named:
+                emit(os.path.join(sub_dir, name), 1, C_ORPHAN, L_ORPHAN, "HIGH")
 
     # --- health: staleness and body requirements -----------------------------
     for name in concepts:

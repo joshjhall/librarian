@@ -916,6 +916,66 @@ test_memory_dangling_index() {
         "okf: an index naming a sibling index is not dangling"
 }
 
+# §8 SUB-INDEX ROUTING (#934). The graph used to enumerate the ROOT LEVEL ONLY
+# and key every target by BASENAME, so a root line naming `sub/index.md`
+# collapsed to `index.md` — not a root-level concept — and every correctly
+# nested bundle reported a dangling pointer. okf-migrate's move-concept
+# transform produces exactly that shape, which is what forced the extension.
+#
+# The three claims that matter, and the third is the one that keeps this from
+# being a blanket loosening: a directory WITHOUT an index.md is not judged at
+# all, so a repo keeping unrelated markdown beside its bundle is not flooded.
+test_subdirectory_index_routing() {
+    local b list
+    b="$(fresh_bundle)"
+    command mkdir -p "$b/golem" "$b/loose"
+    command printf -- '# Index\n\n* [Golem](golem/index.md) - bucket\n* [Root](root-concept.md) - x\n' >"$b/MEMORY.md"
+    command printf -- '---\ntype: reference\n---\n\nBody.\n' >"$b/root-concept.md"
+    command printf -- '# Golem\n\n* [Nested](nested.md) - x\n' >"$b/golem/index.md"
+    command printf -- '---\ntype: reference\n---\n\nBody.\n' >"$b/golem/nested.md"
+    command printf -- '---\ntype: reference\n---\n\nBody.\n' >"$b/golem/unlisted.md"
+    # A directory that never adopted an index.md — §8 makes the directory index
+    # the routing mechanism, so there is nothing here to judge against.
+    command printf -- '---\ntype: reference\n---\n\nBody.\n' >"$b/loose/stray.md"
+    list="$(list_bundle "$b")"
+
+    # (1) A root line naming a PRESENT sub-index is structure, not a dangling
+    # pointer — the regression this extension fixes.
+    assert_not_contains "$(emit_rows sh "$list" memory-dangling-index)" "index.md" \
+        "okf: a root line naming a present sub-index is not dangling (bash)"
+    # (2) The sub-index routes its OWN directory: a concept it names is not an
+    # orphan, and one it omits IS. Both halves, or the row could pass by the
+    # whole directory going unexamined.
+    assert_not_contains "$(emit_rows sh "$list" memory-orphan)" "nested.md" \
+        "okf: a concept its directory index names is not an orphan (bash)"
+    assert_fires "$list" memory-orphan "unlisted.md" \
+        "okf: ...and one that directory index omits IS an orphan"
+    # (3) A directory with NO index.md is skipped entirely. Without this the
+    # extension would report every stray markdown file in any repo that keeps
+    # some beside its bundle — the "fires on everything" shape §11 forbids.
+    assert_not_contains "$(emit_rows sh "$list" memory-orphan)" "stray.md" \
+        "okf: a directory with no index.md is not judged (bash)"
+
+    if [ "$HAVE_PY" -eq 1 ]; then
+        assert_not_contains "$(emit_rows py "$list" memory-dangling-index)" "index.md" \
+            "okf: a root line naming a present sub-index is not dangling (python)"
+        assert_not_contains "$(emit_rows py "$list" memory-orphan)" "nested.md" \
+            "okf: a concept its directory index names is not an orphan (python)"
+        assert_not_contains "$(emit_rows py "$list" memory-orphan)" "stray.md" \
+            "okf: a directory with no index.md is not judged (python)"
+    fi
+
+    # A root line naming an ABSENT sub-index is still dangling. Presence is what
+    # the check tests, so without this the sub-index arm would be a blanket
+    # exemption for anything ending in `/index.md`.
+    b="$(fresh_bundle)"
+    command printf -- '# Index\n\n* [Missing](gone/index.md) - bucket\n' >"$b/MEMORY.md"
+    command printf -- '---\ntype: reference\n---\n\nBody.\n' >"$b/kept.md"
+    list="$(list_bundle "$b")"
+    assert_fires "$list" memory-dangling-index "gone/index.md" \
+        "okf: a root line naming an ABSENT sub-index is still dangling"
+}
+
 test_memory_multi_index() {
     local b list
 
@@ -1523,6 +1583,7 @@ run_test test_pin_resolution_parity "check-okf-conformance: bash/python resolve 
 run_test test_evidence_truncation_parity "check-okf-conformance: >80-char multibyte evidence truncation parity"
 run_test test_memory_orphan "check-okf-conformance: orphans, the no-index rule, and tolerated [[wiki-links]]"
 run_test test_memory_dangling_index "check-okf-conformance: a dangling index line vs an index naming an index"
+run_test test_subdirectory_index_routing "check-okf-conformance: §8 sub-index routing — each directory judged against its own index.md"
 run_test test_memory_multi_index "check-okf-conformance: two indexes claiming one concept vs a repeated line"
 run_test test_memory_stale "check-okf-conformance: staleness against an INJECTED date, quoting stale_check"
 run_test test_memory_missing_why "check-okf-conformance: per-type body requirements, and unconfigured types"

@@ -60,6 +60,12 @@ if _HERE not in sys.path:
 # must say so in terms that name the consequence, because an empty plan reads as
 # "this bundle needs no migration".
 try:
+    from moves import (  # noqa: E402
+        parse_taxonomy_rules,
+        plan_directory_indexes,
+        plan_moves,
+        rewrite_inbound_links,
+    )
     from transforms import (  # noqa: E402
         Ambiguity,
         Edit,
@@ -72,7 +78,7 @@ try:
     )
 except ImportError:
     sys.stderr.write(
-        "ERROR: transforms.py not found beside migrate.py in "
+        "ERROR: transforms.py/moves.py not found beside migrate.py in "
         + _HERE
         + " — no transform can run, and an empty plan would read as a bundle"
         + " needing no migration\n"
@@ -176,8 +182,17 @@ def read_pinned_version() -> str:
 
 def _thresholds_path() -> str:
     """thresholds.yml beside THIS file — resolved from the module location, not
-    $PWD, so the tool works from any working directory."""
-    return os.path.join(_HERE, "thresholds.yml")
+    $PWD, so the tool works from any working directory.
+
+    $OKF_MIGRATE_CONFIG_DIR overrides the directory, for the same reason
+    $OKF_BUNDLE_ROOT exists: a tool that runs against SOMEONE ELSE'S bundle must
+    be able to take its config from somewhere other than its own install dir.
+    It is also what lets a fixture exercise a configured taxonomy without
+    editing the shipped file.
+    """
+    return os.path.join(
+        os.environ.get("OKF_MIGRATE_CONFIG_DIR") or _HERE, "thresholds.yml"
+    )
 
 
 def read_config_list(path: str, section: str, key: str) -> list[str]:
@@ -347,6 +362,7 @@ def build_plan(
         read_config_scalar(cfg, "links", "convert_unresolvable", "true") != "false"
     )
     title = read_config_scalar(cfg, "adopt", "title", "Memory Bundle")
+    taxonomy = parse_taxonomy_rules(read_config_list(cfg, "taxonomy", "rules"))
 
     edits: list[Edit] = []
     ambiguities: list[Ambiguity] = []
@@ -359,6 +375,19 @@ def build_plan(
         ambiguities.extend(type_ambiguities)
     if "wikilink-convert" in applicable:
         edits.extend(convert_wikilinks(root, every, form, convert_unresolvable))
+    if "move-concept" in applicable:
+        # The link rewrites are derived from the SAME mapping the moves are, so
+        # the two cannot disagree about where a file lands. Apply ordering (link
+        # rewrites before renames) is the driver's job — see apply_edits.
+        move_edits, mapping = plan_moves(root, concepts, every, taxonomy)
+        # §8 ORDER: build each new directory's index first, because it CLAIMS the
+        # index lines that named the moved concepts. The inbound rewriter then
+        # repoints those claimed lines at the sub-index rather than at the
+        # concept — naming the concept in both places would be memory-multi-index.
+        index_edits, relocated = plan_directory_indexes(root, every, mapping)
+        edits.extend(index_edits)
+        edits.extend(rewrite_inbound_links(root, every, mapping, relocated))
+        edits.extend(move_edits)
 
     # PLAN-ONLY TRANSFORMS are surfaced as notes rather than silently omitted.
     # Each executes a judgment made elsewhere — split-index needs a chosen seam
@@ -419,6 +448,15 @@ def render_plan(
         sys.stdout.write("--- a/" + path + "\n+++ b/" + path + "\n")
         for edit in sorted(by_file[path], key=lambda e: e.line):
             sys.stdout.write("@@ " + edit.transform + ": " + edit.note + " @@\n")
+            if edit.kind == "move":
+                # RENDERED AS A RENAME HEADER, not as a +/- line pair. A move
+                # changes no bytes, so showing it as content would misrepresent
+                # what apply does — and the destination is the single fact a
+                # reviewer is approving here.
+                sys.stdout.write(
+                    "rename from " + edit.old + "\nrename to " + edit.new + "\n"
+                )
+                continue
             if edit.kind == "create":
                 for line in edit.new.splitlines():
                     sys.stdout.write("+" + line + "\n")
@@ -475,9 +513,29 @@ def apply_edits(edits: list[Edit], allowlist: set, root: str) -> int:
     Edits are applied per file, highest line first, so an insert cannot shift
     the line numbers of edits not yet applied.
     """
-    by_file: dict[str, list[Edit]] = {}
+    # PRE-FLIGHT: EVERY edit is validated before ANY of them is written.
+    #
+    # "Partial application is not a thing" (contract.md) is a claim about the
+    # whole apply, and a check that runs when its own edit's turn comes cannot
+    # make it. move-concept is what forced this: renames run LAST (a link rewrite
+    # must read the file at its old path), so a destination check inside the
+    # rename loop fired only after every link rewrite had already been written to
+    # disk. Measured: a taxonomy rule spelled `= ../../../escaped` exited 2 with
+    # the right message and left the bundle's links rewritten to point outside
+    # it — a refusal that had already done most of the damage.
     for edit in edits:
-        if not under_root(edit.path, root):
+        # Resolved through the nearest EXISTING ancestor: move-concept creates
+        # `<root>/<dir>/index.md` for a directory that does not exist yet, so
+        # requiring the path itself to resolve would refuse a legitimate
+        # in-bundle create. Still fail-closed — an escaping path resolves
+        # outside the root no matter how much of it exists.
+        anchor = edit.path
+        while anchor != root and not os.path.exists(anchor):
+            parent = os.path.dirname(anchor)
+            if not parent or parent == anchor:
+                break
+            anchor = parent
+        if not under_root(anchor, root):
             return fail(
                 "apply refused: "
                 + edit.path
@@ -490,6 +548,35 @@ def apply_edits(edits: list[Edit], allowlist: set, root: str) -> int:
             return fail(
                 "apply refused: " + edit.path + " is not in the reviewed plan", 2
             )
+        if edit.kind != "move":
+            continue
+        # THE DESTINATION IS THE NEW SURFACE A MOVE INTRODUCES — every other
+        # transform only ever writes a path that already existed in the bundle.
+        # It is where a taxonomy rule spelled `= ../../etc` would aim, so it is
+        # resolved through its nearest EXISTING ancestor (the directory itself
+        # need not exist yet) and required to land under the root.
+        probe = os.path.dirname(os.path.join(root, edit.new)) or root
+        while probe != root and not os.path.isdir(probe):
+            parent = os.path.dirname(probe) or root
+            if parent == probe:
+                break
+            probe = parent
+        if not under_root(probe, root):
+            return fail(
+                "apply refused: "
+                + edit.new
+                + " resolves outside the bundle root "
+                + root
+                + " — refusing to move through it",
+                2,
+            )
+
+    by_file: dict[str, list[Edit]] = {}
+    moves: list[Edit] = []
+    for edit in edits:
+        if edit.kind == "move":
+            moves.append(edit)
+            continue
         by_file.setdefault(edit.path, []).append(edit)
 
     for path in sorted(by_file):
@@ -510,6 +597,48 @@ def apply_edits(edits: list[Edit], allowlist: set, root: str) -> int:
                 lines.insert(min(max(idx, 0), len(lines)), edit.new)
         with open(path, "w", encoding="utf-8") as fh:
             fh.write("\n".join(lines) + "\n")
+
+    # RENAMES RUN LAST, after every link rewrite. A rewrite reads the file at
+    # its OLD path, so renaming first would leave those edits pointed at a path
+    # that no longer exists — the edits would silently no-op and every inbound
+    # link would be left dangling, which is the exact failure this transform
+    # exists to prevent.
+    return apply_moves(moves, root)
+
+
+def apply_moves(moves: list[Edit], root: str) -> int:
+    """Rename each moved concept, preserving git history where there is any.
+
+    `git mv` RATHER THAN delete+create (AC7), because the history is the reason
+    a memory can be trusted: `git log --follow` on a relocated concept must still
+    reach the commit that explains why it was written. A delete+create severs
+    that at exactly the moment the file becomes hardest to place.
+
+    A NON-REPO FALLS BACK TO os.rename, the same line tree_is_dirty draws: this
+    tool migrates any repo's bundle including a plain directory under no version
+    control, and refusing there would make a history guarantee into a
+    portability bug. A `git mv` that fails for any other reason also falls back —
+    the move is the contract, the history is the bonus.
+    """
+    for edit in sorted(moves, key=lambda e: e.old):
+        src = edit.path
+        dest = os.path.join(root, edit.new)
+        if not os.path.exists(src):
+            continue
+        os.makedirs(os.path.dirname(dest) or root, exist_ok=True)
+        moved = False
+        try:
+            proc = subprocess.run(
+                ["git", "-C", root, "mv", "--", edit.old, edit.new],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            moved = proc.returncode == 0
+        except OSError:
+            moved = False
+        if not moved:
+            os.rename(src, dest)
     return 0
 
 

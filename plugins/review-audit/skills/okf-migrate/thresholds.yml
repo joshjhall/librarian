@@ -23,9 +23,10 @@
 # `plan_only` renders in `plan` output and is REFUSED by `apply`.
 #
 # THE SPLIT IS STRUCTURAL, NOT A PREFERENCE, and that is why it is stated here
-# rather than buried in code. The three applicable transforms are mechanical:
-# given the bundle, the edit is determined. The two plan-only ones are not —
-# each executes a judgment made somewhere else:
+# rather than buried in code. The four applicable transforms are mechanical:
+# given the bundle (and, for move-concept, the taxonomy rules below), the edit is
+# determined. The two plan-only ones are not — each executes a judgment made
+# somewhere else:
 #
 #   * split-index reuses #663's seam finder, which emits topic-cluster
 #     RECOMMENDATIONS (check-decomposition/prose_spec.py). Which cluster
@@ -44,6 +45,7 @@ transforms:
     - adopt-bundle
     - backfill-type
     - wikilink-convert
+    - move-concept
   plan_only:
     - split-index
     - confirmed-merge
@@ -135,3 +137,54 @@ links:
 adopt:
   # Heading written above the generated index body. Prose, not contract.
   title: "Memory Bundle"
+
+# --- TAXONOMY (move-concept) -------------------------------------------------
+#
+# OKF concept IDs ARE the bundle path minus `.md` (§3), so nesting is native to
+# the format and a flat bundle throws away the one addressing mechanism OKF
+# gives you. move-concept relocates concepts into a directory tree, rewriting
+# every inbound link and every index pointer to follow.
+#
+# THIS LIST SHIPS EMPTY, AND THAT IS THE CORRECT DEFAULT — not a stub someone
+# forgot to fill in. An unconfigured repo gets "nothing to move", exit 0. A move
+# engine that invented a taxonomy would be authoring the judgment rather than
+# executing it, and unlike a wrong `type` (one loud finding) a wrongly-placed
+# file changes its concept ID, which every link and index pointer in the bundle
+# is expressed in terms of.
+#
+# move-concept is nonetheless `applicable` rather than `plan_only`, and the
+# distinction is worth being precise about: GIVEN these rules the move set is
+# determined, which is what `applicable` means. The judgment is the rules
+# themselves, which a human writes here and reviews in `plan` output before
+# `apply` touches anything. split-index and confirmed-merge are plan-only
+# because no config can express their decision at all.
+#
+# Each rule is `<source>:<pattern> = <directory>`, first match wins, evaluated in
+# listed order — the SAME grammar type_inference.rules uses, deliberately, so
+# the toolset has one config dialect rather than two. Sources:
+#
+#   index   glob against the BASENAME of the index file that already points at
+#           the concept (`MEMORY.md` or any `index*.md`)
+#   file    glob against the concept's BASENAME
+#   dir     glob against its current bundle-relative DIRECTORY
+#
+# THE `index` SOURCE IS THE USEFUL ONE for a bundle that already has a working
+# taxonomy in its indexes and only lacks it on disk — the common case, and this
+# repo's own (#934). It routes each concept by the index that already claims it,
+# so mirroring an existing bucket structure is one rule per bucket instead of
+# one glob per file. A concept named by two indexes is a `memory-multi-index`
+# finding the validator already reports: fix that first rather than relying on
+# which rule happens to win here.
+#
+# A concept matching NO rule stays exactly where it is. Not matching is a
+# complete answer ("not part of the taxonomy"), so unlike backfill-type this
+# transform has no ambiguity channel and never blocks an apply.
+#
+# Example, for a bundle whose buckets live in index files:
+#
+#   rules:
+#     - index:index-golem.md = golem
+#     - index:index-runtime.md = runtime
+#     - file:release-*.md = git-release
+taxonomy:
+  rules: []

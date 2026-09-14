@@ -83,7 +83,8 @@ FRAGMENTS="10-modes.sh
 30-backfill-type.sh
 40-wikilinks.sh
 50-safety.sh
-60-parity.sh"
+60-parity.sh
+70-move-concept.sh"
 
 # shellcheck disable=SC2086  # deliberate word-splitting: FRAGMENTS is a list
 source_fragments "$SCRIPT_DIR/okf-migrate" $FRAGMENTS
@@ -134,6 +135,19 @@ run_fragment_test test_hidden_directories_are_not_part_of_the_bundle "a hidden d
 run_fragment_test test_plan_only_transform_refuses_apply "a plan-only transform renders in plan and REFUSES apply at exit 2"
 run_fragment_test test_plan_only_transforms_are_visible_in_check "both plan-only transforms are NAMED in check output, never silently omitted"
 run_fragment_test test_migrate_config_readers_survive_unreadable "the config readers keep their OSError fallbacks and do not shadow transforms.read_lines (#980)"
+
+run_fragment_test test_move_rewrites_every_inbound_link "every inbound link to a moved concept is rewritten — from TWO directories, both link forms (AC3)"
+run_fragment_test test_index_pointer_follows_the_move "the index pointer follows the move — a stale one is a silent un-recall (AC4)"
+run_fragment_test test_move_into_an_existing_directory_index "a move into an EXISTING directory index appends to it — no regeneration, no orphan"
+run_fragment_test test_move_is_idempotent "move-concept applied twice equals applied once, byte-compared (AC5)"
+run_fragment_test test_move_reversibility "after the move the real validator emits no dangling/orphan rows (AC6)"
+run_fragment_test test_move_preserves_git_history "moves use git mv — git log --follow still reaches the pre-move commit (AC7)"
+run_fragment_test test_unconfigured_bundle_has_nothing_to_move "an unconfigured repo gets 'nothing to move', exit 0, and moves nothing (AC10)"
+run_fragment_test test_move_plan_writes_nothing "plan renders the move as a rename header and writes nothing (AC2)"
+run_fragment_test test_move_apply_requires_confirm "apply without --confirm refuses at exit 2 and moves nothing"
+run_fragment_test test_move_destination_outside_the_bundle_is_refused "a taxonomy rule aiming outside the bundle root is refused, writing nothing"
+run_fragment_test test_neutered_rewriter_fails_the_inbound_fixture "MUTATION: with the inbound-link rewriter neutered, the AC3/AC4 fixtures go stale (AC8)"
+run_fragment_test test_move_parity_between_runtimes "bash and python produce byte-identical moved trees"
 
 run_fragment_test test_parity_check_mode "bash and python agree byte-for-byte in check mode"
 run_fragment_test test_parity_plan_mode "bash and python agree byte-for-byte in plan mode"

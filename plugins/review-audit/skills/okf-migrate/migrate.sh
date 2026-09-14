@@ -70,13 +70,22 @@ USAGE
     fail "transforms.sh not found beside migrate.sh in $_here — no transform can run, and an empty plan would read as a bundle needing no migration"
 # shellcheck source=plugins/review-audit/skills/okf-migrate/transforms.sh
 . "$_here/transforms.sh"
+[ -f "$_here/moves.sh" ] ||
+    fail "moves.sh not found beside migrate.sh in $_here — no transform can run, and an empty plan would read as a bundle needing no migration"
+# shellcheck source=plugins/review-audit/skills/okf-migrate/moves.sh
+. "$_here/moves.sh"
 
 # THE VERSION PIN lives in the VALIDATOR's thresholds.yml — the single source
 # for the whole toolset. adopt-bundle stamps it into the index.md it writes, so
 # a second copy here would let this engine create a bundle the validator then
 # reports as drifted. Same rule as ruff's required-version.
 VALIDATOR_DIR="$(cd "$_here/.." && pwd)/check-okf-conformance"
-CONFIG="$_here/thresholds.yml"
+# $OKF_MIGRATE_CONFIG_DIR overrides where thresholds.yml is read from. It exists
+# for the same reason $OKF_BUNDLE_ROOT does — a tool that runs against SOMEONE
+# ELSE'S bundle must take its config from somewhere other than its own install
+# dir — and it is what lets a fixture exercise a configured taxonomy without
+# editing the shipped file (which would dirty the tree and break parallel runs).
+CONFIG="${OKF_MIGRATE_CONFIG_DIR:-$_here}/thresholds.yml"
 
 # --- bundle discovery --------------------------------------------------------
 #
@@ -285,6 +294,7 @@ read_config_list transforms applicable >"$WORK/applicable"
 read_config_list transforms plan_only >"$WORK/plan_only"
 read_config_list type_inference rules >"$WORK/rules"
 read_config_list type_inference known_types >"$WORK/known"
+read_config_list taxonomy rules >"$WORK/taxonomy"
 LINK_FORM="$(read_config_scalar links form bundle_relative)"
 CONVERT_UNRESOLVED="$(read_config_scalar links convert_unresolvable true)"
 ADOPT_TITLE="$(read_config_scalar adopt title 'Memory Bundle')"
@@ -357,6 +367,18 @@ if list_contains "backfill-type" "$WORK/applicable"; then
 fi
 if list_contains "wikilink-convert" "$WORK/applicable"; then
     convert_wikilinks "$ROOT" "$WORK/every" "$LINK_FORM" "$CONVERT_UNRESOLVED" >>"$WORK/edits"
+fi
+if list_contains "move-concept" "$WORK/applicable"; then
+    # The link rewrites are derived from the SAME mapping the moves are, so the
+    # two cannot disagree about where a file lands. Apply ORDERING (rewrites
+    # before renames) is the driver's job — see the apply section.
+    plan_moves "$ROOT" "$WORK/concepts" "$WORK/every" "$WORK/taxonomy" "$WORK/mapping" >>"$WORK/edits"
+    # §8 ORDER: the directory indexes are built FIRST, because they CLAIM the
+    # index lines that named the moved concepts. The inbound rewriter then
+    # repoints those claimed lines at the sub-index rather than at the concept —
+    # naming it in both places would be memory-multi-index.
+    plan_directory_indexes "$ROOT" "$WORK/every" "$WORK/mapping" "$WORK/claimed" >>"$WORK/edits"
+    rewrite_inbound_links "$ROOT" "$WORK/every" "$WORK/mapping" "$WORK/claimed" >>"$WORK/edits"
 fi
 
 if [ -n "$TRANSFORM" ]; then
@@ -435,6 +457,14 @@ render_plan() {
                 note="$(unpad "$note")"
                 : "$p" "$l"
                 command printf -- '@@ %s: %s @@\n' "$t" "$note"
+                if [ "$k" = "move" ]; then
+                    # RENDERED AS A RENAME HEADER, not a +/- pair. A move changes
+                    # no bytes, so showing it as content would misrepresent what
+                    # apply does — and the destination is the single fact a
+                    # reviewer is approving here.
+                    command printf 'rename from %s\nrename to %s\n' "$o" "$n"
+                    continue
+                fi
                 if [ "$k" = "create" ]; then
                     command printf '%s\n' "$n" | command sed -e 's/\\n/\
 /g' | while IFS= read -r bl || [ -n "$bl" ]; do
@@ -511,8 +541,51 @@ fi
 #
 # THE ALLOWLIST IS THE PLAN (AC7) — the edit list built above is the only source
 # of paths, so a file that was not planned cannot be written by construction.
-field 2 "$WORK/edits" | command sort -u >"$WORK/targets"
+# MOVE RECORDS ARE SPLIT OUT AND RUN LAST. A link rewrite reads the file at its
+# OLD path, so renaming first would leave those edits pointed at a path that no
+# longer exists — they would silently no-op and every inbound link would be left
+# dangling, which is the exact failure move-concept exists to prevent.
+command grep -F '	:move	' "$WORK/edits" >"$WORK/moves" 2>/dev/null || :
+command grep -vF '	:move	' "$WORK/edits" >"$WORK/edits.lines" 2>/dev/null || :
+field 2 "$WORK/edits.lines" | command sort -u >"$WORK/targets"
 ROOT_REAL="$(cd "$ROOT" && command pwd -P)"
+
+# PRE-FLIGHT: every MOVE destination is checked before ANY edit is written.
+#
+# "Partial application is not a thing" (contract.md) is a claim about the WHOLE
+# apply, and a check that runs when its own edit's turn comes cannot make it.
+# move-concept forced this: renames run LAST (a link rewrite must read the file
+# at its old path), so a destination check inside the rename loop fired only
+# after every link rewrite was already on disk. Measured: a taxonomy rule spelled
+# `= ../../../escaped` exited 2 with the right message and left the bundle's
+# links rewritten to point outside it — a refusal that had already done most of
+# the damage.
+#
+# The DESTINATION is the new surface a move introduces; every other transform
+# only writes a path that already existed in the bundle. Resolved through its
+# nearest EXISTING ancestor, since the directory need not exist yet.
+if [ -s "$WORK/moves" ]; then
+    while IFS="$(command printf '\t')" read -r _t _p _k _l _o _n _note || [ -n "$_t" ]; do
+        [ -n "$_t" ] || continue
+        _n="$(unpad "$_n")"
+        _ndir="$ROOT/${_n%/*}"
+        [ "${_n%/*}" != "$_n" ] || _ndir="$ROOT"
+        _probe="$_ndir"
+        while [ "$_probe" != "/" ] && [ ! -d "$_probe" ]; do
+            _probe="${_probe%/*}"
+            [ -n "$_probe" ] || _probe="/"
+        done
+        _preal="$(cd "$_probe" 2>/dev/null && command pwd -P)" || _preal=""
+        case "$_preal" in
+            "$ROOT_REAL" | "$ROOT_REAL"/*) ;;
+            *)
+                command printf 'ERROR: apply refused: %s resolves outside the bundle root %s — refusing to move through it\n' \
+                    "$_n" "$ROOT" >&2
+                exit 2
+                ;;
+        esac
+    done <"$WORK/moves"
+fi
 while IFS= read -r target_enc || [ -n "$target_enc" ]; do
     [ -n "$target_enc" ] || continue
     # The ENCODED form matches the records; the DECODED form is the real path.
@@ -525,17 +598,29 @@ while IFS= read -r target_enc || [ -n "$target_enc" ]; do
     # rather than `realpath -m`, which is GNU-only and whose usual `|| echo`
     # fallback returns the path UNRESOLVED — defeating exactly this guard
     # (#932, and issue #21's surface).
-    # FAILS CLOSED when the parent cannot be resolved. Today the only `create`
-    # target is `$ROOT/index.md`, whose parent is the root itself, so an
-    # unresolvable parent is unreachable — but a guard that SKIPS on the case it
-    # cannot evaluate is one new transform away from being no guard at all, and
-    # that silent-permit shape is the thing this whole file argues against.
-    # Refusing costs nothing while the case stays unreachable.
+    # FAILS CLOSED when the parent cannot be resolved, but resolves through the
+    # nearest EXISTING ancestor first. The original spelling resolved only a
+    # parent that already existed, and its own comment predicted what broke it:
+    # "one new transform away from being no guard at all". move-concept (#934)
+    # was that transform — it creates `<root>/<dir>/index.md` for a directory
+    # that does not exist yet, so the parent was unresolvable and a legitimate
+    # in-bundle create was REFUSED. Walking up to the nearest existing ancestor
+    # keeps the guard fail-closed (an escaping path still resolves outside the
+    # root) while letting a new subdirectory through.
     _tdir="${target%/*}"
     [ "$_tdir" != "$target" ] || _tdir="."
+    _probe_t="$_tdir"
+    while [ "$_probe_t" != "/" ] && [ ! -d "$_probe_t" ]; do
+        _probe_t="${_probe_t%/*}"
+        [ -n "$_probe_t" ] || _probe_t="/"
+    done
     _treal=""
-    if [ -d "$_tdir" ]; then
-        _treal="$(cd "$_tdir" && command pwd -P)/${target##*/}"
+    if [ -d "$_probe_t" ]; then
+        _preal_t="$(cd "$_probe_t" && command pwd -P)"
+        # The unresolved remainder is appended verbatim: it contains no symlink
+        # to follow (none of it exists), and any `..` in it was already
+        # normalized away by the transform that produced the path.
+        _treal="$_preal_t${_tdir#"$_probe_t"}/${target##*/}"
     fi
     case "$_treal" in
         "$ROOT_REAL"/*) ;;
@@ -546,7 +631,7 @@ while IFS= read -r target_enc || [ -n "$target_enc" ]; do
             ;;
     esac
 
-    command grep -F "	:$target_enc	" "$WORK/edits" >"$WORK/group" || continue
+    command grep -F "	:$target_enc	" "$WORK/edits.lines" >"$WORK/group" || continue
 
     command grep -F '	:create	' "$WORK/group" >"$WORK/creates" 2>/dev/null || :
     if [ -s "$WORK/creates" ]; then
@@ -588,8 +673,14 @@ while IFS= read -r target_enc || [ -n "$target_enc" ]; do
                     ln="$l" "$WORK/buf" >"$WORK/buf.new"
                 ;;
             insert-line)
+                # THE END BLOCK IS AN APPEND, and without it an insert at
+                # len+1 matched NO record and was silently dropped while the
+                # python twin's list.insert clamped and wrote it. move-concept
+                # appends to an existing directory index, so the line that makes
+                # a moved concept recallable was the one going missing (#934).
                 OKF_NEW="$n" command awk \
-                    'NR==ln{print ENVIRON["OKF_NEW"]}{print}' \
+                    'NR==ln{print ENVIRON["OKF_NEW"]}{print}
+                     END{if (ln > NR) print ENVIRON["OKF_NEW"]}' \
                     ln="$l" "$WORK/buf" >"$WORK/buf.new"
                 ;;
             *) command cp "$WORK/buf" "$WORK/buf.new" ;;
@@ -598,5 +689,35 @@ while IFS= read -r target_enc || [ -n "$target_enc" ]; do
     done <"$WORK/group.sorted"
     command cp "$WORK/buf" "$target"
 done <"$WORK/targets"
+
+# --- renames, after every line edit ------------------------------------------
+#
+# `git mv` RATHER THAN delete+create (AC7): the history is the reason a memory
+# can be trusted, and `git log --follow` on a relocated concept must still reach
+# the commit that explains why it was written. A delete+create severs that at
+# exactly the moment the file becomes hardest to place.
+#
+# A NON-REPO FALLS BACK TO `mv`, the same line the dirty-tree gate draws: this
+# tool migrates any repo's bundle including a plain directory under no version
+# control, and refusing there would turn a history guarantee into a portability
+# bug. A `git mv` failing for any other reason falls back too — the move is the
+# contract, the history is the bonus.
+if [ -s "$WORK/moves" ]; then
+    command sort -t"$(command printf '\t')" -k5,5 "$WORK/moves" >"$WORK/moves.sorted"
+    while IFS="$(command printf '\t')" read -r t p k l o n note || [ -n "$t" ]; do
+        [ -n "$t" ] || continue
+        o="$(unpad "$o")"
+        n="$(unpad "$n")"
+        : "$p" "$k" "$l" "$note"
+        [ -e "$ROOT/$o" ] || continue
+
+        _ndir="$ROOT/${n%/*}"
+        [ "${n%/*}" != "$n" ] || _ndir="$ROOT"
+        command mkdir -p "$_ndir"
+        if ! (cd "$ROOT" && command git mv -- "$o" "$n" >/dev/null 2>&1); then
+            command mv "$ROOT/$o" "$ROOT/$n"
+        fi
+    done <"$WORK/moves.sorted"
+fi
 
 exit 0
