@@ -128,6 +128,41 @@ test_disables_every_source() {
         "All bundled sources are disabled, not just a named one"
 }
 
+# Ubuntu's OWN archive must survive the sweep. On 24.04 the main archive moved
+# out of /etc/apt/sources.list into a deb822 file in this very directory, so
+# "disable everything here" leaves apt with no sources at all.
+#
+# This is not hypothetical: the first live CI run of this script disabled
+# ubuntu.sources alongside microsoft-prod and google-chrome, and still went green
+# — because jq and shellcheck were already on the image. The first package that
+# genuinely needed downloading would have failed, pointing nowhere near the
+# cause. This suite could not have caught it, because a sandbox directory has no
+# ubuntu.sources in it unless a test puts one there. So: put one there.
+test_keeps_ubuntu_own_sources() {
+    local dir out
+    dir="$(new_sources_dir)"
+    command printf 'Types: deb\nURIs: http://azure.archive.ubuntu.com/ubuntu/\n' \
+        >"$dir/ubuntu.sources"
+    command printf 'deb https://dl.google.com/linux/chrome/deb stable main\n' \
+        >"$dir/google-chrome.sources"
+    command printf 'deb https://packages.microsoft.com/ubuntu prod main\n' \
+        >"$dir/microsoft-prod.list"
+
+    run_installer "$dir" jq
+    out="$LAST_OUT"
+
+    assert_file_exists "$dir/ubuntu.sources" \
+        "Ubuntu's own archive is NOT disabled"
+    assert_file_exists "$dir/google-chrome.sources.disabled" \
+        "The third-party Chrome source IS disabled"
+    assert_file_exists "$dir/microsoft-prod.list.disabled" \
+        "The third-party Microsoft source IS disabled"
+    assert_contains "$out" "disabled 2 third-party source(s)" \
+        "Only the two third-party sources are counted"
+    assert_contains "$out" "keeping Ubuntu source" \
+        "The kept source is reported rather than silently skipped"
+}
+
 test_empty_dir_is_not_an_error() {
     local dir out
     dir="$(new_sources_dir)"
@@ -385,6 +420,7 @@ run_test test_script_is_executable_shell "Script exists and parses"
 run_test test_disables_list_file "A .list third-party source is disabled"
 run_test test_disables_sources_file "A deb822 .sources source is disabled"
 run_test test_disables_every_source "Every bundled source is disabled, not one by name"
+run_test test_keeps_ubuntu_own_sources "Ubuntu's own archive survives the sweep"
 run_test test_empty_dir_is_not_an_error "An empty sources.list.d is tolerated"
 run_test test_missing_dir_is_not_an_error "A missing sources.list.d is tolerated"
 run_test test_rerun_is_idempotent "Re-running does not re-disable or double-rename"

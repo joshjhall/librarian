@@ -15,11 +15,24 @@
 # a CI cycle and an operator decision per occurrence, and it is indistinguishable
 # at a glance from a real gate failure.
 #
-# WHY THE WHOLE DIRECTORY, NOT google-chrome.list BY NAME. This repo needs only
-# Ubuntu's own archives (jq, shellcheck). Every file in sources.list.d on a
-# GitHub runner is a bundled third-party source we do not use, and ANY of them
-# can serve a corrupt index the same way — naming one would leave the next one
-# armed.
+# WHY NOT google-chrome BY NAME, AND WHY NOT THE WHOLE DIRECTORY EITHER. This
+# repo needs Ubuntu's own archives (jq, shellcheck) and nothing else, so the rule
+# is: keep Ubuntu's sources, disable the rest. Naming the Chrome file alone would
+# leave the next vendor armed — any bundled third-party source can serve a
+# corrupt index the same way.
+#
+# But "everything in sources.list.d is third-party" is FALSE on this image, and
+# measured so: the first live run of this script disabled
+# `/etc/apt/sources.list.d/ubuntu.sources` alongside microsoft-prod and
+# google-chrome. Ubuntu 24.04 moved the main archive OUT of /etc/apt/sources.list
+# and into a deb822 file in this very directory, so a blanket sweep leaves
+# `apt-get update` with no sources at all. That run still went green — but only
+# because jq and shellcheck were already on the image ("already the newest
+# version"); the first package that actually needed downloading would have
+# failed, and the failure would have looked nothing like its cause.
+#
+# Hence KEEP_SOURCES below. A name is skipped when it is Ubuntu's own archive;
+# everything else is disabled.
 #
 # WHY RENAME RATHER THAN rm. `<name>.disabled` is inspectable in the step log
 # and non-destructive if the runner image is ever reused. apt only reads `.list`
@@ -117,6 +130,16 @@ if [ -d "$SOURCES_LIST_D" ]; then
     shopt -s nullglob
     for src in "$SOURCES_LIST_D"/*.list "$SOURCES_LIST_D"/*.sources; do
         [ -f "$src" ] || continue
+        # Ubuntu's own archive lives here on 24.04 and must survive — see the
+        # KEEP_SOURCES note in the header. Matched on the basename with the
+        # extension dropped, so ubuntu.sources and ubuntu.list both qualify.
+        base="${src##*/}"
+        case "${base%.*}" in
+            ubuntu | ubuntu-esm-* | ubuntu-pro-*)
+                command printf 'apt-install: keeping Ubuntu source %s\n' "$src"
+                continue
+                ;;
+        esac
         if $SUDO_MV mv "$src" "$src.disabled"; then
             command printf 'apt-install: disabled third-party source %s\n' "$src"
             disabled_count=$((disabled_count + 1))

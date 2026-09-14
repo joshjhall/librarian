@@ -26,7 +26,7 @@ It does **not** cover whether `apt-get` then succeeds, because that arm never
 invokes apt. That is precisely the half this file records.
 
 `tests/lint-apt-hardening.sh` covers the other acceptance criterion (AC2 — the
-fix applied to _every_ workflow step running `apt-get`) offline and permanently,
+fix applied to *every* workflow step running `apt-get`) offline and permanently,
 by failing the tree on any workflow `apt-get` not routed through
 `bin/apt-install.sh`.
 
@@ -35,33 +35,60 @@ by failing the tree on any workflow `apt-get` not routed through
 - **Job**: the three shard legs of `quality-gates` — `10-portability`,
   `20-golem`, `30-scanners` — plus their dependent `Merge gate`
 - **Step**: `Install jq + shellcheck` → `bash bin/apt-install.sh jq shellcheck`
-- **PR**: _pending — fill in from this PR's own CI run_
-- **Run**: _pending_
+- **PR**: [#1028](https://github.com/joshjhall/librarian/pull/1028)
+- **Run**: [34792260225](https://github.com/joshjhall/librarian/actions/runs/34792260225)
+  (2026-09-14) — all checks green
 
-## PENDING — to transcribe from the PR's CI run
+## VERIFIED — live
 
-Fill the block below verbatim from the `Install jq + shellcheck` step log of any
-one shard, then change this heading to `VERIFIED — live`. The lines to capture
-are the script's own report and the install result:
+Transcribed verbatim from the `Install jq + shellcheck` step of
+`Skill/agent quality gates (10-portability)`
+([job 103818564011](https://github.com/joshjhall/librarian/actions/runs/34792260225/job/103818564011)).
+Identical output on `20-golem`; the step exited 0 on all three shards and each
+went on to run its tests.
 
 ```text
-apt-install: disabled third-party source /etc/apt/sources.list.d/<name>.list
-apt-install: disabled N third-party source(s) in /etc/apt/sources.list.d
-...
+apt-install: disabled third-party source /etc/apt/sources.list.d/microsoft-prod.list
+apt-install: disabled third-party source /etc/apt/sources.list.d/google-chrome.sources
+apt-install: disabled third-party source /etc/apt/sources.list.d/ubuntu.sources
+apt-install: disabled 3 third-party source(s) in /etc/apt/sources.list.d
+Reading package lists...
+jq is already the newest version (1.7.1-3ubuntu0.24.04.2).
+shellcheck is already the newest version (0.9.0-1).
 apt-install: installed jq shellcheck
 ```
 
-What the evidence must show, stated before it is collected so it cannot be read
-to fit:
+Against the three conditions stated in advance:
 
-1. **N ≥ 1** — the runner image did ship at least one third-party source, and it
-   was disabled. An `N = 0` line would mean the image changed and this run
-   proves nothing about the failure mode; it is not a pass for AC3.
-2. The step **exits 0** and the shard proceeds to run tests. The original
-   failure never reached a test.
-3. The named sources include the Google Chrome one from the original report, or
-   the log shows the image no longer ships it — either is informative, but they
-   are different findings and should be recorded as such.
+1. **N >= 1** — yes, N = 3. The image does ship third-party sources, and the
+   Chrome source from the original report is among them (now as deb822
+   `google-chrome.sources` rather than the `.list` of 2026-09-09).
+2. **Step exits 0 and the shard runs its tests** — yes, on all three shards.
+3. **Named sources include Google Chrome** — yes.
+
+## What this run caught that no sandbox test could
+
+The evidence **fails on its own terms**, and that is the point of collecting it.
+
+Line 3 disables `/etc/apt/sources.list.d/ubuntu.sources` — **Ubuntu's own
+archive**. Ubuntu 24.04 moved the main archive out of `/etc/apt/sources.list`
+into a deb822 file in that directory, so the original "everything here is
+third-party" premise was simply false on this image, and `apt-get update` ran
+with **no sources at all**.
+
+The run went green anyway, which is the dangerous part: `jq` and `shellcheck`
+were *already the newest version* on the image, so nothing needed downloading.
+The first package that genuinely required a fetch would have failed, and the
+failure would have pointed nowhere near its cause.
+
+No sandbox test could have found this. `tests/validate-apt-install.sh` builds
+its own sources directory, and a directory contains an `ubuntu.sources` only if
+a test puts one there — the bug lived in an assumption about the real image,
+which is exactly the class of thing AC3 exists to check.
+
+**Fixed** in the same PR: the script now keeps Ubuntu's own sources
+(`ubuntu`, `ubuntu-esm-*`, `ubuntu-pro-*`) and reports each one it keeps, with
+`test_keeps_ubuntu_own_sources` pinning the behaviour.
 
 ## Notes
 
