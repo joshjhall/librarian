@@ -662,6 +662,33 @@ export async function run() {
     ok(!JSON.stringify(mixed[0]).includes(leaked), "redactMemoryFindings: memory finding redacted in a mixed batch");
     eq(mixed[1].evidence, "<redacted-credential-literal>", "redactMemoryFindings: sibling non-memory finding unaffected");
 
+    // THE GROUP WRAPPER (#698 review cycle 3). `aggregate.groups` is built by the
+    // aggregate agent from the RAW findings, before any redaction runs, and
+    // `group.title` becomes the filed issue's TITLE — so redacting only the
+    // findings array left the most visible string in the issue reachable.
+    const { redactMemoryGroup } = extractHelpers(CA, ["redactMemoryGroup"]);
+    const memGroup = { title: BODY, category: BODY, scanner: "memory", severity: "medium", effort: "small" };
+    const redGroup = redactMemoryGroup(memGroup, [leaky]);
+    ok(!redGroup.title.includes(leaked), "redactMemoryGroup: a body in the group TITLE does not survive");
+    ok(!redGroup.category.includes(leaked), "redactMemoryGroup: a body in the group category does not survive");
+    ok(redGroup.title.length <= 120, "redactMemoryGroup: title clamped to the schema ceiling");
+    eq(redGroup.scanner, "memory", "redactMemoryGroup: non-content group fields are preserved");
+
+    // The control again: a group with NO memory finding keeps its full title, so
+    // this is not a blanket truncator over every domain's issue titles.
+    const secGroup = { title: "A".repeat(200), category: "hardcoded-secret", scanner: "security" };
+    eq(
+      redactMemoryGroup(secGroup, [sec]),
+      secGroup,
+      "redactMemoryGroup: a non-memory group is returned by identity (untouched)",
+    );
+    // A MIXED group still redacts — one memory finding is enough to taint the title.
+    ok(
+      !redactMemoryGroup({ ...memGroup }, [sec, leaky]).title.includes(leaked),
+      "redactMemoryGroup: a group mixing memory and non-memory findings is redacted",
+    );
+    eq(redactMemoryGroup(null, [leaky]), null, "redactMemoryGroup: a null group passes through without throwing");
+
     // Degenerate inputs never throw (the harness calls this on every issues run).
     eq(redactMemoryFindings([]).length, 0, "redactMemoryFindings: empty array -> empty array");
     eq(redactMemoryFindings(null).length, 0, "redactMemoryFindings: null -> empty array, never throws");
@@ -671,8 +698,8 @@ export async function run() {
     // helper can observe its own call site.
     const orchSrc = harnessSource(CA);
     ok(
-      /agent\(issueWriterPrompt\(map\.platform, g\.group, redactMemoryFindings\(g\.findings\)\)/.test(orchSrc),
-      "codebase-audit: the issue-writer fan-out passes findings through redactMemoryFindings (#698)",
+      /agent\(issueWriterPrompt\(map\.platform, redactMemoryGroup\(g\.group, g\.findings\), redactMemoryFindings\(g\.findings\)\)/.test(orchSrc),
+      "codebase-audit: the issue-writer fan-out redacts BOTH the group wrapper and the findings (#698)",
     );
     ok(
       !/artifactWriterPrompt\([^)]*redactMemoryFindings/.test(orchSrc),

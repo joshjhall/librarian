@@ -111,9 +111,22 @@ const MEMORY_DOMAIN = 'memory'
 // configured, and must therefore match NOTHING — never every path by prefix.
 const memoryBundleRoot = (() => {
   const env = typeof process !== 'undefined' && process.env ? process.env : {}
-  const raw = env.OKF_BUNDLE_ROOT || env.MEMORY_BUNDLE_ROOT
-  const root = raw === undefined ? '.claude/memory' : String(raw)
-  return root.replace(/^\.\//, '').replace(/\/+$/, '')
+  // IS-SET, not is-truthy. `||` cannot distinguish an explicitly EMPTY
+  // OKF_BUNDLE_ROOT — the documented way to say "no bundle configured" — from an
+  // unset one, so it would fall through to MEMORY_BUNDLE_ROOT (or the default)
+  // and silently re-enable path detection the operator just disabled. This
+  // mirrors `[ -n "${OKF_BUNDLE_ROOT+set}" ]` in check-okf-conformance/
+  // patterns.sh and `bundle_root()` in patterns.py; the three are meant to
+  // decide alike, and only an is-set test actually does.
+  const root =
+    'OKF_BUNDLE_ROOT' in env
+      ? String(env.OKF_BUNDLE_ROOT)
+      : 'MEMORY_BUNDLE_ROOT' in env
+        ? String(env.MEMORY_BUNDLE_ROOT)
+        : '.claude/memory'
+  // Normalize so `.claude/memory`, `./.claude/memory` and `.claude/memory/` all
+  // decide alike — same reason the shell twin normalizes.
+  return root.trim().replace(/^\.\//, '').replace(/\/+$/, '')
 })()
 
 // Is this finding's FILE a memory-bundle file, regardless of which domain
@@ -190,6 +203,26 @@ const clampFragment = (v, cap = MEMORY_FRAGMENT_CAP) => {
 // fragment. A reader who needs the body runs the artifact objective, which is
 // the path issue #698 names as safe and which this function deliberately does
 // not touch.
+// The group wrapper needs the same treatment as the findings it wraps (#698
+// review cycle 3). `aggregate.groups` is built by the aggregate agent BEFORE
+// redaction runs, from the RAW findings — and `group.title` becomes the filed
+// issue's title, the single most visible string in the whole issue. Redacting
+// only `g.findings` therefore left the one field this code's own comment calls
+// "the most visible field there is" reachable by an aggregate model that quoted
+// a body into the title. Same failure #698 exists to close, one level up.
+//
+// Returns the group unchanged when no finding in it is memory-domain, so a
+// security or docs group keeps its full title.
+const redactMemoryGroup = (group, findings) => {
+  if (!group || typeof group !== 'object') return group
+  if (!(Array.isArray(findings) ? findings : []).some(isMemoryFinding)) return group
+  return {
+    ...group,
+    title: clampFragment(group.title, MEMORY_TITLE_CAP),
+    category: clampFragment(group.category, 40),
+  }
+}
+
 const redactMemoryFindings = (findings) =>
   (Array.isArray(findings) ? findings : []).map((f) => {
     if (!isMemoryFinding(f)) return f

@@ -356,7 +356,7 @@ if (output === 'files' || map.platform === 'none') {
 // forgets cannot leak, because it never receives the body.
 const outcomes = await parallel(
   groups.map((g) => () =>
-    agent(issueWriterPrompt(map.platform, g.group, redactMemoryFindings(g.findings)), {
+    agent(issueWriterPrompt(map.platform, redactMemoryGroup(g.group, g.findings), redactMemoryFindings(g.findings)), {
       label: `file:${g.group.category}`,
       phase: 'File',
       agentType: 'review-audit:issue-writer',

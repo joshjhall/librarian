@@ -345,9 +345,18 @@ only**, in code, before the agent is dispatched: `redactMemoryFindings`
 `suggestion` — the content-bearing fields, all of them *required* by
 `finding-schema.md`, hence rewritten rather than dropped — and additionally
 bounds `title`, `category`, `tags` and `related_files`, which no schema
-constraint limits and which the same bundle-reading agent populates. The rule it
-restores is checkable in one line: **no string on a memory finding reaches
-`issueWriterPrompt` without passing through the clamp.** Only `file`,
+constraint limits and which the same bundle-reading agent populates.
+
+The **group wrapper is clamped too** (`redactMemoryGroup`), and that is not a
+detail: `aggregate.groups` is built by the aggregate agent from the **raw**
+findings, before redaction runs, and `group.title` becomes the filed issue's
+title — the most visible string in the issue. Redacting only the findings array
+left that one field reachable. A group with no memory finding is returned
+untouched, so this is not a blanket truncator over other domains' titles.
+
+The rule it restores is checkable in one line: **no string reaches
+`issueWriterPrompt` — on a memory finding *or* on the group that wraps it —
+without passing through the clamp.** Only `file`,
 `line_start`, `line_end` and `certainty` pass through untouched — locations are
 safe and are what make a redacted finding actionable.
 

@@ -729,8 +729,20 @@ test_memory_redaction_is_enforced_in_the_harness() {
     # Applied ON the issue-writer dispatch. Matching the call site rather than
     # the mere presence of the identifier: a helper that is defined and never
     # called is the inert-gate shape this repo keeps filing issues about.
-    assert_file_contains "$harness" "issueWriterPrompt(map.platform, g.group, redactMemoryFindings(g.findings))" \
-        "the issue-writer fan-out passes its findings THROUGH the redactor"
+    assert_file_contains "$harness" "issueWriterPrompt(map.platform, redactMemoryGroup(g.group, g.findings), redactMemoryFindings(g.findings))" \
+        "the issue-writer fan-out redacts BOTH the group wrapper and the findings"
+
+    # THE GROUP WRAPPER IS NOT OPTIONAL. `group.title` becomes the filed issue's
+    # title — the most visible string in the issue — and the aggregate agent
+    # builds it from the RAW findings before any redaction runs. Redacting only
+    # the findings array left that path open.
+    local group_body
+    group_body="$(command awk '/^const redactMemoryGroup/ { c = 1 } c { print } c && /^\}$/ { exit }' "$harness" | flatten)"
+    assert_not_empty "$group_body" "the group redactor is extractable"
+    assert_contains "$group_body" "title: clampFragment" \
+        "the group title is clamped — it is the issue title a reader sees first"
+    assert_contains "$group_body" "some(isMemoryFinding)" \
+        "only a group CONTAINING a memory finding is redacted (not a blanket truncator)"
 
     # And NOT applied on the artifact path — the asymmetry IS the design.
     local artifact_call
@@ -770,6 +782,40 @@ test_memory_redaction_is_enforced_in_the_harness() {
     # entire audit.
     assert_contains "$detect_body" "if (!memoryBundleRoot) return false" \
         "an empty bundle root matches nothing, rather than every path by prefix"
+
+    # IS-SET, NOT IS-TRUTHY. `||` cannot tell an explicitly EMPTY OKF_BUNDLE_ROOT
+    # (the documented "no bundle configured" signal) from an unset one, so it
+    # falls through and silently re-enables the detection the operator disabled.
+    # The shell scanner spells this `[ -n "${OKF_BUNDLE_ROOT+set}" ]`; the three
+    # implementations are meant to decide alike, and only an is-set test does.
+    # Exercised behaviorally through node, not by matching the source text — the
+    # env resolution runs at module load, so a real process is the only honest
+    # way to ask what it resolved.
+    local root_probe
+    root_probe="$(command awk '/^const memoryBundleRoot/ { c = 1 } c { print } c && /^\}\)\(\)$/ { exit }' "$harness")"
+    assert_not_empty "$root_probe" "the bundle-root resolver is extractable"
+
+    local probe_out
+    probe_out="$(OKF_BUNDLE_ROOT="" MEMORY_BUNDLE_ROOT="/other/root" command node -e "
+        $root_probe
+        console.log(JSON.stringify(memoryBundleRoot))
+    " 2>&1)"
+    assert_equals '""' "$probe_out" \
+        "an explicitly EMPTY OKF_BUNDLE_ROOT disables the bundle (not overridden by MEMORY_BUNDLE_ROOT)"
+
+    probe_out="$(MEMORY_BUNDLE_ROOT="custom/mem" command node -e "
+        $root_probe
+        console.log(JSON.stringify(memoryBundleRoot))
+    " 2>&1)"
+    assert_equals '"custom/mem"' "$probe_out" \
+        "MEMORY_BUNDLE_ROOT is honored when OKF_BUNDLE_ROOT is unset"
+
+    probe_out="$(command node -e "
+        $root_probe
+        console.log(JSON.stringify(memoryBundleRoot))
+    " 2>&1)"
+    assert_equals '".claude/memory"' "$probe_out" \
+        "the default root applies when neither variable is set"
 
     # Locations survive. A finding stripped of its path is unactionable, and
     # paths are explicitly PERMITTED by audit-memory.md § Redaction — so their
