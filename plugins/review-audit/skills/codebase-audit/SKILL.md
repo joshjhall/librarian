@@ -90,8 +90,23 @@ objective; pass `report: false` only if the user asked to suppress the file
 
 ### Invoke the Harness
 
-**Invoke the `Workflow` tool** with the script bundled alongside this skill at
-`~/.claude/skills/codebase-audit/workflow.js`, passing the resolved parameters:
+**Stage the harness, then invoke the `Workflow` tool** on the `path=` it prints.
+The `Workflow` tool only accepts a `scriptPath` under the session's cwd, and the
+installed plugin root never is — so the bundled path must be staged, not handed
+over directly (#973):
+
+```bash
+${CLAUDE_PLUGIN_ROOT}/../workflow/scripts/harness-stage.sh stage codebase-audit
+# -> path=…  source=…  staged=true|false
+```
+
+**Fallback when `workflow` is not installed.** That script ships with the
+`workflow` plugin, which installs independently of this one — so if it is
+absent, copy this skill's own sibling `workflow.js` to `.claude/tmp/harness/`
+under the session cwd and use that path. The staging requirement is a property
+of the `Workflow` tool, not of either plugin; only the helper is optional.
+
+Pass the resolved parameters:
 
 ```text
 args: {

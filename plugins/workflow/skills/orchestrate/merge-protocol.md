@@ -14,30 +14,41 @@ or **[OPT-IN LEGACY]** (local-merge only).
 
 ---
 
-## Sync Point Tracking [OPT-IN LEGACY]
+## Legacy sections moved
 
-Use `git merge-base` to track where agent branches diverged from the current
-branch. This is the foundation for determining what's new.
+Every **[OPT-IN LEGACY]** section of this protocol — sync-point tracking,
+squash vs merge commit, the local-merge review and sync protocols, agent
+checkpoint context, and the legacy local-merge phases — now lives in
+**`merge-legacy.md`** in this directory (#973).
 
-```bash
-# Find divergence point
-MERGE_BASE=$(git merge-base HEAD <agent-branch>)
+They apply only under the opt-in **local-merge** topology, where the
+orchestrator merges golem branches itself. Under the default **PR-per-golem**
+topology a golem ships its own PR and none of it runs, so this file keeps only
+the three LIVE sections below.
 
-# List new commits on agent branch
-git log --oneline "$MERGE_BASE"..<agent-branch>
+Every moved section, linked so nothing is reachable only by memory:
 
-# Count new commits
-git rev-list --count "$MERGE_BASE"..<agent-branch>
-
-# Check if already fully merged (0 = merged)
-git rev-list --count "$MERGE_BASE"..<agent-branch>
-```
-
-After a successful merge, the merge-base advances automatically — no manual
-bookkeeping needed. Subsequent `/workflow:orchestrate status` calls will show 0 pending
-commits for that agent.
-
----
+- [Sync Point Tracking [OPT-IN LEGACY]](merge-legacy.md#sync-point-tracking-opt-in-legacy)
+- [Squash vs Merge Commit [OPT-IN LEGACY]](merge-legacy.md#squash-vs-merge-commit-opt-in-legacy)
+- [Review Protocol [OPT-IN LEGACY]](merge-legacy.md#review-protocol-opt-in-legacy)
+- [Review Scope](merge-legacy.md#review-scope)
+- [Agent Dispatch Order](merge-legacy.md#agent-dispatch-order)
+- [Correction Commit Convention](merge-legacy.md#correction-commit-convention)
+- [What NOT to Auto-Fix](merge-legacy.md#what-not-to-auto-fix)
+- [Sync Protocol [OPT-IN LEGACY]](merge-legacy.md#sync-protocol-opt-in-legacy)
+- [Sync Direction](merge-legacy.md#sync-direction)
+- [Merge Order](merge-legacy.md#merge-order)
+- [Conflict Handling](merge-legacy.md#conflict-handling)
+- [Post-Sync Verification](merge-legacy.md#post-sync-verification)
+- [Label Cleanup](merge-legacy.md#label-cleanup)
+- [Return to Orchestrator](merge-legacy.md#return-to-orchestrator)
+- [Agent Checkpoint Context [OPT-IN LEGACY]](merge-legacy.md#agent-checkpoint-context-opt-in-legacy)
+- [Reading Agent Checkpoints](merge-legacy.md#reading-agent-checkpoints)
+- [Using Checkpoint in Review](merge-legacy.md#using-checkpoint-in-review)
+- [Local-Merge (OPT-IN, Legacy)](merge-legacy.md#local-merge-opt-in-legacy)
+- [Merge (legacy Phase 2)](merge-legacy.md#merge-legacy-phase-2)
+- [Review (legacy Phase 3)](merge-legacy.md#review-legacy-phase-3)
+- [Sync (legacy Phase 4)](merge-legacy.md#sync-legacy-phase-4)
 
 ## Conflict Classification for Cross-PR Rebase [LIVE]
 
@@ -291,259 +302,3 @@ fi
 If no test runner is detected, inform the user and skip testing.
 
 ---
-
-## Squash vs Merge Commit [OPT-IN LEGACY]
-
-| Strategy                   | Pros                                                            | Cons                                                  |
-| -------------------------- | --------------------------------------------------------------- | ----------------------------------------------------- |
-| **Merge commit** (default) | Preserves full agent history; easy to trace what each agent did | More commits in log; noisier `git log --oneline`      |
-| **Squash**                 | Clean single commit; ideal for small/focused agent tasks        | Loses individual commit granularity; harder to bisect |
-
-**Recommendations:**
-
-- **Use merge commit** (default) when:
-
-  - Agent made multiple logical changes worth preserving
-  - You may need to bisect within the agent's work later
-  - Traceability of agent contributions matters
-
-- **Use squash** when:
-
-  - Agent work is a single logical unit (one feature, one fix)
-  - Agent made many WIP/fixup commits
-  - You want a clean linear history
-
-The user can request squash via `/workflow:orchestrate merge <N> --squash` or by asking
-for a squash merge in natural language.
-
----
-
-## Review Protocol [OPT-IN LEGACY]
-
-In the default PR-per-golem topology, per-PR review is the **golem's** job (the
-`/workflow:ship-issue` adversarial review loop — the **Workflow tool** with
-`ship-issue/workflow.js`, Step 3.5 item 6). This section applies only after a
-legacy local merge (`/workflow:orchestrate review`), reviewing the merged changes for
-correctness and quality.
-
-### Review Scope
-
-Review **only the merge commit diff** — not the entire file:
-
-```bash
-# For the most recent merge commit
-MERGE_COMMIT=$(git log -1 --merges --format='%H')
-
-# Diff of just the merge commit (changes introduced by the merge)
-git diff "${MERGE_COMMIT}^1" "${MERGE_COMMIT}"
-
-# Files changed in the merge
-git diff --name-only "${MERGE_COMMIT}^1" "${MERGE_COMMIT}"
-```
-
-### Agent Dispatch Order
-
-1. **`code-review` harness** — always run first, via the `Workflow` tool on
-   `~/.claude/agents/code-reviewer/workflow.js`. It reviews the merge diff for
-   bugs, security issues, performance problems, and style violations as a
-   parallel barrier under a shared budget, with a judge-panel rescore of each
-   finding's certainty before merge. **Bound this invocation in wall-time
-   (#224)** — it fans out reviewer subagents; invoke it as a background task with
-   the caller-side timeout (a timed-out review is **partial**, never clean). See
-   `mode-protocol.md` § *Bounding a Workflow invocation in wall-time*.
-1. **`test-writer` agent** — dispatched only if the code-review findings
-   indicate missing test coverage or if new public APIs were introduced
-   without tests.
-
-### Correction Commit Convention
-
-All review fixes go into a **single correction commit** per review cycle:
-
-```text
-fix(review): {summary of corrections}
-
-{bullet list of changes made}
-
-Reviewed-by: orchestrate Phase 3
-```
-
-- One commit per review — do not create multiple fixup commits
-- The `Reviewed-by` trailer provides traceability
-
-### What NOT to Auto-Fix
-
-Review should flag but **not automatically change**:
-
-- **Architectural changes** — restructuring modules, changing abstractions
-- **API deletions** — removing public interfaces or exported symbols
-- **Dependency changes** — adding, removing, or upgrading dependencies
-- **Configuration changes** — altering build configs, CI pipelines, env vars
-
-These require user confirmation before modification.
-
----
-
-## Sync Protocol [OPT-IN LEGACY]
-
-Superseded by PR-per-golem (golems rebase their own PR branches onto base via
-Phase R). This one-way orchestrator → agent-branch sync applies only to the
-legacy local-merge path, pushing the latest orchestrator state into all agent
-branches so they start their next task from a consistent baseline.
-
-### Sync Direction
-
-**Orchestrator → agent branches** (one-way). The orchestrator branch is the
-source of truth after merges and reviews.
-
-### Merge Order
-
-Sync agents sequentially in natural order:
-
-```bash
-# agent01, agent02, agent03, ...
-for branch in $(git branch --list 'agent*' | /usr/bin/sort); do
-    # sync logic per branch
-done
-```
-
-### Conflict Handling
-
-Attempt an auto-merge. If conflicts arise, **abort and skip** that branch:
-
-```bash
-git checkout <agent-branch>
-git merge <orchestrator-branch> -m "sync: merge orchestrator updates"
-
-# If conflicts:
-git merge --abort
-# Log the skip, continue to next agent
-```
-
-Skipped agents will pick up changes on their next `/workflow:orchestrate sync` or when
-the orchestrator merges their work (Phase 2) and syncs again.
-
-### Post-Sync Verification
-
-After syncing each branch, verify the merge-base advanced:
-
-```bash
-# Merge-base should now equal or be ahead of the previous merge-base
-NEW_BASE=$(git merge-base <orchestrator-branch> <agent-branch>)
-```
-
-### Label Cleanup
-
-After a successful sync, remove in-flight status labels from issues
-associated with synced agent branches (the work has been fully integrated):
-
-```bash
-# GitHub
-gh issue edit {N} --remove-label "status/commit-pending" --remove-label "status/in-progress"
-
-# GitLab
-glab issue update {N} --unlabel "status/commit-pending" --unlabel "status/in-progress"
-```
-
-### Return to Orchestrator
-
-Always return to the orchestrator branch after sync completes:
-
-```bash
-git checkout <orchestrator-branch>
-```
-
----
-
-## Agent Checkpoint Context [OPT-IN LEGACY]
-
-Used by the legacy local-merge review path. (In PR-per-golem, the golem carries
-its own checkpoint and the human reviews the PR.) When reviewing agent work
-after a `/clear`, the orchestrator can read the
-agent's checkpoint from their JSON state file for context. This is especially
-useful when the agent's conversation history is no longer available.
-
-### Reading Agent Checkpoints
-
-Agent state files live in the agent's worktree at
-`.claude/memory/tmp/next-issue-{N}.json`. After merging an agent's work, check
-if a state file exists with checkpoint data:
-
-```bash
-# From the agent's worktree directory. Exclude the singleton
-# next-issue-queue.json — it is a dependency-queue record, not a per-issue
-# checkpoint, and has none of the checkpoint fields read below.
-for f in .claude/memory/tmp/next-issue-*.json; do
-  case "$f" in */next-issue-queue.json) continue ;; esac
-  cat "$f" 2>/dev/null
-done
-```
-
-The `checkpoint` object contains:
-
-- `key_decisions` — non-obvious choices the agent made (context for review)
-- `files_modified` — what the agent changed (scope for review)
-- `files_planned` — what the agent intended to change (completeness check)
-- `warnings` — things the agent flagged for attention
-- `next_action` — what the agent expected to happen next
-
-### Using Checkpoint in Review
-
-When dispatching the `code-reviewer` agent in Phase 3, include relevant
-checkpoint context in the review prompt:
-
-- Pass `key_decisions` so the reviewer understands design choices
-- Pass `warnings` so the reviewer checks flagged concerns
-- Compare `files_planned` vs `files_modified` to verify completeness
-
-## Local-Merge (OPT-IN, Legacy)
-
-> **OPT-IN LEGACY MODE.** The default topology is PR-per-golem (Phases D/M/R in
-> `orchestrate/SKILL.md`). Use local-merge ONLY for tightly-coupled work where
-> golems push to no remote (offline / no-PR worktree workflow). The orchestrator
-> merging golem branches into its own branch — and syncing back — is exactly
-> what PR-per-golem replaces. The merge/sync sections below are bannered
-> superseded; conflict classification + test-runner detection (above) remain
-> live.
-
-Use these only when explicitly requested (`/workflow:orchestrate merge`, `review`,
-`sync`).
-
-### Merge (legacy Phase 2)
-
-1. **Resolve agent identifier**: numeric → map from the status table; branch
-   name → use directly; `all` → iterate agents with pending commits.
-1. **Preview**: `MERGE_BASE=$(git merge-base HEAD <agent-branch>)`;
-   `git log --oneline "$MERGE_BASE"..<agent-branch>`; diffstat. Confirm.
-1. **Merge**: `git merge --no-ff <agent-branch> -m "merge(<agent-branch>): …"`
-   (or `--squash` on request).
-1. **Conflicts**: dispatch `rebase-agent` for trivial; escalate non-trivial
-   (see § Conflict Classification above).
-1. **Run tests** (see § Test Runner Detection above); warn on
-   failure, do not auto-revert.
-1. **Report** the merge commit. Suggest `/clear` if context is large.
-
-### Review (legacy Phase 3)
-
-Per-PR review is normally the **golem's** job (the `/workflow:ship-issue` review
-loop). This phase applies only after a local merge.
-
-1. `MERGE_COMMIT=$(git log -1 --merges --format='%H')`.
-1. **Run the `code-review` harness** via the Workflow tool on
-   `~/.claude/agents/code-reviewer/workflow.js`, passing
-   `args: { diff: "<git diff \"${MERGE_COMMIT}^1\" \"${MERGE_COMMIT}\">", files: [<changed>] }`.
-   It returns the `finding-schema.md` object. **Bound this invocation in
-   wall-time (#224)** — it fans out reviewer subagents; invoke it as a
-   background task with the caller-side timeout (a timed-out review is
-   **partial**). See `mode-protocol.md` § *Bounding a Workflow invocation in
-   wall-time*.
-1. **Apply corrections** in a single commit trailered `Reviewed-by: orchestrate`.
-1. **Run tests**; report a summary table.
-
-### Sync (legacy Phase 4)
-
-1. `ORCH_BRANCH=$(git branch --show-current)`.
-1. For each `git branch --list 'agent*' | /usr/bin/sort`:
-   `git checkout <branch>; git merge "$ORCH_BRANCH" -m "sync: …"`; on conflict
-   `git merge --abort` and skip.
-1. Return to `$ORCH_BRANCH`; remove `status/in-progress` /
-   `status/commit-pending` labels for synced issues. Report a sync table.

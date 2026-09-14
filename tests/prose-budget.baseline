@@ -50,6 +50,47 @@
 #     to trim; and the 382 cross-harness duplicated lines stay the BUDGET_FLOOR
 #     class, because the generated artifact still cannot import — fragments are
 #     shareable within a harness, never across them.
+#   * The #973 splits removed two long-standing entries rather than raising
+#     them: ci-review-protocol.md (767 -> 602, CI-monitoring half moved to
+#     ci-monitor-protocol.md) and pre-ship-validation.md (666 -> 268, check 6
+#     moved to adversarial-review-step.md). Four orchestrate files were split
+#     the same way and never needed an entry. Both removals are the ratchet
+#     working as designed — a file that shrinks under budget stops being an
+#     exception — and are recorded here only so the disappearance is not read
+#     as a lost exemption.
 plugins/workflow/skills/orchestrate/mode-protocol.md 883 # carries all orchestration modes; splitting per-mode would scatter one decision table an operator reads end-to-end Raised 877->883 by #974: a 6-line pointer that a free-text directive needs verify-text, not verify-send. It has to sit in the "do not assume a send-keys was delivered" block itself — that block is where a broker looks, and it currently shows only the `1 Enter` recipe, which is exactly how the text path shipped with no verify step. The full recipe and the measured cause went into monitor-protocol.md (which owns the text-relay story and has headroom), not here
-plugins/workflow/skills/ship-issue/ci-review-protocol.md 767 # the CI-wait + multi-cycle review contract; its length is the protocol, and every ship path loads it whole. +6 in #815: <skill-base-dir> substitution notes on the four recipes here that run worktree-isolated, plus the reader-vs-writer sentence on the golem-notify pipe (an exemption asserted in an earlier draft and measured FALSE in review — the note is what stops it being re-asserted). +4 in #886: the `<!-- contract: args-keys-pr-cycle -->` marker pair (plus their blank lines) around the pr-cycle args block, so tests/lint-args-contract-refs.sh can address that key list by id rather than by fence ordinal — an ordinal anchor silently stops matching the day a block moves Raised 759->767 by #890: two background-work registration pointers — the multi-cycle review loop (5 lines) and the backgrounded ci-fixer harness (3). Both are sites where a turn ends while a Workflow fan-out keeps running, which is the exact shape measured as a false `idle at prompt` five times in one session; the pointer names golem-work.sh rather than restating the protocol, which stays in golem/background-work.md
-plugins/workflow/skills/ship-issue/pre-ship-validation.md 666 # the Step 3.5 pre-ship validation sequence; every ship path runs all six checks and loads this whole file. Crossed 650 by CONVERGENCE, not by one change: #708 added the check-security wiring (+15) and #886 added the `<!-- contract: args-keys-* -->` marker pairs around the three args blocks (+13 after tightening the one non-fenced site — the two fenced blocks keep their surrounding blank lines because rumdl MD031 requires them). The markers are what let tests/lint-args-contract-refs.sh address each key list by id instead of by fence ordinal, which is the anchor that silently stops matching when a block moves Raised 653->660 by #699: one table row naming the nine okf-*/memory-* categories a reader needs to interpret a pre-scan row, plus a 5-line pointer to review-routing.md. The RATIONALE (delegation-vs-duplication, the diff-scoping rule, why absence degrades quietly here but fails loud for security) went into review-routing.md instead, which owns the routing story and had headroom — progressive disclosure, not a bigger file Raised 660->666 by #890: a 6-line registration pointer beside the check-#6 Workflow invocation. That call is 3 of the 5 measured false-idles (the window between the harness call and the next top-level record measured 2.7 and 8.7 min), so the instruction has to sit where the harness is actually invoked rather than one file away
+||||||| parent of 53100e1 (fix(workflow): stage review harnesses under cwd so the Workflow tool accepts them)
+#
+# NOTE: --regen rewrites this header from the script and preserves only the
+# PER-ENTRY `# why` notes. Free-form header prose like the block below is not
+# carried across a regen — re-add it, or move it into the entries themselves.
+#
+# Prose-decomposition slices — what was deliberately NOT done, so it is not
+# re-derived:
+#   * checker.md is DONE (#717) and is no longer a ledger entry. #503 moved
+#     Step 3a; #717 moved Step 2's discovery gates, Step 6's agnix precedence,
+#     and Step 7's direct-dispatch trail to skill companions, landing it at 391
+#     (under the 400 agent bar). Each cut was justified by LOAD FREQUENCY or
+#     CALL-SPECIFICITY, never by coupling — the pre-scan still reports the 7
+#     steps as "mutually referential", which is expected and not a blocker.
+#   * audit-ai-config.md (273) is 23 over its 250 warn with 11-22 line sections;
+#     extraction would cost more indirection than it saves. Justified in place,
+#     which #503 AC2 explicitly permits ("or an explicit justification why not").
+#     It is under its 400 high bar, so it is not a ledger entry.
+#   * No workflow.js can be split into importable siblings (#90, #91, re-probed
+#     live in #807). #718 settled the per-harness decision (#503 AC3); #808 then
+#     landed the #806 generator, so the recorded answers now split by whether a
+#     harness is ENROLLED in it:
+#       - ship-issue, codebase-audit: STRUCTURABLE, applied via the workflow.src/
+#         fragment layout. Their decisions live in the fragments (05-provenance.js
+#         and 10-config.js), never in the generated artifact.
+#       - orchestrate: STRUCTURABLE, already applied — the in-file entry-point +
+#         banner shape, and the reference for anything not enrolled.
+#       - code-reviewer: STRUCTURABLE, applied in-file (runReview() + a column-0
+#         dispatch tail, pinned by name in its test area).
+#     #718 also closed the other two levers by measurement, and the generator does
+#     NOT reopen either: prompt-string share is flat over time (ship-issue was
+#     24%/44% at 649 raw lines and 24%/44% at 1930), so there is no accreted prose
+#     to trim; and the 382 cross-harness duplicated lines stay the BUDGET_FLOOR
+#     class, because the generated artifact still cannot import — fragments are
+#     shareable within a harness, never across them.

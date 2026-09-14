@@ -142,9 +142,9 @@ known_arg_keys() {
 # A bare `key1 key2` string is used rather than an associative array: this must
 # stay bash-3.2 clean (no `declare -A`), per CLAUDE.md.
 SITES='
-args-keys-pre-pr-cycle1|pre-ship-validation.md|phase cycle maxCycles files diff issue tokenCeiling preScan conventionsDigest reviewRoute
-args-keys-pre-pr-narrowed|pre-ship-validation.md|phase cycle maxCycles files diff issue tokenCeiling preScan conventionsDigest reviewRoute deltaFiles deltaDiff priorBlockingDimensions
-args-keys-accepted-set|pre-ship-validation.md|phase cycle maxCycles files diff prComments issue tokenCeiling preScan conventionsDigest reviewRoute deltaDiff deltaFiles priorBlockingDimensions
+args-keys-pre-pr-cycle1|adversarial-review-step.md|phase cycle maxCycles files diff issue tokenCeiling preScan conventionsDigest reviewRoute
+args-keys-pre-pr-narrowed|adversarial-review-step.md|phase cycle maxCycles files diff issue tokenCeiling preScan conventionsDigest reviewRoute deltaFiles deltaDiff priorBlockingDimensions
+args-keys-accepted-set|adversarial-review-step.md|phase cycle maxCycles files diff prComments issue tokenCeiling preScan conventionsDigest reviewRoute deltaDiff deltaFiles priorBlockingDimensions
 args-keys-pr-cycle|ci-review-protocol.md|phase cycle maxCycles files diff prComments issue tokenCeiling preScan conventionsDigest reviewRoute deltaFiles deltaDiff priorBlockingDimensions
 args-keys-skill-summary|SKILL.md|phase cycle maxCycles files diff issue preScan conventionsDigest reviewRoute tokenCeiling
 args-keys-execute-summary|execute-protocol.md|phase cycle maxCycles files diff prComments issue preScan conventionsDigest reviewRoute tokenCeiling deltaFiles deltaDiff priorBlockingDimensions
@@ -378,13 +378,13 @@ test_both_key_spellings_parse() {
 # boundary genuinely excludes it, or the anchoring choice silently rots.
 test_region_excludes_the_counterexample() {
     local region
-    region="$(extract_contract args-keys-accepted-set "$SHIP_DIR/pre-ship-validation.md")"
+    region="$(extract_contract args-keys-accepted-set "$SHIP_DIR/adversarial-review-step.md")"
     assert_not_empty "$region" "the accepted-set region extracts"
     assert_not_contains "$region" "argsFile" \
         "the accepted-set region stops before the #567 \`argsFile\` counter-example"
     # ...and prove the counter-example is really there, or the assertion above
     # would pass against prose that simply never mentioned it.
-    assert_file_contains "$SHIP_DIR/pre-ship-validation.md" "argsFile" \
+    assert_file_contains "$SHIP_DIR/adversarial-review-step.md" "argsFile" \
         "the counter-example genuinely exists in the file (assertion is not vacuous)"
 }
 

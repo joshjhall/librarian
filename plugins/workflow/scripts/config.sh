@@ -57,6 +57,17 @@
 #                        pipeline on a cheaper model.     Default: (unset)
 #   GOLEM_BASE_REF       The ref new worktree branches fork from.
 #                        Default: origin/main
+#   LIBRARIAN_HARNESS_<ID>
+#                        Explicit path override for one workflow.js harness
+#                        resolved by harness-stage.sh (#973), where <ID> is the
+#                        harness id upper-cased with `-` → `_`: e.g.
+#                        LIBRARIAN_HARNESS_SHIP_ISSUE,
+#                        LIBRARIAN_HARNESS_CODE_REVIEWER. Takes precedence over
+#                        both the dev-checkout and installed-cache probes, and
+#                        SHORT-CIRCUITS them — so a value pointing nowhere is a
+#                        hard refusal (exit 3) naming the override, not a silent
+#                        fallthrough. `harness-stage.sh list` prints the ids.
+#                                                          Default: (unset)
 #   GOLEM_WORKTREE_LOCAL_FILES
 #                        Space-separated list of gitignored, machine-local files
 #                        copied from the main checkout into a fresh worktree so a

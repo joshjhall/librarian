@@ -48,9 +48,16 @@ find_execute_protocol() {
         2>/dev/null | command sort | command head -1
 }
 
+# The CI dead-end park site — the one this gate cares about — moved from
+# ci-review-protocol.md into its ci-monitor-protocol.md companion in #973, when
+# the parent passed its prose budget and its CI-monitoring half was split out.
+# The locator follows the park SITE, not the old filename: ci-review-protocol.md
+# now holds only the post-green review loop and states no park obligation, so
+# pointing at it would assert the contract against a file that no longer makes
+# the claim.
 find_ci_review_protocol() {
     command find "$PLUGINS_DIR" -type f \
-        -path '*/skills/ship-issue/ci-review-protocol.md' \
+        -path '*/skills/ship-issue/ci-monitor-protocol.md' \
         2>/dev/null | command sort | command head -1
 }
 
@@ -191,7 +198,7 @@ test_park_sites_state_the_obligation() {
 
     local missing=""
     [ -n "$f_exec" ] || missing="${missing} ship-issue/execute-protocol.md"
-    [ -n "$f_ci" ] || missing="${missing} ship-issue/ci-review-protocol.md"
+    [ -n "$f_ci" ] || missing="${missing} ship-issue/ci-monitor-protocol.md"
     [ -n "$f_auto" ] || missing="${missing} orchestrate/autonomy-levels.md"
     if [ -n "$missing" ]; then
         skip_test "park-site files absent:${missing}"
@@ -262,7 +269,7 @@ test_gitlab_sibling_parity() {
 test_target_files_present() {
     local missing=""
     [ -n "$(find_execute_protocol)" ] || missing="${missing} ship-issue/execute-protocol.md"
-    [ -n "$(find_ci_review_protocol)" ] || missing="${missing} ship-issue/ci-review-protocol.md"
+    [ -n "$(find_ci_review_protocol)" ] || missing="${missing} ship-issue/ci-monitor-protocol.md"
     [ -n "$(find_golem_skill)" ] || missing="${missing} golem/SKILL.md"
     [ -n "$(find_autonomy_levels)" ] || missing="${missing} orchestrate/autonomy-levels.md"
     if [ -n "$missing" ]; then

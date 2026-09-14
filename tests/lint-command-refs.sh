@@ -728,7 +728,7 @@ Chain /next-issue,/ship-issue in order.
 Run /workflow:next-issue then stop.
 Read `.claude/memory/tmp/next-issue-queue.json` for the queue.
 Read next-issue-{N}.json for phase.
-Harness at ~/.claude/skills/ship-issue/workflow.js runs it.
+Harness at .claude/tmp/harness/ship-issue.workflow.js runs it.
 A bare `/clear` resets context.
 Prose slashes: `/the and */models. and +/critical) stay put.
 See state-format.md for the schema.
