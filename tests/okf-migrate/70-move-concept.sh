@@ -270,6 +270,60 @@ Body.'
         "$(command printf '%s\n' "$body" | command sed -n 's/.*(\([^)]*\.md\)).*/\1/p' |
             command tr '\n' ' ' | command sed -e 's/ $//')" \
         "the appended block preserves sorted order (not c1, c3, c2)"
+
+    # THE PYTHON PATH GETS THE SAME ORDER ASSERTION, not just parity. The
+    # ordering defect was present in BOTH runtimes identically, so the
+    # whole-tree parity test could not have caught it — and this fragment drives
+    # the bash twin everywhere else, which is how the first mutation round of
+    # this very fixture proved nothing (it mutated moves.py, which no case here
+    # exercises). Asserting the ORDER against python closes that.
+    if [ "$OKF_HAVE_PY" -ne 1 ]; then
+        return 0
+    fi
+    local root_py body_py cfg_py
+    cfg_py="$WORKDIR/cfg.order.$$"
+    write_taxonomy "$cfg_py" "index:index-golem.md = golem"
+    root_py="$(fresh_bundle "$WORKDIR")"
+    command mkdir -p "$root_py/golem"
+    write_concept "$root_py" "MEMORY.md" '# Memory
+
+- [Golem](golem/index.md) — bucket'
+    write_concept "$root_py" "golem/index.md" '# golem
+
+- [Zero](zero.md) — a hook'
+    write_concept "$root_py" "golem/zero.md" '---
+type: feedback
+---
+
+Body.'
+    write_concept "$root_py" "index-golem.md" '# Golem
+
+- [C one](c1.md) — a hook
+- [C two](c2.md) — a hook
+- [C three](c3.md) — a hook'
+    write_concept "$root_py" "c1.md" '---
+type: feedback
+---
+
+Body.'
+    write_concept "$root_py" "c2.md" '---
+type: feedback
+---
+
+Body.'
+    write_concept "$root_py" "c3.md" '---
+type: feedback
+---
+
+Body.'
+    OKF_MIGRATE_CONFIG_DIR="$cfg_py" run_py apply "$root_py" \
+        --transform move-concept --confirm --allow-dirty
+    assert_exit 0 "$OKF_RC" "the python impl applies cleanly"
+    body_py="$(command cat "$root_py/golem/index.md")"
+    assert_equals "zero.md c1.md c2.md c3.md" \
+        "$(command printf '%s\n' "$body_py" | command sed -n 's/.*(\([^)]*\.md\)).*/\1/p' |
+            command tr '\n' ' ' | command sed -e 's/ $//')" \
+        "the PYTHON append path preserves sorted order too"
 }
 
 test_appended_line_keeps_literal_escape_sequences() {
