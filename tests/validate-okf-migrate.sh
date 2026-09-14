@@ -139,6 +139,8 @@ run_fragment_test test_migrate_config_readers_survive_unreadable "the config rea
 run_fragment_test test_move_rewrites_every_inbound_link "every inbound link to a moved concept is rewritten — from TWO directories, both link forms (AC3)"
 run_fragment_test test_index_pointer_follows_the_move "the index pointer follows the move — a stale one is a silent un-recall (AC4)"
 run_fragment_test test_move_into_an_existing_directory_index "a move into an EXISTING directory index appends to it — no regeneration, no orphan"
+run_fragment_test test_appending_three_concepts_keeps_their_order "appending 3+ concepts to an existing index preserves sorted order (highest-line-first interleaving)"
+run_fragment_test test_destination_collision_leaves_the_file_put "a destination collision skips the move and never overwrites the incumbent"
 run_fragment_test test_move_is_idempotent "move-concept applied twice equals applied once, byte-compared (AC5)"
 run_fragment_test test_move_reversibility "after the move the real validator emits no dangling/orphan rows (AC6)"
 run_fragment_test test_move_preserves_git_history "moves use git mv — git log --follow still reaches the pre-move commit (AC7)"

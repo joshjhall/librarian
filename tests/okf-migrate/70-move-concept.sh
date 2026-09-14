@@ -215,6 +215,104 @@ Body.'
         "the real validator confirms the moved concept is reachable"
 }
 
+test_appending_three_concepts_keeps_their_order() {
+    local root body
+    root="$(fresh_bundle "$WORKDIR")"
+    command mkdir -p "$root/golem"
+    write_concept "$root" "MEMORY.md" '# Memory
+
+- [Golem](golem/index.md) — bucket'
+    write_concept "$root" "golem/index.md" '# golem
+
+- [Zero](zero.md) — a hook'
+    write_concept "$root" "golem/zero.md" '---
+type: feedback
+---
+
+Body.'
+    # THREE concepts, because the ordering defect needs 3+ to show. Edits to one
+    # file apply HIGHEST LINE FIRST against a growing buffer, so N separate
+    # appends at len+1, len+2, len+3 interleave: measured, `c1, c2, c3` was
+    # written as `c1, c3, c2`. BOTH runtimes did it identically, so the parity
+    # case could not catch it — only an ORDER assertion can.
+    write_concept "$root" "index-golem.md" '# Golem
+
+- [C one](c1.md) — a hook
+- [C two](c2.md) — a hook
+- [C three](c3.md) — a hook'
+    write_concept "$root" "c1.md" '---
+type: feedback
+---
+
+Body.'
+    write_concept "$root" "c2.md" '---
+type: feedback
+---
+
+Body.'
+    write_concept "$root" "c3.md" '---
+type: feedback
+---
+
+Body.'
+
+    run_moves apply "$root" --transform move-concept --confirm --allow-dirty
+    assert_exit 0 "$OKF_RC" "move-concept applies cleanly"
+
+    body="$(command cat "$root/golem/index.md")"
+    assert_contains "$body" "(c1.md)" "the first arriving concept is named"
+    assert_contains "$body" "(c2.md)" "the second arriving concept is named"
+    assert_contains "$body" "(c3.md)" "the third arriving concept is named"
+
+    # THE ORDER ITSELF. Asserting only presence would pass against the scrambled
+    # output, which is exactly how this shipped unnoticed.
+    assert_equals "zero.md c1.md c2.md c3.md" \
+        "$(command printf '%s\n' "$body" | command sed -n 's/.*(\([^)]*\.md\)).*/\1/p' |
+            command tr '\n' ' ' | command sed -e 's/ $//')" \
+        "the appended block preserves sorted order (not c1, c3, c2)"
+}
+
+test_destination_collision_leaves_the_file_put() {
+    local root before after
+    root="$(fresh_bundle "$WORKDIR")"
+    command mkdir -p "$root/golem"
+    write_concept "$root" "MEMORY.md" '# Memory
+
+- [Golem](golem/index.md) — bucket'
+    write_concept "$root" "golem/index.md" '# golem
+
+- [Clash](clash.md) — a hook'
+    # A concept ALREADY occupying the destination path.
+    write_concept "$root" "golem/clash.md" '---
+type: feedback
+---
+
+The incumbent.'
+    # ...and a DIFFERENT concept whose taxonomy destination is the same path.
+    write_concept "$root" "index-golem.md" '# Golem
+
+- [Clash](clash.md) — a hook'
+    write_concept "$root" "clash.md" '---
+type: feedback
+---
+
+The arriving one.'
+
+    before="$(command cat "$root/golem/clash.md")"
+    run_moves apply "$root" --transform move-concept --confirm --allow-dirty
+    assert_exit 0 "$OKF_RC" "a collision is not an error — the move is simply skipped"
+
+    # A COLLISION MUST NEVER OVERWRITE. Two concepts sharing a basename routed to
+    # one directory would otherwise have the second silently destroy the first —
+    # an unrecoverable loss of a memory, from a tool whose premise is running
+    # against someone else'"'"'s bundle.
+    after="$(command cat "$root/golem/clash.md")"
+    assert_equals "$before" "$after" \
+        "the incumbent at the destination is byte-identical — never overwritten"
+    assert_file_exists "$root/clash.md" \
+        "the colliding concept stays PUT rather than vanishing"
+}
+
 test_move_is_idempotent() {
     local root once twice
     root="$(move_fixture)"

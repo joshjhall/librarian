@@ -356,7 +356,16 @@ EOF
             # had an index left the moved file a memory-orphan, because the line
             # naming it was repointed at the sub-index while the sub-index never
             # learned about it.
+            # ONE EDIT FOR THE WHOLE BLOCK, not one per arriving concept, and
+            # that is correctness rather than tidiness: edits to a file apply
+            # HIGHEST LINE FIRST and each insert clamps against the GROWING
+            # buffer, so N separate appends at len+1, len+2, len+3 land OUT OF
+            # ORDER — measured with three concepts, `c1, c2, c3` was written as
+            # `c1, c3, c2`. Both runtimes did it identically, so a byte-parity
+            # check could not catch it.
             _at="$(command wc -l <"$root/$dir/index.md" | command tr -d ' ')"
+            _block=""
+            _n=0
             while IFS="$(command printf '\t')" read -r _o new_rel || [ -n "$_o" ]; do
                 [ -n "$new_rel" ] || continue
                 case "$new_rel" in "$dir"/*) ;; *) continue ;; esac
@@ -369,10 +378,22 @@ EOF
                 else
                     line="- [${base%.md}]($base)"
                 fi
-                _at=$((_at + 1))
-                emit_edit "move-concept" "$root/$dir/index.md" "insert-line" "$_at" \
-                    "" "$line" "name the arriving concept in the existing $dir/ index"
+                # `\n` LITERAL, never a real newline: the edit record is
+                # line-oriented, so an embedded newline splits the record and
+                # every later field shifts. This is the same encoding a `create`
+                # body uses, and `unpad` is the single decoder for both.
+                if [ -n "$_block" ]; then
+                    _block="$_block\\n$line"
+                else
+                    _block="$line"
+                fi
+                _n=$((_n + 1))
             done <"$mapping"
+            if [ "$_n" -gt 0 ]; then
+                emit_edit "move-concept" "$root/$dir/index.md" "insert-line" \
+                    "$((_at + 1))" "" "$_block" \
+                    "name $_n arriving concept(s) in the existing $dir/ index"
+            fi
             continue
         fi
         body="# $dir\n"

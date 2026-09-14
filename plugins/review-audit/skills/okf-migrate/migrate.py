@@ -463,7 +463,12 @@ def render_plan(
                 continue
             if edit.old:
                 sys.stdout.write("-" + edit.old + "\n")
-            sys.stdout.write("+" + edit.new + "\n")
+            # A `\n`-escaped multi-line payload renders as SEVERAL `+` lines.
+            # The plan is the reviewable artifact and the write allowlist, so it
+            # must show the lines that will actually be written — a literal `\n`
+            # in the preview would misrepresent the change being approved.
+            for piece in edit.new.split("\\n"):
+                sys.stdout.write("+" + piece + "\n")
     for note in notes:
         sys.stdout.write("# " + note + "\n")
     for amb in ambiguities:
@@ -594,7 +599,14 @@ def apply_edits(edits: list[Edit], allowlist: set, root: str) -> int:
                 if 0 <= idx < len(lines):
                     lines[idx] = edit.new
             elif edit.kind == "insert-line":
-                lines.insert(min(max(idx, 0), len(lines)), edit.new)
+                # A payload carrying `\n` expands to SEVERAL lines — move-concept
+                # appends a whole ordered block as ONE edit, since N separate
+                # appends interleave (edits apply highest-line-first against a
+                # growing list). The block travels `\n`-escaped through the
+                # line-oriented record, the same encoding a `create` body uses.
+                at = min(max(idx, 0), len(lines))
+                for offset, piece in enumerate(edit.new.split("\\n")):
+                    lines.insert(at + offset, piece)
         with open(path, "w", encoding="utf-8") as fh:
             fh.write("\n".join(lines) + "\n")
 

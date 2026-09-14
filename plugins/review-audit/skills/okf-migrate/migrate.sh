@@ -473,7 +473,13 @@ render_plan() {
                     continue
                 fi
                 [ -z "$o" ] || command printf -- '-%s\n' "$o"
-                command printf '+%s\n' "$n"
+                # A `\n`-escaped multi-line payload renders as SEVERAL `+`
+                # lines: the plan is the reviewable artifact AND the write
+                # allowlist, so it must show the lines actually written.
+                command printf '%s\n' "$n" | command sed -e 's/\\n/\
+/g' | while IFS= read -r _pl || [ -n "$_pl" ]; do
+                    command printf '+%s\n' "$_pl"
+                done
             done
     done <"$WORK/files"
     while IFS= read -r t || [ -n "$t" ]; do
@@ -678,9 +684,21 @@ while IFS= read -r target_enc || [ -n "$target_enc" ]; do
                 # python twin's list.insert clamped and wrote it. move-concept
                 # appends to an existing directory index, so the line that makes
                 # a moved concept recallable was the one going missing (#934).
+                #
+                # A payload carrying `\n` expands to SEVERAL lines. move-concept
+                # appends a whole ordered block as ONE edit (N separate appends
+                # interleave, because edits apply highest-line-first against a
+                # growing buffer), and the block travels through the
+                # line-oriented record in the same `\n`-escaped form a `create`
+                # body uses. awk's ENVIRON is not escape-processed, so the
+                # expansion is done here rather than relying on the shell.
                 OKF_NEW="$n" command awk \
-                    'NR==ln{print ENVIRON["OKF_NEW"]}{print}
-                     END{if (ln > NR) print ENVIRON["OKF_NEW"]}' \
+                    'function emit(  k, parts, i) {
+                         k = split(ENVIRON["OKF_NEW"], parts, /\\n/)
+                         for (i = 1; i <= k; i++) print parts[i]
+                     }
+                     NR==ln{emit()}{print}
+                     END{if (ln > NR) emit()}' \
                     ln="$l" "$WORK/buf" >"$WORK/buf.new"
                 ;;
             *) command cp "$WORK/buf" "$WORK/buf.new" ;;

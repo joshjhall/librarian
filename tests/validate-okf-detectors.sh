@@ -965,6 +965,28 @@ test_subdirectory_index_routing() {
             "okf: a directory with no index.md is not judged (python)"
     fi
 
+    # A SYMLINKED SUBDIRECTORY IS NEVER DESCENDED — a safety boundary, not
+    # tidiness, and the same line okf-migrate's collect_bundle draws on the write
+    # side: this toolset runs against SOMEONE ELSE'"'"'S bundle. Both `os.path.isdir`
+    # (python) and the `*/` glob (bash) FOLLOW a symlink, so `evil -> /elsewhere`
+    # was descended and its files reported under the bundle'"'"'s own name.
+    # Measured in BOTH runtimes before fixing.
+    b="$(fresh_bundle)"
+    command mkdir -p "$WORKDIR/outside.$$"
+    command printf -- '---\ntype: reference\n---\n\nBody.\n' >"$WORKDIR/outside.$$/leaked-name.md"
+    command printf -- '# evil\n\n* [Nope](nope.md) - x\n' >"$WORKDIR/outside.$$/index.md"
+    command printf -- '# Index\n\n* [Evil](evil/index.md) - bucket\n' >"$b/MEMORY.md"
+    command ln -s "$WORKDIR/outside.$$" "$b/evil"
+    list="$(list_bundle "$b")"
+    assert_not_contains "$(emit_rows sh "$list" memory-orphan)" "leaked-name.md" \
+        "okf: a symlinked subdirectory is never descended (bash)"
+    assert_not_contains "$(emit_rows sh "$list" memory-dangling-index)" "nope.md" \
+        "okf: ...and its index is never read (bash)"
+    if [ "$HAVE_PY" -eq 1 ]; then
+        assert_not_contains "$(emit_rows py "$list" memory-orphan)" "leaked-name.md" \
+            "okf: a symlinked subdirectory is never descended (python)"
+    fi
+
     # A root line naming an ABSENT sub-index is still dangling. Presence is what
     # the check tests, so without this the sub-index arm would be a blanket
     # exemption for anything ending in `/index.md`.

@@ -416,13 +416,20 @@ EOF
     # nothing to be judged against; reporting there would fire on every repo
     # keeping unrelated markdown beside its bundle.
     local sub sub_dir sub_index sub_named sub_concepts sub_base sub_targets
+    # SYMLINKED DIRECTORIES ARE SKIPPED — a SAFETY boundary, not tidiness, and
+    # the same line okf-migrate's collect_bundle draws on the write side: this
+    # toolset runs against SOMEONE ELSE'S bundle. The `*/` glob form FOLLOWS a
+    # symlink, so `evil -> /somewhere/else` was descended and its files reported
+    # under the bundle's name. Measured in BOTH runtimes before fixing.
     for sub_dir in "$root"/*/; do
         [ -d "$sub_dir" ] || continue
+        [ -L "${sub_dir%/}" ] && continue
         sub="${sub_dir%/}"
         sub="${sub##*/}"
         case "$sub" in .*) continue ;; esac
         sub_index="$root/$sub/index.md"
         [ -f "$sub_index" ] || continue
+        [ -L "$sub_index" ] && continue
 
         sub_named=""
         sub_targets="$(index_targets "$sub_index")"
@@ -442,6 +449,9 @@ EOF
         sub_concepts=""
         for sub_base in "$root/$sub"/*.md; do
             [ -f "$sub_base" ] || continue
+            # A symlinked .md is skipped too: it would be read and reported under
+            # its in-bundle name while its bytes came from outside.
+            [ -L "$sub_base" ] && continue
             sub_base="${sub_base##*/}"
             case "$sub_base" in index.md | log.md) continue ;; esac
             sub_concepts="${sub_concepts}${sub_base}

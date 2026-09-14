@@ -320,31 +320,42 @@ def plan_directory_indexes(
             # sub-index while the sub-index never learned about it.
             existing = read_lines(index_path)
             existing_text = "\n".join(existing)
-            # An APPEND is `insert-line` at len+1. Both runtimes clamp that to
-            # "after the last line" — python's list.insert does so natively, and
-            # the bash twin's awk needed an END block to match (it inserts BEFORE
-            # line ln, so ln > NR previously fired for no record and the line was
-            # silently DROPPED, leaving the moved concept named by no index).
-            insert_at = len(existing)
+            # ONE EDIT FOR THE WHOLE BLOCK, not one per arriving concept, and
+            # that is a correctness requirement rather than tidiness. Edits to a
+            # file are applied HIGHEST LINE FIRST (migrate.py apply_edits), and
+            # each insert clamps against the GROWING list — so N separate
+            # appends at len+1, len+2, len+3 land out of order: measured with
+            # three concepts, `c1, c2, c3` was written as `c1, c3, c2`. Both
+            # runtimes did it identically, so byte-parity could not catch it.
+            #
+            # A single insert carrying the ordered block has no interleaving to
+            # get wrong, and it stays one edit however many concepts arrive.
+            rendered_lines: list[str] = []
             for new_rel in sorted(by_dir[directory]):
                 base = os.path.basename(new_rel)
                 if "(" + base + ")" in existing_text:
                     continue
                 line = claimed.get(new_rel)
-                rendered = (
+                rendered_lines.append(
                     _retarget_line(line, base)
                     if line
                     else "- [" + base[:-3] + "](" + base + ")"
                 )
-                insert_at += 1
+            if rendered_lines:
                 edits.append(
                     Edit(
                         "move-concept",
                         index_path,
                         "insert-line",
-                        line=insert_at,
-                        new=rendered,
-                        note="name the arriving concept in the existing "
+                        line=len(existing) + 1,
+                        # `\n` LITERAL, never a real newline: the edit record is
+                        # line-oriented, so an embedded newline would split the
+                        # record. Same encoding a `create` body uses; the apply
+                        # path expands it.
+                        new="\\n".join(rendered_lines),
+                        note="name "
+                        + str(len(rendered_lines))
+                        + " arriving concept(s) in the existing "
                         + directory
                         + "/ index",
                     )

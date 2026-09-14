@@ -360,10 +360,20 @@ def scan_bundle(root: str, emit, thresholds_path: str) -> None:
 
     indexes: list[str] = []
     concepts: list[str] = []
+    # SYMLINKED DIRECTORIES ARE SKIPPED, and this is a SAFETY boundary rather
+    # than tidiness — the same line okf-migrate's collect_bundle() draws on the
+    # write side, for the same reason: this toolset's whole premise is running
+    # against SOMEONE ELSE'S bundle. `os.path.isdir` FOLLOWS a symlink, so a
+    # bundle containing `evil -> /somewhere/else` had this pass descend into it
+    # and emit findings naming files outside the bundle root. Measured: a
+    # `leaked-name.md` under the symlink target appeared in the scanner's own
+    # output as a memory-orphan row.
     subdirs = [
         name
         for name in entries
-        if os.path.isdir(os.path.join(root, name)) and not name.startswith(".")
+        if os.path.isdir(os.path.join(root, name))
+        and not name.startswith(".")
+        and not os.path.islink(os.path.join(root, name))
     ]
     for name in entries:
         if not name.endswith(".md"):
@@ -473,18 +483,22 @@ def scan_bundle(root: str, emit, thresholds_path: str) -> None:
     for sub in subdirs:
         sub_dir = os.path.join(root, sub)
         sub_index = os.path.join(sub_dir, "index.md")
-        if not os.path.isfile(sub_index):
+        if not os.path.isfile(sub_index) or os.path.islink(sub_index):
             continue
         try:
             sub_entries = sorted(os.listdir(sub_dir))
         except OSError:
             continue
+        # A SYMLINKED .md inside a kept directory is skipped too: `os.path.isfile`
+        # follows it, so it would be read and reported under its in-bundle name
+        # while its bytes came from elsewhere.
         sub_concepts = [
             n
             for n in sub_entries
             if n.endswith(".md")
             and n not in RESERVED
             and os.path.isfile(os.path.join(sub_dir, n))
+            and not os.path.islink(os.path.join(sub_dir, n))
         ]
         try:
             with open(sub_index, "r", encoding="utf-8", errors="replace") as fh:
