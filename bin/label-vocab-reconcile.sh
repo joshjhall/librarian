@@ -288,12 +288,50 @@ emit() {
 # label name anyway, so no real label is altered by this.
 #
 # Characters are REPLACED, not deleted: an odd name should still be visible as
-# evidence rather than silently becoming a different-looking name. All of these
-# are single-byte ASCII, so `tr` (a byte tool) is safe here — a multi-byte
-# character in a label name passes through untouched, which is what we want.
+# evidence rather than silently becoming a different-looking name.
+#
+# THE THIRD PASS EXISTS BECAUSE `tr` STRUCTURALLY CANNOT DO IT (#999, following
+# #816). Every character in the two `tr` sets above is single-byte ASCII, which
+# is the ONLY thing `tr` can express — it operates on bytes, so a multi-byte
+# character passes through whole. This comment used to close by calling that
+# "what we want". It was not: U+202E (RIGHT-TO-LEFT OVERRIDE) is the three bytes
+# `e2 80 ae`, and a label named `status/x<RTLO>evil` RENDERS REVERSED in the
+# report — the same report this job exists to have believed, reshaped by exactly
+# the thing it reports on. A real gap pre-marked as a settled decision is worse
+# than the gap alone, because it stops the next reader from checking.
+#
+# So the multi-byte Unicode format characters are enumerated below and replaced
+# by a third pass: bidi overrides/embeddings (U+202A-202E), bidi isolates
+# (U+2066-2069), the zero-width family (U+200B-200F) and BOM (U+FEFF). Same set,
+# same spelling, and same reasons as _PRESCAN_BIDI_BYTES in
+# plugins/workflow/skills/ship-issue/pre-review-gates.sh:
+#
+#   - LITERAL UTF-8 bytes via printf octal escapes, never `\xNN` — those are a
+#     GNU sed extension that BSD sed reads as literal text, the silent #679
+#     failure class where the pattern simply stops matching and nothing reports
+#     it.
+#   - An ALTERNATION, never a bracket class: a bracket over multi-byte sequences
+#     matches byte-wise and can split a character.
+#
+# It REPLACES rather than deletes, unlike the #816 sites, which reflect an
+# offending path back in a diagnostic. This function renders a finding, so the
+# replace-not-delete policy above applies to these characters too.
+#
+# WHAT IS DELIBERATELY NOT NEUTRALIZED, stated so the next reader need not guess:
+# ordinary non-ASCII. An accented character, CJK, an emoji — all pass through
+# untouched and render correctly, because they carry no formatting power in GFM
+# and a report that mangled them would be destroying evidence. The boundary is
+# "characters that reorder or hide text", not "bytes above 0x7F". `sed` is
+# already a declared preflight dependency (see the derivation above), so this
+# pass adds none.
+_MD_BIDI_BYTES="$(command printf '\342\200\213|\342\200\214|\342\200\215|\342\200\216|\342\200\217|')"
+_MD_BIDI_BYTES="${_MD_BIDI_BYTES}$(command printf '\342\200\252|\342\200\253|\342\200\254|\342\200\255|\342\200\256|')"
+_MD_BIDI_BYTES="${_MD_BIDI_BYTES}$(command printf '\342\201\246|\342\201\247|\342\201\250|\342\201\251|\357\273\277')"
+
 md_safe() {
     command printf '%s' "$1" | command tr '\n\r\t' '   ' |
-        command tr '`[]()*_~#|<>:' '?????????????'
+        command tr '`[]()*_~#|<>:' '?????????????' |
+        command sed -E "s/(${_MD_BIDI_BYTES})/?/g"
 }
 
 emit "## status/* label vocabulary reconciliation"
