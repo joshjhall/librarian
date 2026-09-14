@@ -163,11 +163,27 @@ below does — flag the graceful send, let pass-2 confirm the escalation.
 
 The re-key alone would have reproduced the same bug under a new token, because
 `signal.Notify(c, syscall.SIGTERM)` is just as common a registration and matches
-that pattern too. The terminate arm therefore **excludes** `signal.Notify` lines,
-which leaves them to the listener arm and is what makes a registration emit
-exactly one row of the right category. The exclusion is **unanchored**: it is
-matched against `grep -n` output on the bash side, where a `^` would bind to the
-line-number prefix and silently stop excluding — see `emit_rows_unless`.
+that pattern too. The terminate arm therefore **excludes** the registration,
+which leaves it to the listener arm and is what makes it emit exactly one row of
+the right category. The exclusion is **unanchored**: it is matched against
+`grep -n` output on the bash side, where a `^` would bind to the line-number
+prefix and silently stop excluding — see `emit_rows_unless`.
+
+It matches a **qualified `.Notify(`**, not the literal `signal.Notify(`. Pre-PR
+review found the literal spelling defeated by an **aliased import** — `import sig
+"os/signal"` is ordinary Go, and `sig.Notify(c, syscall.SIGTERM)` then missed
+*both* arms: mis-filed under terminate and absent from `unpaired-listener`, a
+silent double loss rather than a category swap. The listener arm is widened the
+same way so the two stay in step, and both halves are fixture-pinned.
+
+**The remaining gap is per-line, and is recorded rather than papered over.** Both
+runtimes test one line at a time, so a `Notify` call whose argument list is
+**wrapped** across lines puts `Notify(` and `syscall.SIGTERM` on different lines,
+and the second is mis-filed exactly as before the fix. Closing it needs
+multi-line state this scanner does not have — every arm here is a single-line
+regex. A fixture pins the current behaviour, so a future change that gains that
+state fails the assertion and forces the decision again instead of silently
+altering it.
 
 The `unpaired-listener` arm keys on three idioms, each a registration that
 outlives its statement and wants a named teardown: `signal.Notify`

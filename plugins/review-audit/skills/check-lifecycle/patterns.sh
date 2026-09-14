@@ -421,7 +421,20 @@ while IFS= read -r file; do
             # a `^`-anchored exclusion binds to the line number and silently
             # stops excluding — on the bash runtime only. See the rule at
             # emit_rows_unless's definition.
-            emit_rows_unless '\bsyscall\.SIGTERM\b' "terminate-without-kill" "$L_TERMINATE" "$file" '\bsignal\.Notify[[:space:]]*\('
+            #
+            # It matches any QUALIFIED `.Notify(` rather than the literal
+            # `signal.Notify(`, so an ALIASED import (`import sig "os/signal"`)
+            # is still excluded. The literal spelling left aliased code
+            # mis-filed here AND dropped from unpaired-listener — a silent
+            # double loss, not a category swap. The listener arm below is
+            # widened the same way so the two stay in step.
+            #
+            # LIMITATION, stated rather than papered over: both are per-LINE, so
+            # a WRAPPED argument list splits `Notify(` from `syscall.SIGTERM`
+            # and the latter is mis-filed exactly as before. Multi-line state is
+            # outside this single-line scanner; the behaviour is fixture-pinned
+            # so it stays a recorded decision rather than an unnoticed gap.
+            emit_rows_unless '\bsyscall\.SIGTERM\b' "terminate-without-kill" "$L_TERMINATE" "$file" '[A-Za-z_][A-Za-z0-9_]*\.Notify[[:space:]]*\('
             emit_rows '\bos\.(Open|Create)[[:space:]]*\(' "unclosed-handle" "$L_HANDLE" "$file"
             # Registration sites (#871). Go has no DOM-style addEventListener;
             # the registrations that outlive their statement and want an
@@ -447,7 +460,7 @@ while IFS= read -r file; do
             # one — a real divergence. (Row ORDER alone is safe: this gate sorts
             # both sides before diffing. The Python arm's comment describes the
             # stricter case; do not read it as license to split this one.)
-            emit_rows '\bsignal\.Notify[[:space:]]*\(|\btime\.NewTicker[[:space:]]*\(|\bnet\.Listen(TCP|Unix)?[[:space:]]*\(' "unpaired-listener" "$L_LISTENER" "$file"
+            emit_rows '[A-Za-z_][A-Za-z0-9_]*\.Notify[[:space:]]*\(|\btime\.NewTicker[[:space:]]*\(|\bnet\.Listen(TCP|Unix)?[[:space:]]*\(' "unpaired-listener" "$L_LISTENER" "$file"
             ;;
         *.[Rr][Ss])
             # Rust (#838). std::process::Command is the spawn site.

@@ -295,6 +295,29 @@ test_terminate_without_kill() {
     assert_silent "$list" terminate-without-kill \
         "lifecycle: Go signal.Notify(syscall.SIGTERM) registration is excluded (#871)"
 
+    # ALIASED import: `import sig "os/signal"` is legal Go, so the exclusion
+    # matches a QUALIFIED `.Notify(` rather than the literal `signal.Notify(`.
+    # Keying on the package name left this line mis-filed here AND dropped from
+    # unpaired-listener — a silent double loss, so both halves are pinned (the
+    # listener half lives in test_unpaired_listener).
+    d="$(fresh_dir)"
+    command printf '%s\n' 'sig.Notify(c, syscall.SIGTERM)' >"$d/alias.go"
+    list="$(make_list "$d/l" "$d/alias.go")"
+    assert_silent "$list" terminate-without-kill \
+        "lifecycle: Go aliased sig.Notify registration is excluded too (#871)"
+
+    # The RECORDED LIMITATION, pinned so it stays a decision rather than an
+    # unnoticed gap. Both runtimes test per LINE, so a wrapped argument list
+    # puts `Notify(` and `syscall.SIGTERM` on different lines and the second
+    # IS mis-filed under this category. Closing it needs multi-line state this
+    # single-line scanner does not have. If a future change gives it that, this
+    # assertion fails and is the right place to decide again.
+    d="$(fresh_dir)"
+    command printf '%s\n%s\n' 'signal.Notify(c,' '	syscall.SIGTERM)' >"$d/wrapped.go"
+    list="$(make_list "$d/l" "$d/wrapped.go")"
+    assert_fires "$list" terminate-without-kill "Terminate without kill escalation" \
+        "lifecycle: Go WRAPPED signal.Notify still mis-files — documented single-line limit (#871)"
+
     # Rust explicit SIGTERM (#838) — the graceful send site, which is what this
     # category asks about.
     d="$(fresh_dir)"
@@ -588,6 +611,14 @@ test_unpaired_listener() {
     assert_fires "$list" unpaired-listener "Listener/timer registered without visible removal" \
         "lifecycle: Go signal.Notify fires (pairs with signal.Stop)"
 
+    # Aliased import — the other half of the #871 alias fix: this must still be
+    # SEEN as a registration, not merely absent from terminate-without-kill.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'sig.Notify(c, syscall.SIGTERM)' >"$d/alias.go"
+    list="$(make_list "$d/l" "$d/alias.go")"
+    assert_fires "$list" unpaired-listener "Listener/timer registered without visible removal" \
+        "lifecycle: Go aliased sig.Notify still fires as a registration (#871)"
+
     d="$(fresh_dir)"
     command printf '%s\n' 'ticker := time.NewTicker(d)' >"$d/tick.go"
     list="$(make_list "$d/l" "$d/tick.go")"
@@ -604,7 +635,17 @@ test_unpaired_listener() {
     command printf '%s\n' 'l2, err := net.ListenUnix("unix", a)' >"$d/lnu.go"
     list="$(make_list "$d/l" "$d/lnu.go")"
     assert_fires "$list" unpaired-listener "Listener/timer registered without visible removal" \
-        "lifecycle: Go net.ListenUnix fires (the optional TCP/Unix suffix)"
+        "lifecycle: Go net.ListenUnix fires (the optional Unix suffix)"
+
+    # ListenTCP is its OWN fixture, not a variant covered by the two above: the
+    # arm spells the suffix as `(TCP|Unix)?`, so deleting the TCP alternative
+    # leaves every other Go fixture green. An alternation member no fixture
+    # reaches is asserted vacuously.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'l3, err := net.ListenTCP("tcp", a)' >"$d/lnt.go"
+    list="$(make_list "$d/l" "$d/lnt.go")"
+    assert_fires "$list" unpaired-listener "Listener/timer registered without visible removal" \
+        "lifecycle: Go net.ListenTCP fires (the optional TCP suffix)"
 
     # The deliberate DECLINE (#871, contract.md): a one-shot timer that fires is
     # self-retiring, so flagging it would report the ordinary case as the

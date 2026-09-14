@@ -219,8 +219,24 @@ def scan_file(path: str, lines: list[str]) -> None:
             # exactly one row of the right category. The bash twin spells this
             # with emit_rows_unless and an UNANCHORED exclusion -- read the note
             # at that helper's definition before touching either side.
+            #
+            # The exclusion matches any QUALIFIED `.Notify(`, not the literal
+            # `signal.Notify(`, so an ALIASED import (`import sig "os/signal"`,
+            # then `sig.Notify(c, syscall.SIGTERM)`) is still excluded. Keying
+            # on the literal package name left aliased code mis-filed here AND
+            # dropped from unpaired-listener -- a silent double loss rather than
+            # a category swap. The listener arm below is widened the same way so
+            # the two stay in step.
+            #
+            # LIMITATION, stated rather than papered over: both tests are
+            # per-LINE, so a call whose argument list is WRAPPED across lines
+            # puts `Notify(` and `syscall.SIGTERM` on different lines, and the
+            # second is mis-filed exactly as before. Closing that needs
+            # multi-line state this single-line scanner does not have. It is
+            # fixture-pinned in tests/validate-lifecycle-detectors.sh so the
+            # behaviour is a recorded decision, not an unnoticed gap.
             if re.search(r"\bsyscall\.SIGTERM\b", line) and not re.search(
-                r"\bsignal\.Notify\s*\(", line
+                r"[A-Za-z_][A-Za-z0-9_]*\.Notify\s*\(", line
             ):
                 emit(path, idx, "terminate-without-kill", L_TERMINATE, line)
             if re.search(r"\bos\.(Open|Create)\s*\(", line):
@@ -241,7 +257,7 @@ def scan_file(path: str, lines: list[str]) -> None:
             # twin's single emit_rows -- a split would make a line matching two
             # members emit two rows on one runtime and one on the other.
             if re.search(
-                r"\bsignal\.Notify\s*\(|\btime\.NewTicker\s*\("
+                r"[A-Za-z_][A-Za-z0-9_]*\.Notify\s*\(|\btime\.NewTicker\s*\("
                 r"|\bnet\.Listen(TCP|Unix)?\s*\(",
                 line,
             ):

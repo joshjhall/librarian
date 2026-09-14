@@ -98,6 +98,8 @@ mkdir -p "$LIFEDIR/tests"
     printf '%s\n' 'ticker := time.NewTicker(d)'
     printf '%s\n' 'ln, err := net.Listen("tcp", addr)'
     printf '%s\n' 'l2, err := net.ListenUnix("unix", a)'
+    printf '%s\n' 'l3, err := net.ListenTCP("tcp", a)'
+    printf '%s\n' 'sig.Notify(c, syscall.SIGTERM)'
     printf '%s\n' 'f, err := os.Open("x.txt")'
     printf '%s\n' 'g, err := os.Create("y.txt")'
     # Boundary negatives -- the listener arm's reject path executes too.
