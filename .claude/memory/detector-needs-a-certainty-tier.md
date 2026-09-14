@@ -1,8 +1,7 @@
 ---
 name: detector-needs-a-certainty-tier
 description: Before implementing a detector an issue names, measure its hit rate against the scanner's declared certainty — the honest answer may be "not at this tier"
-metadata:
-  type: feedback
+type: feedback
 ---
 
 An issue that names a detector idiom is stating a *hypothesis*, not a

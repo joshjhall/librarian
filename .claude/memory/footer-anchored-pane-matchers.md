@@ -1,9 +1,9 @@
 ---
 name: footer-anchored-pane-matchers
 description: "golem-gate-watch pane matchers MUST anchor on the footer tail, not the whole pane; the 8-line window boundary is exact, and the env override must be set before source"
-metadata: 
+type: project
+metadata:
   node_type: memory
-  type: project
   originSessionId: b3100c69-fe8e-4fa0-9335-e1a0ad5da29c
   modified: 2026-08-01T04:19:15.901Z
 ---

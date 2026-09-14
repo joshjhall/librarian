@@ -1,9 +1,9 @@
 ---
 name: rumdl-scope-depends-on-invocation
 description: "rumdl's file selection is invocation-dependent — it under-reports on a tree walk (skips gitignored) and over-reports on an explicit non-markdown path (parses .sh as markdown)"
-metadata: 
+type: feedback
+metadata:
   node_type: memory
-  type: feedback
   originSessionId: b7784e09-7844-4b1e-a469-8c097765285b
   modified: 2026-07-30T04:53:26.161Z
 ---

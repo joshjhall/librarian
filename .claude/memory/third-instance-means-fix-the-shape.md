@@ -1,8 +1,7 @@
 ---
 name: third-instance-means-fix-the-shape
 description: When review finds the same class of defect a third time, stop patching instances and change the structure that keeps producing them
-metadata:
-  type: feedback
+type: feedback
 ---
 
 Review cycles hand back *instances*. Two of a kind is a coincidence; **the third

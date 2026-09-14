@@ -1,9 +1,9 @@
 ---
 name: pinned-behavior-may-be-a-bug-report
 description: "A case-table row hedged as \"recorded, not asserted-as-desirable\" is a defect someone chose to pin instead of fix — read those rows as a to-do list, not as settled contract."
-metadata: 
+type: feedback
+metadata:
   node_type: memory
-  type: feedback
   originSessionId: 194d7bbb-54ff-4b53-888b-202af055dcb6
   modified: 2026-08-23T19:59:51.246Z
 ---

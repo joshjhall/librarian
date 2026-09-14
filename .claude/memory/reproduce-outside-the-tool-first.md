@@ -1,9 +1,9 @@
 ---
 name: reproduce-outside-the-tool-first
 description: "Before instrumenting a complex client, reproduce the failure with curl — it collapses the suspect list and exonerates your own instrumentation"
-metadata: 
+type: feedback
+metadata:
   node_type: memory
-  type: feedback
   originSessionId: db464d95-cdfd-4fd7-96fc-87d7814fd584
   modified: 2026-08-14T03:18:51.826Z
 ---

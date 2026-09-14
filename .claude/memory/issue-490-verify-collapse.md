@@ -1,9 +1,9 @@
 ---
 name: issue-490-verify-collapse
 description: "#490 collapse per-domain fable verify → one O(1) barrier; review caught missing tailAgent wrap on the terminal single-agent stage"
-metadata: 
+type: project
+metadata:
   node_type: memory
-  type: project
   originSessionId: 488b0a34-9bc0-433c-bfaa-2b103493faaa
   modified: 2026-07-24T15:50:31.111Z
 ---

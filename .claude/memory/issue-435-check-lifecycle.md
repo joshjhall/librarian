@@ -1,9 +1,9 @@
 ---
 name: issue-435-check-lifecycle
 description: "Shipped PR #456 — new check-lifecycle scanner; how to add a check-* domain + the 3-cycle review that caught real integration gaps"
-metadata: 
+type: project
+metadata:
   node_type: memory
-  type: project
   originSessionId: 4df7b207-ab76-496a-b989-5b11ae708557
   modified: 2026-07-21T02:19:14.988Z
 ---

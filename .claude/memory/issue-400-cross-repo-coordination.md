@@ -1,14 +1,14 @@
 ---
 name: issue-400-cross-repo-coordination
 description: "#400 agnix-pin SHIPPED as librarian-side coordination only (PR #463); cross-repo work → companion issue + re-scope AC so Closes trailer matches what the diff delivers"
-metadata: 
+type: project
+status: stable
+stale_after: 2026-10-31
+stale_check: "the agnix 0.40.0 pin and containers#769 status; the cross-repo Closes-vs-AC lesson does not expire"
+metadata:
   node_type: memory
-  type: project
   originSessionId: ac81c95b-349b-455a-9682-d0eb902975db
   modified: 2026-07-21T04:43:30.140Z
-  status: stable
-  stale_after: 2026-10-31
-  stale_check: "the agnix 0.40.0 pin and containers#769 status; the cross-repo Closes-vs-AC lesson does not expire"
 ---
 
 SHIPPED PR #463 (2026-07-20, L3): #400 "pin agnix off @latest" — ADR-0001 spine

@@ -1,9 +1,9 @@
 ---
 name: issue-406-multi-sink-emitter
 description: "SHIPPED PR #468 — golem-notify.sh multi-sink GOLEM_EVENT_SINKS fan-out (ADR-0001 spine item 2)"
-metadata: 
+type: project
+metadata:
   node_type: memory
-  type: project
   originSessionId: b5836d04-7414-4c51-9f1b-8ae1719f1769
   modified: 2026-07-21T14:22:31.250Z
 ---

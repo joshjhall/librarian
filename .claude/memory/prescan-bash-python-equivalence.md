@@ -1,9 +1,9 @@
 ---
 name: prescan-bash-python-equivalence
 description: How bash/python pre-scan equivalence is tested and the truncation/locale gotcha
+type: project
 metadata:
   node_type: memory
-  type: project
   originSessionId: 1ac0f375-23a6-4d60-93e2-6e59f911c353
   modified: 2026-08-01T04:13:40.340Z
 ---

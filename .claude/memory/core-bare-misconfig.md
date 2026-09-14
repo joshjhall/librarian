@@ -1,9 +1,9 @@
 ---
 name: core-bare-misconfig
 description: "If git says \"this operation must be run in a work tree\" in /workspace/librarian, .git/config has a stray core.bare=true — set it false"
+type: project
 metadata:
   node_type: memory
-  type: project
   originSessionId: 9d03d497-52a7-4a29-8c82-1ca6971f87ee
 ---
 

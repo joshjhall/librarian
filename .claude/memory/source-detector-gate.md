@@ -1,9 +1,9 @@
 ---
 name: source-detector-gate
 description: "The #348 slice-A source-detector behavioral gate + coverage lift for the 3 review-audit ports; missing-api name-anchor bug fix"
-metadata: 
+type: project
+metadata:
   node_type: memory
-  type: project
   originSessionId: ff1d1649-dc08-48f5-912d-ad612d8dbf3f
   modified: 2026-07-18T19:30:02.872Z
 ---

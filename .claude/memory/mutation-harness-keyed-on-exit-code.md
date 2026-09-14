@@ -1,8 +1,7 @@
 ---
 name: mutation-harness-keyed-on-exit-code
 description: A mutation round keyed on the suite's EXIT CODE reports every rule "survived" when the suite exits 0 despite failing — suspect the harness, not the rules
-metadata:
-  type: feedback
+type: feedback
 ---
 
 When a mutation round reports that **every** rule survived, the harness is

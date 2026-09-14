@@ -1,9 +1,9 @@
 ---
 name: local-pass-remote-hang-is-a-timeout-gap
 description: "A test that passes locally and hangs in CI is usually an unbounded client wait, not a flake — bound every probe and check identity, not just connect"
-metadata: 
+type: feedback
+metadata:
   node_type: memory
-  type: feedback
   originSessionId: 237ae268-417c-4953-a378-41e10f8333d5
   modified: 2026-08-29T06:37:14.567Z
 ---

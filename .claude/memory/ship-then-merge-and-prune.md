@@ -1,9 +1,9 @@
 ---
 name: ship-then-merge-and-prune
 description: "On non-autonomous /ship-issue, carry through to merge + prune once CI is green and review is clean — don't stop at green CI"
+type: feedback
 metadata:
   node_type: memory
-  type: feedback
   originSessionId: 1df5864d-1662-4c76-9cc9-e6676a9a9548
 ---
 

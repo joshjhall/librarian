@@ -1,9 +1,9 @@
 ---
 name: scope-drift-check-before-first-commit
 description: "Review's scope-drift detection is unreliable run-to-run — it caught memory-notes-on-a-code-PR on #542 and missed the identical thing across 5 cycles on #498; check git status BEFORE the first commit, never delegate it"
-metadata: 
+type: feedback
+metadata:
   node_type: memory
-  type: feedback
   originSessionId: 87b555fb-8e69-4c75-98f3-66c34a760396
   modified: 2026-07-30T10:05:09.396Z
 ---

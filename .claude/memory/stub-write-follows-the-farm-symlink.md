@@ -1,8 +1,7 @@
 ---
 name: stub-write-follows-the-farm-symlink
 description: Writing a stub over a symlink-farm entry targets the REAL binary and dies Permission denied; rm -f the link first
-metadata:
-  type: feedback
+type: feedback
 ---
 
 A tool-absence/misbehavior fixture usually builds a **symlink farm** (link every

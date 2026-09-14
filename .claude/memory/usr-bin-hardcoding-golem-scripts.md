@@ -1,9 +1,9 @@
 ---
 name: usr-bin-hardcoding-golem-scripts
 description: Golem/worktree scripts hardcode /usr/bin/<tool>;
-metadata: 
+type: project
+metadata:
   node_type: memory
-  type: project
   originSessionId: 7d4c4ad1-c08c-4cae-86c2-13d22dff2b5e
 ---
 

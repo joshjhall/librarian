@@ -1,9 +1,9 @@
 ---
 name: quoted-awk-program-apostrophe
 description: "In a single-quoted embedded awk program an apostrophe (even in a comment) ends the shell quote; and awk has no block scope, so helper loop vars must be declared as extra params"
-metadata: 
+type: feedback
+metadata:
   node_type: memory
-  type: feedback
   originSessionId: 621fe101-e237-498d-9198-a05d816bf523
   modified: 2026-08-05T03:30:15.643Z
 ---

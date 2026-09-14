@@ -4,7 +4,6 @@ description: A `^`-anchored filter applied to `grep -n` output binds to the line
 type: feedback
 metadata:
   node_type: memory
-  type: feedback
 ---
 
 A second-stage filter over `grep -n` output sees `NNN:` before the content, so a

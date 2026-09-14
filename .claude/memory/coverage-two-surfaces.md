@@ -1,9 +1,9 @@
 ---
 name: coverage-two-surfaces
 description: "patterns.py coverage number comes from coverage-python.sh's own corpus, NOT from the test gates"
+type: reference
 metadata:
   node_type: memory
-  type: reference
   originSessionId: 38cd8f66-5b91-4af5-b41f-c131957b0c9f
 ---
 

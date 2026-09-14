@@ -1,9 +1,9 @@
 ---
 name: review-convergence-needs-prev-results
 description: review-convergence.sh scores every finding novel unless you pass one --prev-result per earlier cycle
-metadata: 
+type: feedback
+metadata:
   node_type: memory
-  type: feedback
   originSessionId: aa8b1709-8943-49be-8adc-30135b673878
   modified: 2026-08-22T03:59:34.314Z
 ---

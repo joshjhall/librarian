@@ -1,9 +1,9 @@
 ---
 name: bsd-wc-pads-its-count
 description: "BSD wc right-aligns its count to width 7, so an interpolated count silently corrupts a regex interval or evidence string"
-metadata: 
+type: feedback
+metadata:
   node_type: memory
-  type: feedback
   originSessionId: 0467e414-654d-4cf0-b23a-fa478104330b
   modified: 2026-09-06T20:57:09.594Z
 ---

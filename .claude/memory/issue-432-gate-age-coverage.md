@@ -1,9 +1,9 @@
 ---
 name: issue-432-gate-age-coverage
 description: "#432 test-coverage follow-up SHIPPED PR #482; pre-PR review found a real HIGH bug + my own test gave false assurance"
+type: project
 metadata:
   node_type: memory
-  type: project
   originSessionId: 15226509-e7c2-48fe-a57b-46a99ea2dd60
   modified: 2026-07-21T21:08:25.764Z
 ---

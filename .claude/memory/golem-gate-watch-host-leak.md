@@ -1,9 +1,9 @@
 ---
 name: golem-gate-watch-host-leak
 description: "golem-gate-watch liveness test fails locally when real host golem sessions leak into its non-isolated sweep — pre-existing, env-only, CI passes"
-metadata: 
+type: project
+metadata:
   node_type: memory
-  type: project
   originSessionId: 8d1bb1a6-3125-439b-8961-4e1080cb8270
   modified: 2026-07-20T03:50:25.102Z
 ---

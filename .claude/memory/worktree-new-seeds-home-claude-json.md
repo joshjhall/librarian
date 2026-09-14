@@ -1,9 +1,9 @@
 ---
 name: worktree-new-seeds-home-claude-json
 description: worktree-new.sh transitively writes $HOME/.claude.json via seed-worktree-trust.sh — sandbox tests must override HOME
+type: project
 metadata:
   node_type: memory
-  type: project
   originSessionId: cb7e902b-3277-40ab-9087-9b9e306dc5b0
 ---
 

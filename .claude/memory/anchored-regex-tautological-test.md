@@ -1,9 +1,9 @@
 ---
 name: anchored-regex-tautological-test
 description: "A suppression test whose fixture never matched the detector's anchor passes with AND without the fix — tamper-check every negative assertion"
-metadata: 
+type: feedback
+metadata:
   node_type: memory
-  type: feedback
   originSessionId: 09a9b961-83e6-4097-bdba-73cbf06daca6
   modified: 2026-07-30T22:09:34.501Z
 ---

@@ -1,9 +1,9 @@
 ---
 name: dedup-cache-clear-on-early-return
 description: "A change-suppression signature cache must be cleared on EVERY early return, or a vanish-then-reappear at the same state is wrongly suppressed (#488)"
-metadata: 
+type: reference
+metadata:
   node_type: memory
-  type: reference
   originSessionId: b3100c69-fe8e-4fa0-9335-e1a0ad5da29c
   modified: 2026-08-01T04:17:49.779Z
 ---

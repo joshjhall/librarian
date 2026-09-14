@@ -1,9 +1,9 @@
 ---
 name: issue-470-agnix-dedup-hardening
 description: "#470 SHIPPED PR #546 (L3): agnix rule_severity→certainty passthrough sent every agnix row down the HIGH auto-include fast path skipping LLM confirmation; review found a live TSV injection the new severity prefix made load-bearing"
-metadata: 
+type: project
+metadata:
   node_type: memory
-  type: project
   originSessionId: 084c5ffe-88b5-4eb0-aaec-eec0a1c096c6
   modified: 2026-07-28T05:14:44.783Z
 ---

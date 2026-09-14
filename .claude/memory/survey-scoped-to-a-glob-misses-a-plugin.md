@@ -1,8 +1,7 @@
 ---
 name: survey-scoped-to-a-glob-misses-a-plugin
 description: A "find every other instance" survey scoped to check-* missed four dev-core loop-* detectors with the identical defect; the new FIXTURE found them, not the survey
-metadata:
-  type: feedback
+type: feedback
 ---
 
 When an issue says "survey the other scanners for the same shape", scope the

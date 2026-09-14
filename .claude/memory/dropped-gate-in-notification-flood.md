@@ -1,9 +1,9 @@
 ---
 name: dropped-gate-in-notification-flood
 description: "During long orchestrate monitor runs, a burst of checkpoint notifications can bury a plan-gate approval or an unpresented gate; two golems sat idle ~8h. After ANY notification burst, reconcile live gates against gh pr list + panes before trusting the checkpoint's \"live\" state"
-metadata: 
+type: feedback
+metadata:
   node_type: memory
-  type: feedback
   originSessionId: 4a569e6e-ef19-4017-ab95-d5f8dfddb610
   modified: 2026-07-21T13:18:49.697Z
 ---

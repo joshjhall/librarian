@@ -1,9 +1,9 @@
 ---
 name: issue-501-worktree-guard-topology
 description: worktree-guard.sh submodule+bare topology enforcement; core.worktree beats --show-superproject-working-tree from a linked worktree cwd
-metadata: 
+type: project
+metadata:
   node_type: memory
-  type: project
   originSessionId: 31721a8b-5dfb-4ebc-a187-5c8993a89434
   modified: 2026-07-24T04:57:59.744Z
 ---

@@ -1,9 +1,9 @@
 ---
 name: issue-515-elapsed-mtime-fallback
 description: "#515 golem-status ELAPSED mtime fallback when .started absent; anchor on .git gitlink not worktree dir; review→#522"
-metadata: 
+type: project
+metadata:
   node_type: memory
-  type: project
   originSessionId: 488b0a34-9bc0-433c-bfaa-2b103493faaa
   modified: 2026-07-24T20:35:49.743Z
 ---

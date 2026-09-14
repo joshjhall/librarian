@@ -1,9 +1,9 @@
 ---
 name: gnu-host-cannot-mutate-a-gnu-ism
 description: Reverting a portability fix to its GNU spelling is a NO-OP mutation on a GNU host — mutate to what the OTHER platform produces
-metadata: 
+type: feedback
+metadata:
   node_type: memory
-  type: feedback
   originSessionId: 749bcb5c-e042-45b3-a811-f801d495df1c
   modified: 2026-08-10T23:31:19.272Z
 ---

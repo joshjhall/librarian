@@ -1,8 +1,7 @@
 ---
 name: strictness-first-fails-in-the-checker
 description: When a gate gets stricter, its first failures are usually defects in the gate's own parser — diagnose before touching the subject
-metadata:
-  type: feedback
+type: feedback
 ---
 
 Making a gate finer-grained (per-row → per-cell, per-file → per-region) will

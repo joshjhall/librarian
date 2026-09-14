@@ -109,6 +109,47 @@ py_sources_for() {
         done
 }
 
+# sh_sources_for <sh_file> — every bash file that makes up the impl: the
+# `patterns.sh` entry PLUS any sibling fragment it sources.
+#
+# THE EXACT MIRROR OF py_sources_for ABOVE, and it exists for the same reason
+# one turn later (#991). check-okf-conformance's bash half was split when
+# patterns.sh went over its production-LOC budget: slice B (the bundle graph +
+# health pass) moved to bundle-graph.sh, which is where all five `memory-*`
+# slugs live. An entry-only read reported them as python-only and failed a pair
+# that is in perfect parity — the identical symptom #772 hit on the python side,
+# arriving from the other direction.
+#
+# The asymmetry that hid this: py_sources_for was taught to follow imports in
+# #772, so the python side has been multi-file-aware ever since, while the bash
+# side still read one file. A gate that unions one half and not the other cannot
+# see a split in the half it does not union — it can only misreport it as a
+# divergence.
+#
+# Scoped to fragments the entry ACTUALLY SOURCES from its own directory, not to
+# every *.sh beside it — a directory sweep is wrong here for precisely the
+# reason it was wrong there: check-ai-config/ holds `agnix-normalize.sh`, a
+# separate executable tool that is NOT part of the patterns pair, and folding
+# its slugs in would invent a divergence on a pair that is fine.
+#
+# Both spellings of the source builtin (`.` and `source`) are matched, and the
+# path is matched through the `$_here`-style prefix these scanners use to
+# resolve a sibling from the script's own directory rather than $PWD.
+sh_sources_for() {
+    local sh="$1" dir frag
+    dir="${sh%/*}"
+    [ -f "$sh" ] || return 0
+
+    printf '%s\n' "$sh"
+    command grep -oE '^[[:space:]]*(\.|source)[[:space:]]+"\$[A-Za-z_][A-Za-z0-9_]*/[A-Za-z0-9_.-]+\.sh"' "$sh" 2>/dev/null |
+        command sed -e 's|.*/||' -e 's|"$||' |
+        command sort -u |
+        while IFS= read -r frag; do
+            [ -n "$frag" ] || continue
+            [ -f "$dir/$frag" ] && printf '%s\n' "$dir/$frag"
+        done
+}
+
 CUR_SH=""
 test_pair_parity() {
     local sh="$CUR_SH"
@@ -119,11 +160,16 @@ test_pair_parity() {
         return 0
     fi
 
-    # The Python side is the union over every module of the impl, not the entry
-    # alone (#772). Concatenated into one temp file so category_slugs_of — which
-    # takes a single path — needs no change.
-    local py_all
+    # BOTH sides are the union over every file of the impl, not the entry alone
+    # — python since #772, bash since #991. Each is concatenated into one temp
+    # file so category_slugs_of, which takes a single path, needs no change.
+    local py_all sh_all
     py_all="$(command mktemp)" || {
+        skip_test "mktemp unavailable"
+        return 0
+    }
+    sh_all="$(command mktemp)" || {
+        command rm -f "$py_all"
         skip_test "mktemp unavailable"
         return 0
     }
@@ -132,10 +178,14 @@ test_pair_parity() {
         [ -n "$src" ] || continue
         command cat "$src" >>"$py_all"
     done <<<"$(py_sources_for "$sh")"
+    while IFS= read -r src; do
+        [ -n "$src" ] || continue
+        command cat "$src" >>"$sh_all"
+    done <<<"$(sh_sources_for "$sh")"
 
     local diff
-    diff="$(category_parity_diff "$sh" "$py_all")"
-    command rm -f "$py_all"
+    diff="$(category_parity_diff "$sh_all" "$py_all")"
+    command rm -f "$py_all" "$sh_all"
 
     if [ -n "$diff" ]; then
         _fail "category slug sets differ between patterns.sh and patterns.py" \
@@ -251,5 +301,58 @@ test_selftest_multifile_parity_holds() {
         "a multi-file python impl is in parity with its bash half (slugs from the sibling count)"
 }
 run_test test_selftest_multifile_parity_holds "self-test: multi-file impl reaches parity through the union (#772)"
+
+# --- Self-test: sh_sources_for's source scoping (#991) -----------------------
+#
+# The mirror of the two tests above, for the bash side, and it is needed for a
+# sharper reason than symmetry: the real corpus has exactly ONE split bash impl
+# (check-okf-conformance, split by #991), so if that split were ever undone the
+# union would go untested over plugins/ entirely while the suite stayed green.
+# The fixture keeps both failure directions reachable no matter what the real
+# tree looks like — too NARROW (entry-only, the #991 failure itself) and too
+# WIDE (a directory sweep folding in `unrelated-tool.sh`).
+#
+# One sourced fragment, not two, unlike the python fixture: the `^from <name>
+# import` pattern there can plausibly stop after the first match, while a
+# `grep -oE` over source lines has no such first-match failure mode. The
+# exact-count assertion still pins the boundary.
+test_selftest_source_scoping() {
+    local srcs
+    srcs="$(sh_sources_for "$FIXROOT/multifile-sh/patterns.sh")"
+
+    assert_contains "$srcs" "multifile-sh/patterns.sh" \
+        "sh_sources_for includes the entry script"
+    assert_contains "$srcs" "multifile-sh/bundle-frag.sh" \
+        "sh_sources_for includes the sourced fragment (union is not entry-only)"
+    assert_not_contains "$srcs" "unrelated-tool.sh" \
+        "sh_sources_for EXCLUDES a same-dir script the entry does not source (union is not a directory sweep)"
+
+    local count
+    count="$(command printf '%s\n' "$srcs" | command grep -c '\.sh$' || true)"
+    assert_equals "2" "$count" "sh_sources_for returns exactly the entry + its sourced fragment"
+}
+run_test test_selftest_source_scoping "self-test: sh_sources_for unions sourced fragments, not the directory (#991)"
+
+# ...and the whole parity path over that fixture is green. Same reason as the
+# python twin above: the scoping test could pass while the union never reached
+# category_parity_diff.
+test_selftest_multifile_sh_parity_holds() {
+    local sh_all src diff
+    sh_all="$(command mktemp)" || {
+        skip_test "mktemp unavailable"
+        return 0
+    }
+    while IFS= read -r src; do
+        [ -n "$src" ] || continue
+        command cat "$src" >>"$sh_all"
+    done <<<"$(sh_sources_for "$FIXROOT/multifile-sh/patterns.sh")"
+
+    diff="$(category_parity_diff "$sh_all" "$FIXROOT/multifile-sh/patterns.py")"
+    command rm -f "$sh_all"
+
+    assert_output_empty "$diff" \
+        "a multi-file bash impl is in parity with its python half (slugs from the fragment count)"
+}
+run_test test_selftest_multifile_sh_parity_holds "self-test: split-bash impl reaches parity through the union (#991)"
 
 generate_report

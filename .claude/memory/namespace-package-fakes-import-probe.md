@@ -1,9 +1,9 @@
 ---
 name: namespace-package-fakes-import-probe
 description: "A skip gate using `python3 -c 'import X'` passes against an empty ./X/ build-output dir (PEP 420) — probe an attribute instead"
-metadata: 
+type: feedback
+metadata:
   node_type: memory
-  type: feedback
   originSessionId: 5d4f27be-4b8b-4fa0-b825-01bf01cb2b15
   modified: 2026-07-30T15:28:20.379Z
 ---

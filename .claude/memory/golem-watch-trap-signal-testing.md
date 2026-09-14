@@ -1,9 +1,9 @@
 ---
 name: golem-watch-trap-signal-testing
 description: "Why golem-watch trap INT/TERM coverage needs a structural grep, not just a behavioural signal test — bash EXIT-arm masking + group-signal semantics"
-metadata: 
+type: project
+metadata:
   node_type: memory
-  type: project
   originSessionId: 73dfa9da-6deb-4da9-b76b-6d1f4bb5dea5
   modified: 2026-07-18T19:31:32.199Z
 ---

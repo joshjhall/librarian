@@ -1,9 +1,9 @@
 ---
 name: sync-region-boundary-predicts-stale-arms
 description: A past widening reached only the arms inside a sync region; every arm outside one is presumed stale until re-checked
+type: feedback
 metadata:
   node_type: memory
-  type: feedback
 ---
 
 When an earlier change widened a list (extensions, keywords, categories) across

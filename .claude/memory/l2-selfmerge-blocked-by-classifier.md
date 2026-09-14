@@ -1,9 +1,9 @@
 ---
 name: l2-selfmerge-blocked-by-classifier
 description: "auto-mode classifier blocks `gh pr merge` on a PR I authored this session at L1-L2; a stored merge preference is not per-instance approval"
+type: feedback
 metadata:
   node_type: memory
-  type: feedback
   originSessionId: 6504a08c-4ef5-43da-9fe5-3a3bcb439ac8
 ---
 

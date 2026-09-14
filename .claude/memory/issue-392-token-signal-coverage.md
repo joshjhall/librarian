@@ -1,9 +1,9 @@
 ---
 name: issue-392-token-signal-coverage
 description: "#392 (PR #413): golem-status token-signal render-path coverage gaps closed — the 7 tests + which branch each pins, and the tautology the pre-PR review caught"
-metadata: 
+type: project
+metadata:
   node_type: memory
-  type: project
   originSessionId: f333c525-e8a1-4c5c-95eb-4f63b328ebec
   modified: 2026-07-19T06:16:58.169Z
 ---

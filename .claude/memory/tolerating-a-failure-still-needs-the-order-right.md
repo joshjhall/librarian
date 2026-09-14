@@ -1,8 +1,7 @@
 ---
 name: tolerating-a-failure-still-needs-the-order-right
 description: "\"Treat this failure as success\" is only half a fix — a partial operation already destroyed state on its way to failing"
-metadata:
-  type: feedback
+type: feedback
 ---
 
 When an issue asks you to **tolerate** an expected failure ("the warning is

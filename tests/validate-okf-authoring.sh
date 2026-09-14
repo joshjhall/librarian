@@ -31,10 +31,15 @@
 #   against an empty scan, which is the #538/#571 silence-reads-as-a-pass shape.
 #   assert_loop_scan_was_not_empty is the vacuity guard for exactly that.
 #
-#   THE CORPUS LEGITIMATELY STILL HAS THE OLD SHAPE. 248 of 253 live memories
-#   nest `type` under `metadata:` and the bundle holds 502 wikilinks; migrating
-#   them is #631/#671, deliberately NOT this issue. So the "no surviving
-#   instruction" check reads INSTRUCTION SITES ONLY, never the bundle.
+#   THE CHECK READS INSTRUCTION SITES ONLY, NEVER THE BUNDLE. When this was
+#   written the reason was that the corpus legitimately still had the old shape
+#   (248 of 253 memories nested `type` under `metadata:`); #991 has since
+#   migrated it, and the bundle still holds ~547 wikilinks awaiting #631/#671.
+#   But the scoping is NOT contingent on either number. A bundle is data, not an
+#   instruction surface, and asserting its conformance here would duplicate
+#   tests/validate-okf-bundle.sh -- two gates over one corpus that must agree,
+#   which is the shape #663 exists to eliminate. Keep the exclusion even once
+#   every wikilink is gone.
 #
 # CONTAINERS/ IS EXCLUDED EXPLICITLY, NOT INCIDENTALLY. The pinned submodule
 # (update = none) ships its own copy of the old guidance in
@@ -399,9 +404,10 @@ test_parity_check_detects_divergence() {
 
 # --- 4. No surviving old instruction (AC3) --------------------------------
 
-# INSTRUCTION SITES ONLY. The live bundle legitimately still carries the old
-# shape (248 metadata.type files, 502 wikilinks) -- migrating it is #631/#671.
-# Grepping the corpus here would assert the opposite of the truth.
+# INSTRUCTION SITES ONLY, and permanently so -- see the header note. #991
+# migrated the bundle's `type:` keys; its ~547 wikilinks still await #631/#671.
+# Grepping the corpus here would duplicate tests/validate-okf-bundle.sh rather
+# than check anything this gate owns.
 #
 # containers/ is excluded EXPLICITLY: the pinned submodule ships its own copy of
 # the old guidance, is out of scope by the submodule rule, and is often not even
@@ -430,8 +436,9 @@ test_no_surviving_authoring_instruction() {
     #
     # `awk` over each candidate file rather than grep: the condition spans two
     # lines, which a per-line grep cannot express. The bundle itself is NOT walked
-    # (248 memories legitimately carry the old shape until #631/#671 migrate them),
-    # and containers/ is out of scope per the header note.
+    # -- it is data rather than an instruction surface, and conformance is
+    # tests/validate-okf-bundle.sh's job (#991) -- and containers/ is out of
+    # scope per the header note.
     hits="$(command find "$REPO_ROOT/plugins" -name '*.md' -type f 2>/dev/null |
         command grep -v '/docs/verification/' |
         while IFS= read -r f; do
@@ -750,8 +757,6 @@ test_log_md_destination_is_exercised() {
     assert_contains "$badrows" "okf-unparseable-frontmatter" \
         "log.md counter: the SAME record as a concept file DOES fire (the check can fail)"
 }
-
-
 
 # AC6 -- WHAT THIS DOES AND DOES NOT ASSERT. Read this before strengthening it.
 #

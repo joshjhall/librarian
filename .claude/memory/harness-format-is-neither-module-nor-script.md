@@ -1,9 +1,9 @@
 ---
 name: harness-format-is-neither-module-nor-script
 description: "A workflow.js can never import a sibling — and no bundler emits its format, because `export meta` + top-level `return` is contradictory ESM"
-metadata: 
+type: reference
+metadata:
   node_type: memory
-  type: reference
   originSessionId: 491f9aa5-8fc9-439d-b0e2-f8489968d3a8
   modified: 2026-08-25T21:27:46.550Z
 ---

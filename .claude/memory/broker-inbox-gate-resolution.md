@@ -1,9 +1,9 @@
 ---
 name: broker-inbox-gate-resolution
 description: "#227 golem-inbox.sh reverse channel — relays escalation/dead-end decisions back down; data-only, plan-approval excluded by #29"
-metadata: 
+type: project
+metadata:
   node_type: memory
-  type: project
   originSessionId: bfe4d94a-dfa2-4553-bd60-78b7236bc16d
   modified: 2026-07-19T00:46:18.808Z
 ---

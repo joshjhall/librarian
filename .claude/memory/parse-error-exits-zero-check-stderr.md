@@ -1,8 +1,7 @@
 ---
 name: parse-error-exits-zero-check-stderr
 description: A script that dies at PARSE time exits 0 — its harness never runs; and `bash -n` may only WARN, so a gate keyed on exit code is a tautology
-metadata:
-  type: feedback
+type: feedback
 ---
 
 A shell script that fails to **parse** never executes a line, so its test harness

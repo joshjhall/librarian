@@ -136,15 +136,47 @@ extract_contract_categories() {
 # either language. Union the slugs across whichever files exist so the contract
 # cross-check stays honest after a tool is ported to Python. `$1` is the
 # patterns.sh path (may be absent); the sibling patterns.py is derived from it.
+#
+# EITHER HALF MAY BE SPLIT ACROSS SEVERAL FILES, so the union follows the
+# siblings each entry declares: python `^from <mod> import`, bash a `.`/`source`
+# of a `$<var>/<name>.sh` (#772 split the python halves, #991 the first bash
+# one). This assertion only checks emitted ⊆ contract, so an entry-only read
+# does not FAIL — it passes vacuously while silently checking less, which is
+# the worse failure mode of the two. After #991 moved check-okf-conformance's
+# five `memory-*` slugs into bundle-graph.sh, an entry-only read would have
+# stopped cross-checking them against contract.md without any symptom at all.
+#
+# Following declarations rather than sweeping the directory is the same boundary
+# validate-scanner-category-parity.sh and bin/check-patterns-coverage.sh draw,
+# for the same reason: check-ai-config/ ships `agnix-normalize.{py,sh}`, which is
+# not part of the patterns pair.
 extract_patterns_categories() {
-    local sh_file="$1"
+    local sh_file="$1" dir mod frag
     local py_file="${sh_file%patterns.sh}patterns.py"
+    dir="${sh_file%/*}"
     # `-oE`, not `-oP` (#679): this pattern uses no PCRE-only construct, so the
     # portable ERE is a direct swap. See extract_contract_categories above for
     # why `-oP` is avoided (absent on BSD grep and some Linux builds; exits 2).
     {
         [ -f "$sh_file" ] && command grep -oE '"[a-z][a-z0-9]+-[a-z][a-z0-9-]*"' "$sh_file"
         [ -f "$py_file" ] && command grep -oE '"[a-z][a-z0-9]+-[a-z][a-z0-9-]*"' "$py_file"
+        if [ -f "$py_file" ]; then
+            command grep -oE '^from [A-Za-z_][A-Za-z0-9_]* import' "$py_file" 2>/dev/null |
+                command awk '{ print $2 }' | command sort -u |
+                while IFS= read -r mod; do
+                    [ -n "$mod" ] && [ -f "$dir/$mod.py" ] &&
+                        command grep -oE '"[a-z][a-z0-9]+-[a-z][a-z0-9-]*"' "$dir/$mod.py"
+                done
+        fi
+        if [ -f "$sh_file" ]; then
+            command grep -oE '^[[:space:]]*(\.|source)[[:space:]]+"\$[A-Za-z_][A-Za-z0-9_]*/[A-Za-z0-9_.-]+\.sh"' "$sh_file" 2>/dev/null |
+                command sed -e 's|.*/||' -e 's|"$||' | command sort -u |
+                while IFS= read -r frag; do
+                    [ -n "$frag" ] && [ -f "$dir/$frag" ] &&
+                        command grep -oE '"[a-z][a-z0-9]+-[a-z][a-z0-9-]*"' "$dir/$frag"
+                done
+        fi
+        :
     } |
         command sed 's/"//g' |
         command sort -u

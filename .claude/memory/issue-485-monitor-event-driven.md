@@ -1,9 +1,9 @@
 ---
 name: issue-485-monitor-event-driven
 description: "#485 flips orchestrate monitor default from persistent sweep to event-driven push gate-watch; sweep now opt-in/cron; shipped PR #504 (L2, awaiting merge); review caught pool-refill-clock orphan"
-metadata: 
+type: project
+metadata:
   node_type: memory
-  type: project
   originSessionId: 2e00fe92-7847-4f32-8736-90367f40c1a5
   modified: 2026-07-22T17:48:31.638Z
 ---

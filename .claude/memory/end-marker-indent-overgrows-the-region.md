@@ -1,9 +1,9 @@
 ---
 name: end-marker-indent-overgrows-the-region
 description: "A delimiter-terminated region fails ASYMMETRICALLY — a moved START marker errors loud, a moved END marker silently swallows the following text"
-metadata: 
+type: feedback
+metadata:
   node_type: memory
-  type: feedback
   originSessionId: c5ce24e2-e77c-45fa-a057-bc727ea834d8
   modified: 2026-08-28T00:16:48.427Z
 ---

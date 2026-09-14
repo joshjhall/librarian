@@ -1,9 +1,9 @@
 ---
 name: classify-tool-calls-before-optimizing
 description: "Before optimizing an agent's token cost, classify its actual tool calls — twice now my predicted hot spot was under 10% of the real burn"
-metadata: 
+type: feedback
+metadata:
   node_type: memory
-  type: feedback
   originSessionId: b03da476-855a-4340-a1de-499a566aea26
   modified: 2026-07-28T20:46:52.923Z
 ---

@@ -2,9 +2,8 @@
 name: green-suite-is-not-evidence-until-mutated
 description: An assertion is not evidence until it has been shown to fail; mutate every guard, and re-mutate the whole battery after adding one
 type: feedback
-metadata: 
+metadata:
   node_type: memory
-  type: feedback
   originSessionId: 8152d5e8-438d-4142-8f53-05dd43014899
   modified: 2026-09-09T19:46:51.000Z
 ---

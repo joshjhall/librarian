@@ -1,9 +1,9 @@
 ---
 name: blocking-empty-is-not-nothing-to-fix
 description: "A review cycle returning blocking==[] is not a verdict of \"nothing to fix\" — twice in the #567 batch the DEFERRABLE bucket held a real, confirmed defect"
-metadata: 
+type: feedback
+metadata:
   node_type: memory
-  type: feedback
   originSessionId: 1b582930-bded-4097-8522-3105eb5893f8
   modified: 2026-07-31T19:03:57.137Z
 ---

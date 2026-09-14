@@ -1,8 +1,7 @@
 ---
 name: byte-tool-cannot-strip-multibyte
 description: A byte-wise sanitizer (tr) silently passes multi-byte Unicode format chars that a codepoint-aware twin (Python isprintable) strips — the two runtimes diverge
-metadata:
-  type: feedback
+type: feedback
 ---
 
 `tr -d` operates on BYTES. It can strip ASCII C0 controls and DEL, and it cannot

@@ -1,9 +1,9 @@
 ---
 name: issue-580-disposition-rule-list
 description: "#580 — the judge's blocking/deferrable prose policy was unsatisfiable (1 firing in 67 findings); replaced by dispositionOf, an ordered rule list over a judge-supplied `nature` enum"
-metadata: 
+type: project
+metadata:
   node_type: memory
-  type: project
   originSessionId: 66a3c753-a2a9-4782-8d07-e66d16b78285
   modified: 2026-07-31T19:04:12.616Z
 ---

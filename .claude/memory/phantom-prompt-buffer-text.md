@@ -1,9 +1,9 @@
 ---
 name: phantom-prompt-buffer-text
 description: "a golem pane's ❯ line may hold an autocomplete SUGGESTION, not queued input; the discriminator is the dim (SGR 2) attribute, and a plain capture-pane strips it"
+type: reference
 metadata:
   node_type: memory
-  type: reference
   originSessionId: 488b0a34-9bc0-433c-bfaa-2b103493faaa
   modified: 2026-09-09T00:00:00.000Z
 ---

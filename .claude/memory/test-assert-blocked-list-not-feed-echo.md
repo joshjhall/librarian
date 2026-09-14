@@ -1,9 +1,9 @@
 ---
 name: test-assert-blocked-list-not-feed-echo
 description: "golem-status tests must anchor on the render-line form, not a bare message substring — the raw feed echo causes false-pass"
+type: feedback
 metadata:
   node_type: memory
-  type: feedback
   originSessionId: 15226509-e7c2-48fe-a57b-46a99ea2dd60
   modified: 2026-07-21T21:06:01.744Z
 ---

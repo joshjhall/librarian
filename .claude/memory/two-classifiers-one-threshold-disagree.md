@@ -1,8 +1,7 @@
 ---
 name: two-classifiers-one-threshold-disagree
 description: Two code paths classifying against the same constant disagree at its exact value; one report then contradicts itself
-metadata:
-  type: feedback
+type: feedback
 ---
 
 When two places classify the same quantity against one shared constant, they

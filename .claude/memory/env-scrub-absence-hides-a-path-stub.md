@@ -1,8 +1,7 @@
 ---
 name: env-scrub-absence-hides-a-path-stub
 description: A test that sabotages via a PATH stub must unset BASH_ENV, or a profile re-sources and restores PATH and the stub is silently discarded
-metadata:
-  type: feedback
+type: feedback
 ---
 
 Any test whose mechanism is **a stub earlier on `PATH`** must run under

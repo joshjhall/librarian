@@ -9,7 +9,13 @@
 # These are not targets. The listed findings are what #631 (OKF adoption)
 # exists to drive to zero; this file only stops them growing meanwhile.
 #
+# A category that reaches zero DISAPPEARS from this file rather than being
+# listed as 0 -- the counts come from the findings actually emitted, so a
+# category with none produces no line. Absence is the TIGHTER state, not a
+# gap: an unlisted category has an implicit baseline of 0, so a single
+# regression fails. okf-missing-type left this file that way (#991
+# migrated the bundle to top-level `type:`); do not re-add it as a 0.
+#
 # Regenerate with: tests/validate-okf-bundle.sh --regen
 
 memory-missing-why 80
-okf-missing-type 246

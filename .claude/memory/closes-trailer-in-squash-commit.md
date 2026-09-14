@@ -1,9 +1,9 @@
 ---
 name: closes-trailer-in-squash-commit
 description: "Editing a PR body's \"Closes #N\"→\"Contributes to #N\" does NOT stop auto-close if the golem's squash-commit body also carries a Closes trailer; the merge commit message closes the issue"
-metadata: 
+type: feedback
+metadata:
   node_type: memory
-  type: feedback
   originSessionId: 4a569e6e-ef19-4017-ab95-d5f8dfddb610
   modified: 2026-07-21T03:17:19.613Z
 ---

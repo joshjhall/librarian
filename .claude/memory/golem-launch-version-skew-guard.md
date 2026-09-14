@@ -1,9 +1,9 @@
 ---
 name: golem-launch-version-skew-guard
 description: "golem-launch.sh refuses dispatch on plugin version skew (running helper != active install); \"unknown\" registry sentinel must skip"
-metadata: 
+type: project
+metadata:
   node_type: memory
-  type: project
   originSessionId: a2d41df7-e3ec-4bf3-90bc-cd59a3efca52
 ---
 

@@ -1,8 +1,7 @@
 ---
 name: backticked-token-becomes-a-category
 description: A backticked lowercase-kebab word in a contract.md is scraped as a declared CATEGORY; language names and syntax keywords must stay unbackticked
-metadata:
-  type: feedback
+type: feedback
 ---
 
 `tests/validate-contracts.sh`'s `extract_contract_categories` greps **every**

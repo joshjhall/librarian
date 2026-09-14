@@ -1,9 +1,9 @@
 ---
 name: grep-c-zero-count-exit-1
 description: "grep -c exits 1 on a zero count (not an error) — a `|| fallback` double-appends; count with grep -o | wc -l instead"
-metadata: 
+type: reference
+metadata:
   node_type: memory
-  type: reference
   originSessionId: bc646c9d-c374-405f-9c2e-5183bd04bb68
   modified: 2026-07-22T00:46:23.514Z
 ---

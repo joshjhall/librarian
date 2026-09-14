@@ -1,9 +1,9 @@
 ---
 name: bash-coverage-category-error
 description: "Line coverage is meaningless for the patterns.sh grep-pipeline ports; Codecov should target python + mjs, not bash"
+type: project
 metadata:
   node_type: memory
-  type: project
   originSessionId: eb9ed30d-d710-4bd7-99a1-89bc96c3db29
 ---
 

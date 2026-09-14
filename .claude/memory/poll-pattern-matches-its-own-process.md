@@ -1,8 +1,7 @@
 ---
 name: poll-pattern-matches-its-own-process
 description: "A wait-loop whose pgrep/ps pattern also matches its OWN command line never exits — it waits on itself until timeout, while the thing it should watch never runs"
-metadata:
-  type: feedback
+type: feedback
 ---
 
 `until ! pgrep -f 'tests/run-all.sh' >/dev/null; do sleep 10; done` **never

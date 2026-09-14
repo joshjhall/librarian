@@ -1,9 +1,9 @@
 ---
 name: issue-390-ship-ci-hang-deadend
 description: "#390 (Mode-3 container token consume) shipped to PR #440 but DEAD-ENDED at the merge gate on the run-all.sh CI runner hang (#441); parked for human"
-metadata: 
+type: project
+metadata:
   node_type: memory
-  type: project
   originSessionId: f3d19024-d122-4503-beaa-14c19df8b5da
   modified: 2026-07-20T05:07:30.068Z
 ---

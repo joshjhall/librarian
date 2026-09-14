@@ -1,9 +1,9 @@
 ---
 name: ci-hang-golem-watch-group-signal
 description: "root cause of the multi-PR CI 15min-timeout: validate-golem-watch case-4 group-signal (kill -INT -<pgid>) escapes to run-all.sh on x86_64 CI (set -m job control unreliable headless); NOT reproducible on aarch64 dev host; fix = REMOVE case 4 (cases 2+3 cover it), #444/PR #445; diagnostic instrumentation #441/PR #442"
-metadata: 
+type: project
+metadata:
   node_type: memory
-  type: project
   originSessionId: de55e24b-986b-4be4-9eac-43fc9c6a1593
   modified: 2026-07-20T05:32:22.197Z
 ---

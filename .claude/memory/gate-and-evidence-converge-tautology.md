@@ -1,9 +1,9 @@
 ---
 name: gate-and-evidence-converge-tautology
 description: A test where one fixture both ARMS a gate and SATISFIES it passes either way — the two branches converge on the same output
-metadata: 
+type: feedback
+metadata:
   node_type: memory
-  type: feedback
   originSessionId: ab1d6887-91ec-4575-876c-79691dad387e
   modified: 2026-07-31T01:01:15.274Z
 ---

@@ -1,9 +1,9 @@
 ---
 name: autonomy-resolver-script
 description: "autonomy-resolve.{py,sh} is the single source of truth for the L1-L4 gate-disposition table; skills call it, don't re-derive"
+type: project
 metadata:
   node_type: memory
-  type: project
   originSessionId: 9834ce3c-b52d-4d4e-b471-b37a6a4974c5
 ---
 

@@ -1,9 +1,9 @@
 ---
 name: upstream-guard-hides-the-branch-under-test
 description: "A fixture that arms the condition too early is caught by an upstream guard, so the test passes without ever reaching the branch it names"
-metadata: 
+type: feedback
+metadata:
   node_type: memory
-  type: feedback
   originSessionId: 75f55751-ed5c-4a63-b08a-68720a95fc00
   modified: 2026-08-29T00:35:35.395Z
 ---

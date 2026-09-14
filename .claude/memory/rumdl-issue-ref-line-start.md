@@ -1,9 +1,9 @@
 ---
 name: rumdl-issue-ref-line-start
 description: "a line STARTING with #NNN is parsed as a malformed heading (MD018) — never begin a wrapped line with an issue ref; reflow the sentence"
-metadata: 
+type: feedback
+metadata:
   node_type: memory
-  type: feedback
   originSessionId: 33c5bf10-08a5-4c5a-8d5b-ce6c36897448
   modified: 2026-07-30T04:18:45.423Z
 ---

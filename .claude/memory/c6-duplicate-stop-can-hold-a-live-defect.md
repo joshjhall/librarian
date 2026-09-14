@@ -1,9 +1,9 @@
 ---
 name: c6-duplicate-stop-can-hold-a-live-defect
 description: review-convergence.sh returning stop/C6-duplicate is not a merge signal when the cycle also found a BLOCKING defect — the fix that follows is unreviewed
-metadata: 
+type: feedback
+metadata:
   node_type: memory
-  type: feedback
   originSessionId: fd8cc9b2-f617-4a90-85a4-cb585f9fe968
   modified: 2026-08-16T18:19:19.095Z
 ---

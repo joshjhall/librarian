@@ -1,9 +1,9 @@
 ---
 name: codebase-audit-prescan-location
 description: Step 2.5 patterns.sh prescan contract lives in orchestration-protocol.md (not SKILL.md) after PR
+type: reference
 metadata:
   node_type: memory
-  type: reference
   originSessionId: 2d0d2cb6-f0c4-434f-b3ba-e0bc9c245d9a
 ---
 

@@ -1,9 +1,9 @@
 ---
 name: two-runtime-model
 description: "Workflow.js runs in the Claude binary's sandboxed JS engine (no shell/fs); only Bash-tool subagents reach host tools — and Claude Code bundles no general-purpose runtime"
+type: reference
 metadata:
   node_type: memory
-  type: reference
   originSessionId: 9d03d497-52a7-4a29-8c82-1ca6971f87ee
 ---
 

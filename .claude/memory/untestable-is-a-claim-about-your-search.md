@@ -1,8 +1,7 @@
 ---
 name: untestable-is-a-claim-about-your-search
 description: "I couldn't find a way to test this" is a fact about the attempt, not a property of the code — never write it into the source as the latter
-metadata:
-  type: feedback
+type: feedback
 ---
 
 A failed attempt to test something is evidence about **the attempt**. Writing it

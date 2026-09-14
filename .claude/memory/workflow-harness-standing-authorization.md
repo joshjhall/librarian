@@ -1,9 +1,9 @@
 ---
 name: workflow-harness-standing-authorization
 description: "The ship-issue/ci-fixer review harness is standingly authorized whenever a /workflow: pipeline is invoked — run it, don't re-ask each session"
-metadata: 
+type: feedback
+metadata:
   node_type: memory
-  type: feedback
   originSessionId: 650f4708-ab7f-40d2-8c31-00b5fd967ad5
   modified: 2026-08-05T14:02:55.576Z
 ---

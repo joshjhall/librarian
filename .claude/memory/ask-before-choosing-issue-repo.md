@@ -1,9 +1,9 @@
 ---
 name: ask-before-choosing-issue-repo
 description: "When a follow-up issue could be filed in more than one repo (this repo vs an upstream/submodule repo), ask where before filing — don't default silently"
+type: feedback
 metadata:
   node_type: memory
-  type: feedback
   originSessionId: 2bb72d45-46df-4138-bb3b-9e8a5ad11257
 ---
 

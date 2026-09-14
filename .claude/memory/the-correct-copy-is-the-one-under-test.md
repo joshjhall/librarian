@@ -1,8 +1,7 @@
 ---
 name: the-correct-copy-is-the-one-under-test
 description: When a helper exists in N unpinned copies, the fixture usually calls the one that is right — so the broken copy stays green forever
-metadata:
-  type: feedback
+type: feedback
 ---
 
 `is_test_file` exists in five copies across the repo. Exactly one pair is pinned

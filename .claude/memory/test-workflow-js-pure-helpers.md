@@ -1,9 +1,9 @@
 ---
 name: test-workflow-js-pure-helpers
 description: "How to unit-test pure helpers inside a workflow.js harness that can't be imported"
+type: reference
 metadata:
   node_type: memory
-  type: reference
   originSessionId: 03199c36-6328-468a-ab08-f45a33c13dce
 ---
 

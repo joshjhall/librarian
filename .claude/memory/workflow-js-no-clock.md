@@ -1,9 +1,9 @@
 ---
 name: workflow-js-no-clock
 description: workflow.js harnesses cannot self-bound in wall-time (no clock/timer in sandbox); bound at the caller
-metadata: 
+type: project
+metadata:
   node_type: memory
-  type: project
   originSessionId: 248f0b25-834a-42e3-91b6-a7001ce6492a
 ---
 

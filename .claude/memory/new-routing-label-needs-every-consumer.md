@@ -1,9 +1,9 @@
 ---
 name: new-routing-label-needs-every-consumer
 description: A routing row keyed on a classification label routes NOTHING until the classifier emits that label — and the doc table is never the only consumer; the generated prompt is what actually runs
+type: feedback
 metadata:
   node_type: memory
-  type: feedback
 ---
 
 Adding a row to a **routing** table (`<label> -> <domain>`) does nothing unless

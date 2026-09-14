@@ -1,9 +1,9 @@
 ---
 name: golem-notify-feed-cant-classify-forks
 description: "golem-notify feed channel structurally can't classify in-turn AskUserQuestion forks; only the deterministic ESCALATION: path + the pane channel"
-metadata: 
+type: project
+metadata:
   node_type: memory
-  type: project
   originSessionId: 2f20e6d2-5247-4862-913c-53675082dbdd
 ---
 

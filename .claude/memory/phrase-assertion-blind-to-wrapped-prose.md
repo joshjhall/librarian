@@ -1,9 +1,9 @@
 ---
 name: phrase-assertion-blind-to-wrapped-prose
 description: A test asserting a multi-word prose phrase fails on wrapped markdown — the phrase is present, the newline sits mid-phrase, and the fix is to flatten whitespace, never to un-wrap the prose
+type: feedback
 metadata:
   node_type: memory
-  type: feedback
 ---
 
 An assertion matching a **multi-word phrase** against markdown fails the moment

@@ -1,9 +1,9 @@
 ---
 name: umbrella-issue-closes-vs-contributes
 description: "Shipping one decomposed slice of a multi-part issue must use \"Contributes to"
-metadata: 
+type: feedback
+metadata:
   node_type: memory
-  type: feedback
   originSessionId: 3e7b68e6-26a7-4425-9e2d-58282ad21d47
 ---
 

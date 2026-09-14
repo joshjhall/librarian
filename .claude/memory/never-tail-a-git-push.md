@@ -1,9 +1,9 @@
 ---
 name: never-tail-a-git-push
 description: "piping git push through tail/head hides the hook rejection line — verify by comparing the remote SHA to HEAD, never by the pipeline's exit code"
-metadata: 
+type: feedback
+metadata:
   node_type: memory
-  type: feedback
   originSessionId: 33c5bf10-08a5-4c5a-8d5b-ce6c36897448
   modified: 2026-08-14T20:21:03.640Z
 ---

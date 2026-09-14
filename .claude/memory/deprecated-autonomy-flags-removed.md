@@ -1,9 +1,9 @@
 ---
 name: deprecated-autonomy-flags-removed
 description: "#215 hard-removed --autonomous/--auto/--plan-gate/--force-auto/NEXT_ISSUE_AUTONOMOUS; --level N is the sole autonomy dial"
-metadata: 
+type: project
+metadata:
   node_type: memory
-  type: project
   originSessionId: df107511-9d75-4a82-a46f-f2d7aebc30e4
 ---
 

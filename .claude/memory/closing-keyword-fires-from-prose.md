@@ -1,9 +1,9 @@
 ---
 name: closing-keyword-fires-from-prose
 description: "GitHub matches close/fix/resolve + #N ANYWHERE in a commit message — a sentence explaining why you did NOT use a closing trailer will itself close the issue"
-metadata: 
+type: feedback
+metadata:
   node_type: memory
-  type: feedback
   originSessionId: 8c18d381-5905-4b08-a734-d468be4e3b1b
   modified: 2026-09-06T22:16:11.512Z
 ---

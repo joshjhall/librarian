@@ -1,9 +1,9 @@
 ---
 name: issue-492-review-narrowing
 description: "#492 ship-issue re-review narrowing — PR #528; skill passes delta args, harness narrows delta-local dims; prior-blocking MUST re-confirm on FULL diff"
-metadata: 
+type: project
+metadata:
   node_type: memory
-  type: project
   originSessionId: 488b0a34-9bc0-433c-bfaa-2b103493faaa
   modified: 2026-07-24T20:35:13.691Z
 ---

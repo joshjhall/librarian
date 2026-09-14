@@ -1,9 +1,9 @@
 ---
 name: issue-411-golem-verify-scope
 description: "#411 /golem live-e2e verification — parked at PR #453; in-session run can only prove AC#3+#5, live ACs deferred to #451; adversarial review forced a re-scope"
-metadata: 
+type: project
+metadata:
   node_type: memory
-  type: project
   originSessionId: 1a486152-805c-4c6f-80e9-634719f1d2b3
   modified: 2026-07-21T00:56:47.919Z
 ---

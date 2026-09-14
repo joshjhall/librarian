@@ -1,8 +1,7 @@
 ---
 name: extracted-region-breaks-its-slicers
 description: Moving code out of a file breaks every test that sed-slices a region from it — the slice yields empty, the eval is a no-op, and the assertions fail as if the SUBJECT regressed
-metadata:
-  type: feedback
+type: feedback
 ---
 
 A test that drives a function by slicing it out of its source

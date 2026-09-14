@@ -1,9 +1,9 @@
 ---
 name: untracked-file-survives-git-checkout-restore
 description: A mutation restore via `git checkout --` is a silent no-op on an untracked file — the mutation stays live and the next green run is measuring the mutated subject
+type: feedback
 metadata:
   node_type: memory
-  type: feedback
 ---
 
 `git checkout -- <path>` on a file git does not track **fails, prints nothing

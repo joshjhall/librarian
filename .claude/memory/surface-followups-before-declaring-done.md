@@ -1,8 +1,7 @@
 ---
 name: surface-followups-before-declaring-done
 description: Never end a shipping flow without listing every deferred finding and asking whether to file it — with a recommendation
-metadata:
-  type: feedback
+type: feedback
 ---
 
 At the end of any ship/review flow, **before** the completion summary, list every

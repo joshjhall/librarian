@@ -1,8 +1,7 @@
 ---
 name: two-lenses-two-thresholds
 description: A fixture sized to clear the audit lens (300 LOC) leaves the review lens (500) silent — and the mutation survives green
-metadata:
-  type: project
+type: project
 ---
 
 The decomposition **audit** lens and **review** lens have different default LOC

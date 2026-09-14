@@ -1,8 +1,8 @@
 ---
 name: wall-timeout-decision-helper
-metadata: 
+type: project
+metadata:
   node_type: memory
-  type: project
   originSessionId: 84c3feac-4129-4741-b12c-272d2efa8deb
 ---
 

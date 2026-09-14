@@ -1,9 +1,9 @@
 ---
 name: config-value-is-not-a-pattern
 description: An operator-configured name matched with fnmatch/case fails to match itself when it contains [ ] * ? — try literal equality FIRST
+type: feedback
 metadata:
   node_type: memory
-  type: feedback
 ---
 
 When a configured **name** (a filename, a label, an id) is matched with

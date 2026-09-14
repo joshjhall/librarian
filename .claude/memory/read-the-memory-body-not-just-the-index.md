@@ -1,9 +1,9 @@
 ---
 name: read-the-memory-body-not-just-the-index
 description: "Recognizing an index line is not reading the memory — open the body before doing the thing it names, or you re-pay the cost it already documents"
-metadata: 
+type: feedback
+metadata:
   node_type: memory
-  type: feedback
   originSessionId: 8c18d381-5905-4b08-a734-d468be4e3b1b
   modified: 2026-09-06T22:16:30.230Z
 ---

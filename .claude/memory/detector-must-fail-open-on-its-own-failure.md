@@ -1,8 +1,7 @@
 ---
 name: detector-must-fail-open-on-its-own-failure
 description: A guard that cannot RUN has learned nothing about its subject — report unverified and proceed; only outcomes it can actually read may refuse
-metadata:
-  type: feedback
+type: feedback
 ---
 
 When a guard's own machinery fails — its scraper stops matching, its temp file

@@ -1,8 +1,7 @@
 ---
 name: combined-label-call-partially-applies
 description: gh issue edit --add-label X --remove-label Y applies the REMOVE then fails the add — the issue is left with no label, not unchanged
-metadata:
-  type: reference
+type: reference
 ---
 
 `gh issue edit N --add-label X --remove-label Y` is **not** atomic, and the

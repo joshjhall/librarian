@@ -1,9 +1,9 @@
 ---
 name: ship-worktree-merge-cleanup
 description: "gh pr merge --delete-branch fails local cleanup in a worktree (main checked out elsewhere); the remote merge still lands — verify, then clean up manually"
-metadata: 
+type: feedback
+metadata:
   node_type: memory
-  type: feedback
   originSessionId: 4eeefecf-9dbf-47ae-9c14-40e1ca49a8cc
 ---
 

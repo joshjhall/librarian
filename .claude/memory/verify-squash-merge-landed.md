@@ -1,9 +1,9 @@
 ---
 name: verify-squash-merge-landed
 description: "After merging a PR, verify the intended changes are actually on origin/main — don't trust the merge commit title"
+type: feedback
 metadata:
   node_type: memory
-  type: feedback
   originSessionId: 5ef35931-1874-450d-9431-6255128dc6e2
 ---
 

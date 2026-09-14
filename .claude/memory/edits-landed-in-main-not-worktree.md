@@ -1,9 +1,9 @@
 ---
 name: edits-landed-in-main-not-worktree
 description: Using main-checkout absolute paths from a worktree session lands edits in the wrong tree (on stale main) — verify cwd/worktree before editing
-metadata: 
+type: feature
+metadata:
   node_type: memory
-  type: feature
   originSessionId: b5836d04-7414-4c51-9f1b-8ae1719f1769
   modified: 2026-07-21T13:36:13.842Z
 ---

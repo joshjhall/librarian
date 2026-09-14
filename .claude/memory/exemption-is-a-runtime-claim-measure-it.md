@@ -1,9 +1,9 @@
 ---
 name: exemption-is-a-runtime-claim-measure-it
 description: "An exemption/boundary claim states runtime behavior — run the one command that checks it, because the exemption is what stops anyone looking again"
-metadata: 
+type: feedback
+metadata:
   node_type: memory
-  type: feedback
   originSessionId: 2dc81361-1df4-44f7-8439-b972dcba2f8f
   modified: 2026-08-27T00:53:30.204Z
 ---

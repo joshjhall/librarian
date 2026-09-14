@@ -1,9 +1,9 @@
 ---
 name: required-param-beats-optional-default
 description: "Fixing a wrong default by keeping the param optional preserves the footgun; require it so omission fails loud, and test that"
-metadata: 
+type: feedback
+metadata:
   node_type: memory
-  type: feedback
   originSessionId: 9c400633-e99b-465d-ae23-722ebd1f208a
   modified: 2026-09-01T18:29:17.909Z
 ---

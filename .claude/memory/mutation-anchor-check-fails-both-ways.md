@@ -1,9 +1,9 @@
 ---
 name: mutation-anchor-check-fails-both-ways
 description: "A mutation harness that verifies \"the edit landed\" by re-grepping the anchor gives wrong verdicts in BOTH directions — cmp against the pristine copy instead"
-metadata: 
+type: feedback
+metadata:
   node_type: memory
-  type: feedback
   originSessionId: 8c18d381-5905-4b08-a734-d468be4e3b1b
   modified: 2026-09-06T22:16:20.894Z
 ---

@@ -1,9 +1,9 @@
 ---
 name: prose-contract-anchored-to-prose
 description: A gate pinning prose by heading pairs or sentence fragments blocks the very extraction it should survive — address blocks by a stable contract id instead
-metadata: 
+type: feedback
+metadata:
   node_type: memory
-  type: feedback
   originSessionId: 11132429-3014-4a1a-816f-781c2d7c5f7a
   modified: 2026-08-18T15:20:09.930Z
 ---

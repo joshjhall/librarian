@@ -1,9 +1,9 @@
 ---
 name: rumdl-nested-sublist-under-numbered
 description: rumdl MD077 autofix mangles a nested dash-sublist placed inside a numbered/lettered list bullet — dedents it out of the parent; use flat prose instead
-metadata: 
+type: feedback
+metadata:
   node_type: memory
-  type: feedback
   originSessionId: 7ac30f9d-985d-4e42-94ed-884a2a0b715e
   modified: 2026-07-29T19:34:00.777Z
 ---

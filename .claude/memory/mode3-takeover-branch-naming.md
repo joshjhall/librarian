@@ -1,9 +1,9 @@
 ---
 name: mode3-takeover-branch-naming
 description: "Mode 2 vs Mode 3 golem branch naming (feature/issue-{N} vs agent{N}) and where the takeover contract must branch on it"
-metadata: 
+type: reference
+metadata:
   node_type: memory
-  type: reference
   originSessionId: a7eed4ad-552a-4435-9f8a-8dd328150255
   modified: 2026-07-18T19:30:06.986Z
 ---

@@ -1,8 +1,7 @@
 ---
 name: empty-tsv-column-collapses-under-read
 description: TAB is IFS whitespace, so `read` merges consecutive tabs and an empty column shifts every later field left
-metadata:
-  type: feedback
+type: feedback
 ---
 
 An empty field in a TSV row does not survive `read`. TAB is IFS whitespace, so

@@ -1,9 +1,9 @@
 ---
 name: explicit-path-still-honors-gitignore
 description: "Passing a DIRECTORY to rumdl/typos still applies .gitignore — only an explicit FILE is exempt, so a reachability gate needs --respect-gitignore=false / --no-ignore"
-metadata: 
+type: feedback
+metadata:
   node_type: memory
-  type: feedback
   originSessionId: d282d6e2-265f-4046-adc3-50e27ce0b45a
   modified: 2026-08-10T22:26:45.094Z
 ---

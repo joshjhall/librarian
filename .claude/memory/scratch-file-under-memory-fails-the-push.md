@@ -1,9 +1,9 @@
 ---
 name: scratch-file-under-memory-fails-the-push
 description: A scratch .md under .claude/memory/tmp/ is linted by rumdl even though gitignored — it can fail the pre-push suite
-metadata: 
+type: project
+metadata:
   node_type: memory
-  type: project
   originSessionId: 9c400633-e99b-465d-ae23-722ebd1f208a
   modified: 2026-09-01T18:29:28.337Z
 ---

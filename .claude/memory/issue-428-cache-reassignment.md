@@ -1,9 +1,9 @@
 ---
 name: issue-428-cache-reassignment
 description: "#428 golem status-cache reset on issue reassignment — whitelist-identity not blanket wipe; review caught container/branch regression"
-metadata: 
+type: project
+metadata:
   node_type: memory
-  type: project
   originSessionId: 920860ad-58de-4fb6-8393-b12679cdb3dd
   modified: 2026-07-21T05:14:36.008Z
 ---

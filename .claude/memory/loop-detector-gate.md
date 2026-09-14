@@ -1,9 +1,9 @@
 ---
 name: loop-detector-gate
 description: "#384 slice-B loop-*/drift behavioral gate + coverage lift for the 6 dev-core patterns.py ports to 100%; #348 umbrella now fully covered"
-metadata: 
+type: project
+metadata:
   node_type: memory
-  type: project
   originSessionId: ed0667c2-ebf3-43c3-932e-eb5b462b45f5
   modified: 2026-07-18T19:30:22.928Z
 ---

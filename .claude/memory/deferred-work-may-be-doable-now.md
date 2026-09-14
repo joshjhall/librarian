@@ -1,8 +1,7 @@
 ---
 name: deferred-work-may-be-doable-now
 description: An issue's "wait for Phase N" note is an estimate, not a finding — probe the blocker before accepting the deferral
-metadata:
-  type: feedback
+type: feedback
 ---
 
 When an issue defers the better option ("prefer option 1 once #838 has

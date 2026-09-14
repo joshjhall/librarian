@@ -1,9 +1,9 @@
 ---
 name: issue-475-worktree-guard
 description: "#475 PreToolUse worktree-scope guard blocks golem edits leaking into the main checkout; shipped PR #502 (L2, awaiting merge); adversarial review caught a HIGH silent-bypass"
-metadata: 
+type: project
+metadata:
   node_type: memory
-  type: project
   originSessionId: 2e00fe92-7847-4f32-8736-90367f40c1a5
   modified: 2026-07-24T04:57:44.302Z
 ---

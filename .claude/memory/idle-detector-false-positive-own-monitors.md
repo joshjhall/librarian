@@ -1,9 +1,9 @@
 ---
 name: idle-detector-false-positive-own-monitors
 description: "golem-gate-watch --stream-panes idle-at-prompt (#447) false-fires when a golem is parked waiting on its OWN background Monitors"
-metadata: 
+type: reference
+metadata:
   node_type: memory
-  type: reference
   originSessionId: 488b0a34-9bc0-433c-bfaa-2b103493faaa
   modified: 2026-07-24T15:50:52.406Z
 ---

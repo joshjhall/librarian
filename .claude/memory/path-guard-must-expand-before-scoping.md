@@ -1,8 +1,7 @@
 ---
 name: path-guard-must-expand-before-scoping
 description: "A guard that decides on a PATH must reconstruct the FULL path the shell would have used — every expansion AND the cwd context (-C/cd) a relative operand resolves against — before its absolute-vs-relative test; get either wrong and it scopes a different directory than the command touches, then fail-opens into a silent bypass"
-metadata:
-  type: feedback
+type: feedback
 ---
 
 When a guard reads a path out of a payload and decides scope from it, it sees the

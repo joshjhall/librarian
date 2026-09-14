@@ -1,8 +1,7 @@
 ---
 name: split-entry-point-drops-the-reporter
 description: Rebuilding a suite's entry point from its run_test lines silently drops the trailing generate_report — the suite then FAILs while exiting 0
-metadata:
-  type: feedback
+type: feedback
 ---
 
 When splitting a test suite into the thin-entry-point + fragments shape, the

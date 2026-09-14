@@ -1,9 +1,9 @@
 ---
 name: issue-402-precedence-dedup
 description: "#402 SHIPPED PR #477 (L3, PARKED human-merge): agnix precedence dedup down-scope; adversarial review caught my real over-correction bug"
-metadata: 
+type: project
+metadata:
   node_type: memory
-  type: project
   originSessionId: 1c804b9d-6cf9-446b-b4d3-5bb82f361bc0
   modified: 2026-07-21T15:32:37.558Z
 ---

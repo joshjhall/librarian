@@ -1,8 +1,7 @@
 ---
 name: gate-header-claims-an-unimplemented-check
 description: A gate's own header/docstring can describe an assertion it never implements — grep for the enforcing code, don't trust the prose
-metadata:
-  type: feedback
+type: feedback
 ---
 
 A test gate's header comment is prose, and prose can describe an assertion the

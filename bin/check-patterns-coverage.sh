@@ -116,21 +116,67 @@ contract_categories() {
 # (a domain may ship either or both behind the shared TSV contract). Quoted
 # kebab slug literals, quotes stripped, sorted-unique. Mirrors the portable
 # extractor in tests/validate-scanner-category-parity.sh.
+#
+# NEITHER HALF IS NECESSARILY ONE FILE, and reading only the entries silently
+# UNDERSTATES coverage — which is worse than overstating it here, because a
+# missing slug reads as "the contract declares something nobody implements".
+# Measured when check-okf-conformance's bash half was split (#991): the five
+# `memory-*` slugs moved into bundle-graph.sh and this domain dropped from
+# 9/10 (90%) to 4/10 (40%) without one line of behavior changing. The python
+# half has been splittable since #772 (loc_engine.py, prose_spec.py,
+# bundle_graph.py), so the same hole existed on that side already — it just had
+# not been walked into yet.
+#
+# Both split conventions are followed, each by the spelling it actually uses:
+# python by `^from <mod> import` where `<mod>.py` sits beside the entry, bash by
+# a `.`/`source` of a `$<var>/<name>.sh` sibling. Following the declaration
+# rather than sweeping the directory is deliberate and is the same boundary
+# validate-scanner-category-parity.sh draws: check-ai-config/ ships
+# `agnix-normalize.{py,sh}`, a JSON->TSV bridge that is NOT part of the patterns
+# pair, and folding its slugs in would overstate every count it touches.
 emitted_categories() {
-    local dir="$1"
+    local dir="$1" f
     # A trailing `:` keeps the group's exit status 0 even when the last
     # patterns.* file is absent — otherwise a failing `[ -f ]` test would, under
     # `set -o pipefail`, abort the whole script for a domain that ships only one
     # of the two impls.
     {
-        [ -f "$dir/patterns.sh" ] &&
-            command grep -oE '"[a-z][a-z0-9]+-[a-z][a-z0-9-]*"' "$dir/patterns.sh"
-        [ -f "$dir/patterns.py" ] &&
-            command grep -oE '"[a-z][a-z0-9]+-[a-z][a-z0-9-]*"' "$dir/patterns.py"
+        for f in $(impl_files "$dir"); do
+            command grep -oE '"[a-z][a-z0-9]+-[a-z][a-z0-9-]*"' "$f"
+        done
         :
     } |
         command tr -d '"' |
         command sort -u
+}
+
+# impl_files <domain_dir> — every file making up the domain's pre-scan: the
+# patterns.{sh,py} entries plus the siblings they declare. See the note on
+# emitted_categories above for why the declaration, not the directory, is the
+# boundary. Paths hold no spaces (they are repo-relative skill files), so the
+# unquoted `for` split above is safe.
+impl_files() {
+    local dir="$1" mod frag
+    if [ -f "$dir/patterns.py" ]; then
+        command printf '%s\n' "$dir/patterns.py"
+        command grep -oE '^from [A-Za-z_][A-Za-z0-9_]* import' "$dir/patterns.py" 2>/dev/null |
+            command awk '{ print $2 }' |
+            command sort -u |
+            while IFS= read -r mod; do
+                [ -n "$mod" ] && [ -f "$dir/$mod.py" ] &&
+                    command printf '%s\n' "$dir/$mod.py"
+            done
+    fi
+    if [ -f "$dir/patterns.sh" ]; then
+        command printf '%s\n' "$dir/patterns.sh"
+        command grep -oE '^[[:space:]]*(\.|source)[[:space:]]+"\$[A-Za-z_][A-Za-z0-9_]*/[A-Za-z0-9_.-]+\.sh"' "$dir/patterns.sh" 2>/dev/null |
+            command sed -e 's|.*/||' -e 's|"$||' |
+            command sort -u |
+            while IFS= read -r frag; do
+                [ -n "$frag" ] && [ -f "$dir/$frag" ] &&
+                    command printf '%s\n' "$dir/$frag"
+            done
+    fi
 }
 
 # --- Per-domain walk --------------------------------------------------------

@@ -1,9 +1,9 @@
 ---
 name: whole-repo-diff-bounded-by-repo-content
 description: "A gate that diffs two impls \"over the whole repo\" only covers shapes the repo contains; absent inputs read as parity"
-metadata: 
+type: feedback
+metadata:
   node_type: memory
-  type: feedback
   originSessionId: 5fd8b772-404e-4cce-8dea-13525dc7da6a
   modified: 2026-08-31T18:54:59.286Z
 ---

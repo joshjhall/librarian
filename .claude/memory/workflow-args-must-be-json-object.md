@@ -1,9 +1,9 @@
 ---
 name: workflow-args-must-be-json-object
 description: "Workflow tool args passed as a JSON-encoded string silently mislabels the cycle and drops the diff, so every finding scores novel"
-metadata: 
+type: feedback
+metadata:
   node_type: memory
-  type: feedback
   originSessionId: aa8b1709-8943-49be-8adc-30135b673878
   modified: 2026-08-22T03:59:26.150Z
 ---

@@ -1,9 +1,9 @@
 ---
 name: git-index-corruption-partial-commit
 description: "A truncated .git/index can silently capture a partial tree in a commit — verify the pushed tree, don't trust that git add staged everything"
-metadata: 
+type: project
+metadata:
   node_type: memory
-  type: project
   originSessionId: 9abee550-dd13-4109-9ea0-7af93076167d
   modified: 2026-07-19T06:17:06.625Z
 ---
