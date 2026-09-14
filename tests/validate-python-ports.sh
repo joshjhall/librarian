@@ -1884,22 +1884,51 @@ test_py_evidence_carries_no_cr() {
         "no port emits a CR in its TSV over a CRLF file (#902 via #980)"
 }
 
-# The guard on the test above: it passes trivially if every port emits NOTHING.
-# Measured at authoring time -- several ports emit over this fixture -- so a
-# drop to zero means the fixture stopped reaching any detector, not that the
-# code got better.
+# The guard on the test above, which passes trivially over a port that emits
+# NOTHING -- its offender check fires on a row CONTAINING a CR, so zero rows is
+# indistinguishable from zero CRs.
+#
+# A summed total across the corpus is too weak a guard, because one port can
+# regress to silence while its siblings keep the sum positive. But "every port
+# must emit" is FALSE and would be a broken assertion: most ports have nothing
+# to say about a short .py file (check-docs-deadlinks wants links,
+# check-decomposition wants a file over its LOC threshold), and they are
+# correctly silent here.
+#
+# So the guard NAMES the ports whose detectors this fixture is built to reach,
+# and asserts each one individually. The list is measured, not assumed -- each
+# entry emitted at authoring time, and the fixture line that reaches it is noted
+# so a future edit can tell which line it must not delete:
+#
+#   check-security          the `password =` and md5 lines
+#   check-code-health       the debug print, the TODO, the swallowed except
+#   loop-make-it-work       the `pass` body
+#   loop-make-it-tested     the untested public def -- THE literal-60 site that
+#                           #980's first review cycle found unstripped, so this
+#                           is the entry that must never silently drop out
+#   loop-make-it-documented the undocumented public def
+#   check-docs-missing-api  likewise, via its own arm
+#
+# Naming them means a single port going silent fails BY NAME rather than being
+# masked by the others.
+CRLF_EV_MUST_EMIT="check-security check-code-health loop-make-it-work loop-make-it-tested loop-make-it-documented check-docs-missing-api"
+
 test_crlf_evidence_is_nonvacuous() {
-    local py total=0 n
+    local skill py n silent=""
     setup_crlf_evidence_fixture
 
-    while IFS= read -r py; do
-        [ -n "$py" ] || continue
+    for skill in $CRLF_EV_MUST_EMIT; do
+        py="$(list_python_ports | command grep "/${skill}/patterns\.py$" | command head -1)"
+        if [ -z "$py" ]; then
+            silent="$silent ${skill}(not-found)"
+            continue
+        fi
         n="$(python3 "$py" "$CRLF_EV_LIST" 2>/dev/null | command wc -l | command tr -d ' ')"
-        total=$((total + n))
-    done <<<"$(list_python_ports)"
+        [ "$n" -gt 0 ] || silent="$silent $skill"
+    done
 
-    assert_true [ "$total" -gt 0 ] \
-        "The CRLF evidence fixture reaches at least one detector (guard against a vacuous pass)"
+    assert_equals "" "$silent" \
+        "every port the CRLF fixture is built to reach still emits (guard against a vacuous pass)"
 }
 
 # And the bash twins must agree on the same fixture -- the other half of the

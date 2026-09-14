@@ -251,9 +251,33 @@ renaming `_read_config_lines` back to `read_lines` turns the second red.
 
 ## Deferred
 
-Plan-lens flagged three files already over their production-LOC budgets
-(`check-security/patterns.py` 638 vs 500, `okf-migrate/migrate.py` 505 vs 500,
-`tests/validate-python-ports.sh` 803 vs 700). Judged swamping; the swamp gate
-was raised and resolved as **follow-up issues**, keeping this PR narrow — its
-diff is wide and shallow, and a module split alongside it would bury the one
-thing a reviewer must check: that all ports now share one line model.
+Plan-lens flagged three files already over their production-LOC budgets. Judged
+swamping; the swamp gate was raised and resolved as **follow-up issues**, keeping
+this PR narrow — its diff is wide and shallow, and a module split alongside it
+would bury the one thing a reviewer must check: that all ports now share one line
+model.
+
+The figures below are the **final** ones, re-measured with `pre-review-gates.sh`
+at the last commit — not the planning-time estimates. The first version of this
+section quoted the plan-lens numbers taken *before* implementation, which the
+work then invalidated; cycle 3 caught them understating the overage by about a
+quarter. A deferral note that goes stale is worse than none, because it reads as
+current.
+
+| File | Budget | Final | This PR added | Tracked by |
+| ---- | ------ | ----- | ------------- | ---------- |
+| `tests/validate-python-ports.sh` | 700 | **990** | 365 | [#1038](https://github.com/joshjhall/librarian/issues/1038) |
+| `check-security/patterns.py` | 500 | **666** | 40 | [#1037](https://github.com/joshjhall/librarian/issues/1037) |
+| `okf-migrate/migrate.py` | 500 | **519** | 26 | left to the existing backlog |
+
+`validate-python-ports.sh` is the one this PR genuinely grew — 365 lines, most of
+them the new fixtures and the three direct probes the review cycles asked for.
+That growth is the deliverable (AC2 is "the corpus carries fixtures that fail
+without the fix"), and the file was already 184 lines over budget before this
+change, so the split is a pre-existing debt this PR adds to rather than creates.
+It is filed as #1038 with the split shape the scanner itself recommends
+(sourced fragment + an explicit ordered list, the convention six other suites
+already follow).
+
+`migrate.py`'s 19-line overage is small and pre-existing; it is left to the
+ordinary backlog rather than given an issue of its own.
