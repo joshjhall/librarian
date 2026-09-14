@@ -548,6 +548,28 @@ test_symlinked_staging_dir_refuses() {
     command rm -rf "$dest" "$elsewhere"
 }
 
+# A regular FILE squatting on the staging path. Not a symlink and not a
+# directory, so neither the `-L` guard nor the `-d` check catches it: `mkdir -p`
+# fails with EEXIST-not-a-directory. The requirement is only that it refuse
+# loudly rather than proceed, which is what this pins.
+test_regular_file_at_staging_path_refuses() {
+    local dest
+    dest="$(new_tree)"
+    [ -n "$dest" ] || {
+        skip_test "mktemp unavailable"
+        return 0
+    }
+
+    command mkdir -p "$dest/.claude/tmp"
+    command printf 'not a directory\n' >"$dest/.claude/tmp/harness"
+
+    run_stager "$STAGER" stage orchestrate --dir "$dest"
+    assert_equals "3" "$LAST_RC" "a regular file at the staging path exits 3"
+    assert_not_contains "$LAST_OUT" "path=" "a refused stage emits no path="
+
+    command rm -rf "$dest"
+}
+
 # THE PROBE LOG MUST SURVIVE. This is a regression test for a real bug in the
 # first draft: the probe list was accumulated into a global from inside a command
 # substitution — a subshell — so every append was discarded and the refusal
@@ -685,6 +707,7 @@ run_test test_absent_plugin_exits_4 "an absent owning plugin exits 4 (skip appli
 run_test test_present_plugin_missing_harness_exits_3 "a broken install exits 3 (delivery stops)"
 run_test test_installed_layout_distinguishes_broken_from_absent "installed layout: broken (3) vs absent (4) stay distinct"
 run_test test_symlinked_staging_dir_refuses "a symlinked staging directory refuses rather than staging through it"
+run_test test_regular_file_at_staging_path_refuses "a regular file at the staging path refuses"
 run_test test_refusal_lists_every_probe "a refusal lists every probe it tried"
 run_test test_unwritable_cwd_refuses "an unwritable cwd exits 3, never a skip"
 run_test test_usage_errors_exit_2 "usage errors exit 2, distinct from absence"

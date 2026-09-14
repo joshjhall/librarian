@@ -102,12 +102,28 @@ different places. **Try both, in order:**
 ```bash
 # First: dev checkout — plugins/<plugin>/ are siblings, no version segment
 ${CLAUDE_PLUGIN_ROOT}/../workflow/scripts/harness-stage.sh stage codebase-audit
+
 # Then: installed — an installed plugin root carries a <version> segment, so the
 #   sibling is one level deeper. ${CLAUDE_PLUGIN_ROOT} here is
 #   .../review-audit/<version>, hence ../../workflow/<version>/…
-${CLAUDE_PLUGIN_ROOT}/../../workflow/*/scripts/harness-stage.sh stage codebase-audit
+#   RESOLVE the version directory to ONE path first, then invoke it. Never put
+#   the glob in command position — see below.
+ls -d ${CLAUDE_PLUGIN_ROOT}/../../workflow/*/scripts/harness-stage.sh | tail -1
+# then run the single path that printed:
+<that path> stage codebase-audit
 # -> path=…  source=…  staged=true|false
 ```
+
+**Why the glob is resolved first rather than executed.** A `*` in *command
+position* is expanded before the command runs, so with two `workflow` version
+directories present — mid-`plugin update`, or a stale cache beside the current
+one — bash produces two words: the first is executed and **the second becomes
+its first argument**. `harness-stage.sh` then sees a path where it expects a
+subcommand and exits 2 `unknown subcommand`, never reaching the numeric version
+preference it implements for exactly this case. Measured, not theorized: two
+versions present yields `ARGS: …/1.0.0/scripts/harness-stage.sh stage
+codebase-audit`. Resolving to a single path first is what makes the multi-version
+tree work instead of being the one tree that fails.
 
 **Do not collapse these to the first one alone.** On an installed tree the
 sibling has a `<version>` path segment that spelling has no way to name, so it

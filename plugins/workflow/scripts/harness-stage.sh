@@ -478,8 +478,37 @@ cmd_stage() {
     # (or a prior failure) deliberately locked to 0500, converting a refusal into
     # a silent success. Caught by test_copy_failure_refuses_loudly, which went
     # from exit 3 to exit 0 the moment the unconditional form landed.
+    # Fail LOUD if the hardening itself fails, matching every other failure mode
+    # in this function. `|| true` here would let the script proceed to copy an
+    # executable-as-scriptPath into a directory whose mode is whatever the umask
+    # produced — asserting "regardless of umask" in a comment while not enforcing
+    # it, which is the silence-reads-as-a-pass shape this whole file is about.
     if [ "$_cs_dir_existed" = "false" ]; then
-        command chmod 700 "$_cs_dir" 2>/dev/null || true
+        command chmod 700 "$_cs_dir" 2>/dev/null ||
+            _refuse 3 "cannot restrict permissions on the staging directory: $_cs_dir" \
+                "Refusing to stage into a directory whose mode cannot be secured."
+    fi
+
+    # RE-CHECK after mkdir, and this is the load-bearing half of the symlink
+    # guard. The `-L` test above is check-then-act: between it and `mkdir -p`
+    # there is a window in which a local attacker with write access to
+    # `.claude/tmp/` can plant a symlink at this exact (predictable) path.
+    # `mkdir -p` then treats the link as "already exists" and succeeds silently,
+    # `-d` follows it so the hardening is skipped as pre-existing, and every
+    # subsequent mktemp/cp/mv lands inside the attacker's directory — whose path
+    # is then handed to the `Workflow` tool as a trusted scriptPath.
+    #
+    # Re-testing here closes the window: whoever wins the race, the path is a
+    # symlink by the time we look again, and we refuse before writing anything.
+    # (`mkdir` without `-p` was the other candidate — its EEXIST would catch the
+    # same race — but it cannot create the intermediate `.claude/tmp/`, so it
+    # would need its own parent-building ladder for no extra safety.)
+    if [ -L "$_cs_dir" ]; then
+        _refuse 3 "the staging path became a symlink during staging: $_cs_dir" \
+            "Refusing to write through it. This is the TOCTOU form of the same" \
+            "check: a link planted between the initial test and the mkdir." \
+            "Remove it and re-run; if it reappears, something else is writing" \
+            "to .claude/tmp/ and that is the problem to chase."
     fi
 
     _cs_dst="$_cs_dir/${_cs_id}.workflow.js"
@@ -499,7 +528,10 @@ cmd_stage() {
         command rm -f "$_cs_tmp" 2>/dev/null
         _refuse 3 "cannot install the staged harness at $_cs_dst"
     fi
-    command chmod 600 "$_cs_dst" 2>/dev/null || true
+    command chmod 600 "$_cs_dst" 2>/dev/null ||
+        _refuse 3 "cannot restrict permissions on the staged harness: $_cs_dst" \
+            "The file is staged but its mode could not be secured; refusing to" \
+            "hand a world-readable scriptPath to the Workflow tool."
 
     command printf 'path=%s\nsource=%s\nstaged=true\n' "$_cs_dst" "$_cs_src"
 }
