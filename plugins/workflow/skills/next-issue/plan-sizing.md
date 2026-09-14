@@ -129,6 +129,21 @@ The four options:
    `scope_expansions` so the same gate does not re-fire on the next issue that
    touches it.
 
+**Check the premise of options 2 and 3 BEFORE rendering them** (#911). Both
+propose filing new work, so both are subject to the existence check in
+`escalation-protocol.md` § *Check the premise* — run
+`premise-check.sh exists --title "<the split you would file>"` and act on the
+verdict: rewrite the option to reference an `open` hit, **remove** it on a
+`closed` hit, and on `unavailable` say in the option text that the check did not
+run. Also run the constraint sweep, so an option cannot contradict something this
+issue or a repo file already decided.
+
+This gate is where #911 was actually observed, and the cost is asymmetric. Option
+2 filed against a duplicate wastes an issue; **option 3 filed against a CLOSED
+one suspends the lane behind work that has already merged** — which is exactly
+what #860 came within one operator keystroke of doing. Do not render either
+option from an unchecked premise.
+
 **Dispatch by level**, per `escalation-protocol.md` § *Disposition by level*:
 
 - **L1–L3** — block and **wait indefinitely**. Under an orchestrator, mint a
