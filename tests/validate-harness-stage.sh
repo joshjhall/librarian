@@ -187,6 +187,138 @@ test_staging_is_idempotent() {
     command rm -rf "$dest"
 }
 
+# The DEFAULT invocation — `stage <id>` with no `--dir`, which is what every
+# call site in the skills actually writes. Every other staging case here passes
+# `--dir` for isolation, so without this one the defaulting of the stage root to
+# $PWD is never exercised at all: a regression that broke it (defaulting to the
+# script's own directory, say) would leave this suite green while every real
+# caller staged into the wrong tree.
+test_default_dir_is_cwd() {
+    local dest
+    dest="$(new_tree)"
+    [ -n "$dest" ] || {
+        skip_test "mktemp unavailable"
+        return 0
+    }
+
+    # Run with cwd INSIDE the temp tree and no --dir. A subshell so the suite's
+    # own cwd is untouched.
+    LAST_OUT="$(cd "$dest" && "$STAGER" stage orchestrate 2>&1)" && LAST_RC=0 || LAST_RC=$?
+
+    assert_equals "0" "$LAST_RC" "stage with no --dir exits 0"
+    assert_contains "$LAST_OUT" "staged=true" "an unreachable harness stages by default too"
+    local p
+    p="$(value_of path)"
+    assert_contains "$p" "$dest" "the default stage root is the process's cwd"
+    assert_file_exists "$p" "the default-root copy exists"
+
+    command rm -rf "$dest"
+}
+
+# The permission hardening (#973 review): the staging directory and the final
+# harness must not depend on the caller's umask. The destination name is
+# deterministic and its contents are executed as a scriptPath, so a
+# group/world-writable staging dir is a local code-injection seam.
+test_staged_paths_are_not_world_readable() {
+    local dest
+    dest="$(new_tree)"
+    [ -n "$dest" ] || {
+        skip_test "mktemp unavailable"
+        return 0
+    }
+
+    # A deliberately permissive umask — the condition the chmod exists to defeat.
+    LAST_OUT="$(umask 000 && "$STAGER" stage orchestrate --dir "$dest" 2>&1)" && LAST_RC=0 || LAST_RC=$?
+    assert_equals "0" "$LAST_RC" "stage succeeds under a permissive umask"
+
+    local p dirmode filemode
+    p="$(value_of path)"
+    # `ls`-parsed mode rather than `stat`, whose format flags differ between BSD
+    # and GNU (`stat -f %Lp` vs `stat -c %a`) — the portability trap this repo
+    # keeps re-learning.
+    dirmode="$(command ls -ld "$dest/.claude/tmp/harness" | command cut -c1-10)"
+    filemode="$(command ls -l "$p" | command cut -c1-10)"
+
+    assert_equals "drwx------" "$dirmode" \
+        "the staging directory is 0700 regardless of umask"
+    assert_equals "-rw-------" "$filemode" \
+        "the staged harness is 0600 regardless of umask"
+
+    command rm -rf "$dest"
+}
+
+# _is_under resolves BOTH sides with `cd`+`pwd -P` rather than comparing string
+# prefixes, so a worktree reached through a symlink compares correctly. That is
+# the documented #21 rationale (`realpath -m`'s `|| echo` fallback returned the
+# path UNRESOLVED and defeated a guard of exactly this shape), and without a test
+# the reasoning is only a comment.
+test_symlinked_root_resolves() {
+    local real link
+    real="$(new_tree)"
+    [ -n "$real" ] || {
+        skip_test "mktemp unavailable"
+        return 0
+    }
+    link="${real}-link"
+    command ln -s "$real" "$link" 2>/dev/null || {
+        command rm -rf "$real"
+        skip_test "cannot create a symlink here"
+        return 0
+    }
+
+    # Stage through the SYMLINK path. A prefix-comparing _is_under would see the
+    # link path and the resolved source as unrelated and behave inconsistently.
+    run_stager "$STAGER" stage orchestrate --dir "$link"
+    assert_equals "0" "$LAST_RC" "staging through a symlinked root succeeds"
+    assert_contains "$LAST_OUT" "staged=true" "the harness is staged via the link"
+    local p
+    p="$(value_of path)"
+    assert_file_exists "$p" "the staged copy exists through the link"
+    # It must land in the REAL directory, which is what proves both sides were
+    # resolved rather than string-matched.
+    assert_file_exists "$real/.claude/tmp/harness/orchestrate.workflow.js" \
+        "the copy lands in the resolved real directory, not a second tree"
+
+    command rm -f "$link"
+    command rm -rf "$real"
+}
+
+# The copy/install failure branches. Both end in `_refuse 3`, and both are
+# reachable in practice (a full disk, a read-only mount, a clobbered staging
+# dir). Driven by making the staging directory unwritable AFTER it exists, which
+# is the only way to fail the cp rather than the mkdir.
+test_copy_failure_refuses_loudly() {
+    local dest
+    dest="$(new_tree)"
+    [ -n "$dest" ] || {
+        skip_test "mktemp unavailable"
+        return 0
+    }
+    if [ "$(command id -u)" = "0" ]; then
+        command rm -rf "$dest"
+        skip_test "running as root — permission bits do not apply"
+        return 0
+    fi
+
+    command mkdir -p "$dest/.claude/tmp/harness"
+    command chmod 500 "$dest/.claude/tmp/harness" 2>/dev/null || {
+        command rm -rf "$dest"
+        skip_test "cannot make the staging directory unwritable here"
+        return 0
+    }
+
+    run_stager "$STAGER" stage orchestrate --dir "$dest"
+    assert_equals "3" "$LAST_RC" "an unwritable staging directory exits 3"
+    assert_not_contains "$LAST_OUT" "path=" "a failed copy emits no path="
+    # No half-written temp file is left behind for the next run to trip over.
+    local leftovers
+    leftovers="$(command find "$dest/.claude/tmp/harness" -name '.orchestrate.*' 2>/dev/null || true)"
+    assert_equals "" "$leftovers" "a failed copy leaves no temp file behind"
+
+    command chmod 700 "$dest/.claude/tmp/harness" 2>/dev/null || true
+    command rm -rf "$dest"
+}
+
 # Probe 1, happy path.
 test_override_takes_precedence() {
     local tree
@@ -452,6 +584,10 @@ run_test test_dev_checkout_resolves "probe 2: dev checkout resolves"
 run_test test_output_contract_is_complete "output carries all three keys"
 run_test test_already_reachable_is_not_copied "an already-reachable harness is not copied"
 run_test test_unreachable_is_staged_under_cwd "an unreachable harness is staged under cwd"
+run_test test_default_dir_is_cwd "stage with no --dir defaults to cwd"
+run_test test_staged_paths_are_not_world_readable "staged dir/file are 0700/0600 regardless of umask"
+run_test test_symlinked_root_resolves "a symlinked stage root resolves to the real directory"
+run_test test_copy_failure_refuses_loudly "a failed copy exits 3 and leaves no temp file"
 run_test test_staging_is_idempotent "staging is idempotent (re-stages, never bails)"
 run_test test_override_takes_precedence "probe 1: override takes precedence"
 run_test test_override_pointing_nowhere_refuses_loudly "probe 1: a dead override refuses loudly (exit 3)"

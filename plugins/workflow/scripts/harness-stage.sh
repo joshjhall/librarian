@@ -433,9 +433,28 @@ cmd_stage() {
     fi
 
     _cs_dir="$_cs_root/.claude/tmp/harness"
+    _cs_dir_existed=true
+    [ -d "$_cs_dir" ] || _cs_dir_existed=false
     command mkdir -p "$_cs_dir" 2>/dev/null ||
         _refuse 3 "cannot create the staging directory: $_cs_dir" \
             "The session's working directory must be writable to stage a harness."
+
+    # Tighten to 0700 regardless of umask, but ONLY on a directory this run just
+    # created. The destination filename is DETERMINISTIC (`<id>.workflow.js`) and
+    # its contents are handed straight to the `Workflow` tool as a scriptPath —
+    # so on a shared host a permissive umask would let another local process
+    # pre-create or replace that file and get its own code executed under the
+    # harness's authority. `mktemp` already gives the temp file 0600; this closes
+    # the directory and the final name.
+    #
+    # The `-d` test before `mkdir` is what makes this narrow, and it is not a
+    # nicety: an unconditional chmod RE-GRANTS write on a directory the operator
+    # (or a prior failure) deliberately locked to 0500, converting a refusal into
+    # a silent success. Caught by test_copy_failure_refuses_loudly, which went
+    # from exit 3 to exit 0 the moment the unconditional form landed.
+    if [ "$_cs_dir_existed" = "false" ]; then
+        command chmod 700 "$_cs_dir" 2>/dev/null || true
+    fi
 
     _cs_dst="$_cs_dir/${_cs_id}.workflow.js"
 
@@ -454,6 +473,7 @@ cmd_stage() {
         command rm -f "$_cs_tmp" 2>/dev/null
         _refuse 3 "cannot install the staged harness at $_cs_dst"
     fi
+    command chmod 600 "$_cs_dst" 2>/dev/null || true
 
     command printf 'path=%s\nsource=%s\nstaged=true\n' "$_cs_dst" "$_cs_src"
 }
