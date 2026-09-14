@@ -1652,7 +1652,8 @@ import subprocess
 import sys
 
 fixdir = sys.argv[1]
-ports = sys.argv[2:]
+plugins_dir = sys.argv[2]
+ports = sys.argv[3:]
 
 # name -> raw bytes. Each shape is one thing grep and splitlines() can disagree
 # about; the comment block above says why each earns its place.
@@ -1695,6 +1696,30 @@ NO_CONTENT_READ = {
     "ship-issue/plan-lens",
 }
 
+# Content readers this gate's port GLOB cannot reach, driven here anyway (#980).
+#
+# list_python_ports() is keyed off PORT_BASENAMES ("patterns sizing plan-lens"),
+# so a reader in a differently-named module is invisible to it -- and #980
+# changed the line model in four such files. Left undriven they would ship a
+# real behavior change with NO assertion behind it: the "absence reads as a
+# pass" trap (#836) this corpus exists to prevent, reached by a new route --
+# not a missing FIXTURE but a missing FILE.
+#
+# split-verify.py is here for a second, independent reason: it is deliberately
+# excluded from the port corpus (its argv shape does not fit this gate's
+# file-list contract -- see the SCOPE note at the top), so its parity lives in
+# tests/validate-split-verify.sh, which carries no separator-byte fixture. Its
+# read_lines() is a plain path-in/lines-out function, so the LINE MODEL is
+# assertable here even though its CLI is not.
+#
+# Paths are relative to PLUGINS_DIR, passed in as argv[2].
+EXTRA_READERS = [
+    "review-audit/skills/okf-migrate/transforms.py",
+    "review-audit/skills/okf-migrate/migrate.py",
+    "review-audit/skills/check-okf-conformance/bundle_graph.py",
+    "workflow/skills/ship-issue/split-verify.py",
+]
+
 bad = 0
 for port in ports:
     spec = importlib.util.spec_from_file_location("port_under_test", port)
@@ -1732,6 +1757,36 @@ for port in ports:
             bad += 1
             print("FAIL %s read_lines(%s) -> %r, grep says %r" % (rel, name, got, want))
 
+# The same CASES and the same grep oracle, for the readers the glob cannot see.
+for rel_path in EXTRA_READERS:
+    mod_path = os.path.join(plugins_dir, rel_path)
+    if not os.path.isfile(mod_path):
+        bad += 1
+        print("FAIL extra reader %s: not found at %s" % (rel_path, mod_path))
+        continue
+    spec = importlib.util.spec_from_file_location("extra_reader", mod_path)
+    mod = importlib.util.module_from_spec(spec)
+    try:
+        spec.loader.exec_module(mod)
+    except Exception as exc:  # a reader that cannot import is a failure, not a skip
+        bad += 1
+        print("FAIL extra reader %s: import failed: %r" % (rel_path, exc))
+        continue
+    fn = getattr(mod, "read_lines", None)
+    if fn is None:
+        bad += 1
+        print("FAIL extra reader %s: no read_lines()" % rel_path)
+        continue
+    for name, data in CASES.items():
+        path = os.path.join(fixdir, "rlx_" + name)
+        with open(path, "wb") as fh:
+            fh.write(data)
+        want = grep_lines(path)
+        got = fn(path)
+        if got != want:
+            bad += 1
+            print("FAIL %s read_lines(%s) -> %r, grep says %r" % (rel_path, name, got, want))
+
 if bad == 0:
     print("OK")
 PY
@@ -1740,7 +1795,7 @@ PY
     ports="$(list_python_ports | command tr '\n' ' ')"
     # Deliberate word-splitting: one argv entry per port path.
     # shellcheck disable=SC2086
-    out="$(python3 "$WORKDIR/readlines_cases.py" "$FIXDIR" $ports 2>&1)" || rc=$?
+    out="$(python3 "$WORKDIR/readlines_cases.py" "$FIXDIR" "$PLUGINS_DIR" $ports 2>&1)" || rc=$?
     assert_equals "0" "$rc" "the direct read_lines probe ran without error"
     assert_equals "OK" "$out" \
         "read_lines: every port's line model matches grep -n on every separator shape (#980)"

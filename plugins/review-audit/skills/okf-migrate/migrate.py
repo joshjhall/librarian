@@ -92,6 +92,26 @@ RESERVED = ("index.md", "log.md")
 VALIDATOR_DIR = os.path.join(os.path.dirname(_HERE), "check-okf-conformance")
 
 
+def read_lines(path: str) -> list[str]:
+    r"""PATH's lines under grep's line model: split on `\n` ONLY (#980).
+
+    `newline=""` disables universal-newline translation. Without it a lone `\r`
+    is rewritten to `\n` by read() BEFORE any split can see it, so even
+    `.split("\n")` reports two lines where `grep -n` reports one -- and the bash
+    twin reaches every line through grep. str.splitlines(), which this replaced,
+    additionally splits on `\x0b`, `\x0c`, `\x1c`-`\x1e` and U+2028/2029, none of
+    which grep treats as a separator. The trailing empty from a final newline is
+    dropped so the count matches `grep -n` at both ends.
+
+    Raises OSError on an unreadable path; each caller keeps its own fallback.
+    """
+    with open(path, "r", encoding="utf-8", errors="replace", newline="") as fh:
+        lines = fh.read().split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()
+    return lines
+
+
 def fail(message: str, code: int = 1) -> int:
     """Print an actionable TOOL-side error and return the non-zero code."""
     sys.stderr.write("ERROR: " + message + "\n")
@@ -167,14 +187,7 @@ def read_config_list(path: str, section: str, key: str) -> list[str]:
     (the #686 divergence).
     """
     try:
-        # newline="" + a `\n`-only split, matching the bash twin's grep line
-        # model: read() rewrites a lone `\r` to `\n` without it, and
-        # splitlines() (which this replaced) also splits on `\x0b`/`\x0c`/
-        # `\x1c`-`\x1e`/U+2028/2029 (#980).
-        with open(path, "r", encoding="utf-8", errors="replace", newline="") as fh:
-            lines = fh.read().split("\n")
-        if lines and lines[-1] == "":
-            lines.pop()
+        lines = read_lines(path)
     except OSError:
         return []
     in_section = False
@@ -205,14 +218,7 @@ def read_config_list(path: str, section: str, key: str) -> list[str]:
 def read_config_scalar(path: str, section: str, key: str, default: str) -> str:
     """The scalar `<section>.<key>` in a thresholds.yml, or DEFAULT."""
     try:
-        # newline="" + a `\n`-only split, matching the bash twin's grep line
-        # model: read() rewrites a lone `\r` to `\n` without it, and
-        # splitlines() (which this replaced) also splits on `\x0b`/`\x0c`/
-        # `\x1c`-`\x1e`/U+2028/2029 (#980).
-        with open(path, "r", encoding="utf-8", errors="replace", newline="") as fh:
-            lines = fh.read().split("\n")
-        if lines and lines[-1] == "":
-            lines.pop()
+        lines = read_lines(path)
     except OSError:
         return default
     in_section = False

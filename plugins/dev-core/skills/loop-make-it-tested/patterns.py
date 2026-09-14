@@ -56,6 +56,22 @@ PY_ALL_NAME_RE = re.compile(r"\"[a-zA-Z_][a-zA-Z0-9_]*\"|'[a-zA-Z_][a-zA-Z0-9_]*
 PY_MAIN_GUARD_RE = re.compile(r"^if[ \t]+__name__[ \t]*==[ \t]*[\"']__main__[\"']")
 
 
+def strip_eol_cr(content: str) -> str:
+    r"""One trailing CR off a line before it becomes evidence (#902, #980).
+
+    Mirrors truncate_chars() in the bash fallback, which has stripped it since
+    #902 -- same strip, same before-the-slice order. read_lines() deliberately
+    KEEPS a CRLF's `\r` in the line so `$`-anchored regexes behave as they do
+    under grep (#980); without this the retained `\r` would reach the TSV and
+    the two runtimes' evidence would differ by one byte on any CRLF match.
+
+    NOTE the slice here is a literal 60, not EVIDENCE_CAP: this file's
+    untested-public-api arm caps at 60 to match `truncate_chars 60` in the bash
+    twin. The cap width differs; the strip does not.
+    """
+    return content[:-1] if content.endswith("\r") else content
+
+
 def read_lines(path: str) -> list[str]:
     r"""PATH's lines under grep's line model: split on `\n` ONLY (#980).
 
@@ -226,7 +242,7 @@ def scan_file(path: str, lines: list[str]) -> None:
                 ],
                 func_name,
             ):
-                ev = content[:60]
+                ev = strip_eol_cr(content)[:60]
                 emit(
                     path,
                     str(idx),
@@ -241,7 +257,7 @@ def scan_file(path: str, lines: list[str]) -> None:
             func_name = m.group(1) if m else ""
             test_file = f"{dirname}/{name_no_ext}_test.go"
             if os.path.isfile(test_file) and not _word_in_file(test_file, func_name):
-                ev = content[:60]
+                ev = strip_eol_cr(content)[:60]
                 emit(
                     path,
                     str(idx),

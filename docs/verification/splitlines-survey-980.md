@@ -102,11 +102,21 @@ compares byte-for-byte.
 | `dev-core/skills/loop-make-it-tested/patterns.py` | 1 |
 | `dev-core/skills/loop-make-it-documented/patterns.py` | 1 |
 
-`check-decomposition` and `loop-make-it-tested` took `read_lines()` but no
-`strip_eol_cr()`: neither has an `EVIDENCE_CAP` slice — the first emits metrics,
-the second emits a computed message rather than a source line.
+`check-decomposition` took `read_lines()` but no `strip_eol_cr()`: it has no
+evidence slice at all, emitting metrics rather than source lines.
 
-### Config and graph readers — 3 files, 5 sites
+`loop-make-it-tested` **was** initially in that list, and the claim was wrong —
+caught by the adversarial pre-PR review. Its `untested-public-api` arm slices
+the raw matched line at a **literal `60`** (`ev = content[:60]`, matching
+`truncate_chars 60` in the bash twin) rather than at `EVIDENCE_CAP`, so a survey
+keyed on the constant name missed it. Reproduced before fixing: on a CRLF-
+terminated `def` line python emitted `def public_thing():^M` where bash emitted
+no `^M`. Both sites now strip. The lesson generalizes — **the evidence cap is a
+behavior, not a constant name** — so the audit was redone behaviorally: every
+port was run against a CRLF fixture shaped to trip many detectors, and all 15
+now emit byte-identical TSV.
+
+### Config and graph readers — 3 files, 5 sites (now 3 named helpers)
 
 No `line` field of their own, but their **values** feed parity-compared output,
 so a separator byte in a config file would diverge the two runtimes' findings.
@@ -118,6 +128,14 @@ so a separator byte in a config file would diverge the two runtimes' findings.
 - `review-audit/skills/check-okf-conformance/bundle_graph.py` — the health-block
   reader and the bundle `read()` closure (2 sites); imported by
   `check-okf-conformance/patterns.py`, so it is inside the parity contract
+
+The four sites in `migrate.py` and `bundle_graph.py` were initially fixed
+**inline**, duplicating the reader once per call site. The pre-PR review's second
+finding — that these files are invisible to the gate's `PORT_BASENAMES` glob and
+so shipped unasserted — was fixed by collapsing each file's inline readers into a
+single named `read_lines()` and driving it from the test's `EXTRA_READERS` list.
+The duplication removal was a side effect of making the code testable, which is
+the usual shape.
 
 ### Already `split("\n")`, missing only `newline=""` — 2 files
 
@@ -172,6 +190,16 @@ Suite exit 1, 18 assertions failing. After the fix: **65 passed, 0 failed**.
 `crlfcontent.py` (#902's regression guard) stays green, and is what caught the
 evidence-CR half: with `newline=""` but no `strip_eol_cr`, python emitted
 `password = "realsecret123"^M` where bash emitted no `^M`.
+
+**Coverage for the four readers the port glob cannot see** (`transforms.py`,
+`migrate.py`, `bundle_graph.py`, `split-verify.py`) is the test's
+`EXTRA_READERS` list, driven through the same ten shapes and the same `grep`
+oracle. Verified non-vacuous by mutation: reverting `transforms.py` to
+`splitlines()` turns the suite red on five of the ten shapes, naming the file.
+`list_python_ports()` is keyed off `PORT_BASENAMES`, so a reader in a
+differently-named module was invisible to every assertion in this gate —
+the #836 trap reached by a new route: not a missing fixture but a missing
+*file*.
 
 ## Deferred
 
