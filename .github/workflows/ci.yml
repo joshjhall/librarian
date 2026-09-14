@@ -172,8 +172,15 @@ jobs:
       # jq (contract gate) + shellcheck (tests/lint-shellcheck.sh). Both are on
       # the ubuntu runner image, but installing explicitly keeps the gate honest
       # if the image changes.
+      #
+      # Routed through bin/apt-install.sh (#983), never a bare `apt-get update`:
+      # the runner image ships third-party apt sources this repo does not use,
+      # and `apt-get update` fails the whole command on ANY source error — a
+      # corrupt Chrome index once took three shards red before a test ran. The
+      # script disables those sources first. tests/lint-apt-hardening.sh fails
+      # the tree if a workflow step calls apt-get directly again.
       - name: Install jq + shellcheck
-        run: sudo apt-get update && sudo apt-get install -y jq shellcheck
+        run: bash bin/apt-install.sh jq shellcheck
 
       # ruff powers tests/lint-python.sh (lint + format check of the Python
       # pre-scan tools). pipx is pre-installed on ubuntu-latest and puts ruff on
