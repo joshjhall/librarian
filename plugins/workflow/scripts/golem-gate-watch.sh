@@ -848,10 +848,15 @@ pane_pending_own_work() {
 # orchestration runs. Every pane reader here saw it as indistinguishable from
 # text the operator had queued, and two of the five were outward or
 # gate-bypassing actions (`merge it once CI is green`; `push it` on a golem that
-# had explicitly stated it was withholding the push). The plan-gate broker sends
-# `1 Enter` into these very panes routinely, so a reader that cannot tell the two
-# apart is a standing hazard: a stray Enter would submit an unapproved action,
-# and an operator reading the pane would believe someone queued it.
+# had explicitly stated it was withholding the push), so an operator reading the
+# pane would believe someone queued them.
+#
+# The submit half of that worry is now MEASURED AWAY (#995): `Enter` does not
+# submit a suggestion, and the plan-gate broker's `1 Enter` submits the digit and
+# DISCARDS the suggestion (a printable character replaces the ghost text rather
+# than appending). So this classifier earns its keep on the READING side — what a
+# human or a fleet reader believes the pane shows — not as a guard against a
+# stray keystroke. Evidence: docs/verification/phantom-suggestion-e2e-995.md.
 #
 # THE DISCRIMINATOR IS THE DIM ATTRIBUTE, AND IT IS MEASURED
 # ----------------------------------------------------------
