@@ -158,8 +158,9 @@ iteration counter by hand.
   task — **register it** with `golem-work.sh` (`register workflow`/`complete`;
   runnable recipe in `golem/background-work.md`), since a backgrounded harness is
   the shape #890 measured as a false idle — and, at each poll, **call**
-  `${CLAUDE_PLUGIN_ROOT}/scripts/workflow-wall-timeout.sh check --elapsed-min
-  <acc> --level {N} --extensions-used <k>` for the stop `verdict` rather than
+  `${CLAUDE_PLUGIN_ROOT}/scripts/workflow-wall-timeout.sh check`
+  with `--elapsed-min <acc> --level {N} --extensions-used <k>` for the stop
+  `verdict` rather than
   re-deriving the threshold in prose (#327) — on `stop`, `TaskStop` it. Treat a
   stopped run as **no fix applied** for any check whose result never arrived
   (those `check`s stay red → the dead-end path below), and record a `timed_out`
