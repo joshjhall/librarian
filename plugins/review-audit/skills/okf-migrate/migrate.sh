@@ -473,13 +473,17 @@ render_plan() {
                     continue
                 fi
                 [ -z "$o" ] || command printf -- '-%s\n' "$o"
-                # A `\n`-escaped multi-line payload renders as SEVERAL `+`
-                # lines: the plan is the reviewable artifact AND the write
-                # allowlist, so it must show the lines actually written.
-                command printf '%s\n' "$n" | command sed -e 's/\\n/\
-/g' | while IFS= read -r _pl || [ -n "$_pl" ]; do
-                    command printf '+%s\n' "$_pl"
-                done
+                # An insert-block renders as SEVERAL `+` lines: the plan is
+                # the reviewable artifact AND the write allowlist, so it must
+                # show the lines actually written. Keyed off the KIND, never off
+                # the payload, so a content `\n` is not mistaken for a separator.
+                if [ "$k" = "insert-block" ]; then
+                    command printf '%s\n' "$n" | while IFS= read -r _pl || [ -n "$_pl" ]; do
+                        command printf '+%s\n' "$_pl"
+                    done
+                else
+                    command printf '+%s\n' "$n"
+                fi
             done
     done <"$WORK/files"
     while IFS= read -r t || [ -n "$t" ]; do
@@ -678,27 +682,32 @@ while IFS= read -r target_enc || [ -n "$target_enc" ]; do
                     'NR==ln{print ENVIRON["OKF_NEW"]; next}{print}' \
                     ln="$l" "$WORK/buf" >"$WORK/buf.new"
                 ;;
+            insert-block)
+                # SEVERAL lines as ONE edit. By this point `unpad` has already
+                # run, so the block's separator is a REAL newline while a line
+                # whose CONTENT held the two characters `\n` still holds them —
+                # the per-line escaping the producer applied is what keeps those
+                # two cases distinct, and splitting on the real newline here is
+                # what consumes the distinction. (Splitting on a literal `\n`
+                # instead would both fail to split AND corrupt regex content.)
+                OKF_NEW="$n" command awk \
+                    'function emit(  k, parts, i) {
+                         k = split(ENVIRON["OKF_NEW"], parts, /\n/)
+                         for (i = 1; i <= k; i++) print parts[i]
+                     }
+                     NR==ln{emit()}{print}
+                     END{if (ln > NR) emit()}' \
+                    ln="$l" "$WORK/buf" >"$WORK/buf.new"
+                ;;
             insert-line)
                 # THE END BLOCK IS AN APPEND, and without it an insert at
                 # len+1 matched NO record and was silently dropped while the
                 # python twin's list.insert clamped and wrote it. move-concept
                 # appends to an existing directory index, so the line that makes
                 # a moved concept recallable was the one going missing (#934).
-                #
-                # A payload carrying `\n` expands to SEVERAL lines. move-concept
-                # appends a whole ordered block as ONE edit (N separate appends
-                # interleave, because edits apply highest-line-first against a
-                # growing buffer), and the block travels through the
-                # line-oriented record in the same `\n`-escaped form a `create`
-                # body uses. awk's ENVIRON is not escape-processed, so the
-                # expansion is done here rather than relying on the shell.
                 OKF_NEW="$n" command awk \
-                    'function emit(  k, parts, i) {
-                         k = split(ENVIRON["OKF_NEW"], parts, /\\n/)
-                         for (i = 1; i <= k; i++) print parts[i]
-                     }
-                     NR==ln{emit()}{print}
-                     END{if (ln > NR) emit()}' \
+                    'NR==ln{print ENVIRON["OKF_NEW"]}{print}
+                     END{if (ln > NR) print ENVIRON["OKF_NEW"]}' \
                     ln="$l" "$WORK/buf" >"$WORK/buf.new"
                 ;;
             *) command cp "$WORK/buf" "$WORK/buf.new" ;;

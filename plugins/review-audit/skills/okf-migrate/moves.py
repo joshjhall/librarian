@@ -346,13 +346,16 @@ def plan_directory_indexes(
                     Edit(
                         "move-concept",
                         index_path,
-                        "insert-line",
+                        "insert-block",
                         line=len(existing) + 1,
-                        # `\n` LITERAL, never a real newline: the edit record is
-                        # line-oriented, so an embedded newline would split the
-                        # record. Same encoding a `create` body uses; the apply
-                        # path expands it.
-                        new="\\n".join(rendered_lines),
+                        # A REAL newline joins the lines here; the record-level
+                        # escaping is the bash twin's problem, and python's Edit
+                        # fields are not serialized. The `insert-block` KIND is
+                        # what tells the apply path this payload is several
+                        # lines, so a content `\n` is never mistaken for a
+                        # separator (measured: a hook reading `matches \n and \t
+                        # literally` was written as two lines before this).
+                        new="\n".join(rendered_lines),
                         note="name "
                         + str(len(rendered_lines))
                         + " arriving concept(s) in the existing "

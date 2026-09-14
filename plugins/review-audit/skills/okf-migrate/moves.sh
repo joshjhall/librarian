@@ -371,17 +371,23 @@ EOF
                 case "$new_rel" in "$dir"/*) ;; *) continue ;; esac
                 base="${new_rel##*/}"
                 command grep -F "($base)" "$root/$dir/index.md" >/dev/null 2>&1 && continue
-                line="$(command awk -F"$(command printf '\t')" -v k="$new_rel" \
-                    '$1 == k { sub(/^[^\t]*\t/, ""); print; exit }' "$claimed")"
+                line="$(OKF_K="$new_rel" command awk -F"$(command printf '\t')" \
+                    '$1 == ENVIRON["OKF_K"] { sub(/^[^\t]*\t/, ""); print; exit }' "$claimed")"
                 if [ -n "$line" ]; then
                     line="$(retarget_line "$line" "$base")"
                 else
                     line="- [${base%.md}]($base)"
                 fi
-                # `\n` LITERAL, never a real newline: the edit record is
-                # line-oriented, so an embedded newline splits the record and
-                # every later field shifts. This is the same encoding a `create`
-                # body uses, and `unpad` is the single decoder for both.
+                # EACH LINE IS ESCAPED FIRST, THEN joined with a literal `\n`.
+                # The order is the whole contract, exactly as esc_field/unpad
+                # already document it: escaping per line turns a content
+                # backslash into `\\`, so a hook legitimately containing the two
+                # characters `\n` — ordinary in a repo that documents regexes —
+                # survives as those two characters instead of becoming a real
+                # newline. Joining first and escaping after would make the
+                # separator and the content indistinguishable. Measured: without
+                # this, `matches \n and \t literally` was written as two lines.
+                line="$(esc_field "$line")"
                 if [ -n "$_block" ]; then
                     _block="$_block\\n$line"
                 else
@@ -390,7 +396,7 @@ EOF
                 _n=$((_n + 1))
             done <"$mapping"
             if [ "$_n" -gt 0 ]; then
-                emit_edit "move-concept" "$root/$dir/index.md" "insert-line" \
+                emit_edit "move-concept" "$root/$dir/index.md" "insert-block" \
                     "$((_at + 1))" "" "$_block" \
                     "name $_n arriving concept(s) in the existing $dir/ index"
             fi
@@ -549,8 +555,15 @@ rewrite_inbound_links() {
             # instead (§8: the root names the bucket, the bucket names its
             # concepts).
             if [ -n "$claimed" ] && [ -s "$claimed" ]; then
-                moved_new="$(command awk -F"$(command printf '\t')" -v l="$line" \
-                    '{ ln = $0; sub(/^[^\t]*\t/, "", ln); if (ln == l) { print $1; exit } }' \
+                # ENVIRON, NEVER `awk -v`: a `-v` assignment is
+                # ESCAPE-PROCESSED, so a hook legitimately containing the two
+                # characters `\n` — ordinary in a repo that documents regexes —
+                # became a real newline and the comparison silently missed,
+                # leaving that one line pointed at the concept while its
+                # siblings pointed at the sub-index. Measured on a three-concept
+                # fixture. This is the same rule migrate.sh's apply path states.
+                moved_new="$(OKF_L="$line" command awk -F"$(command printf '\t')" \
+                    '{ ln = $0; sub(/^[^\t]*\t/, "", ln); if (ln == ENVIRON["OKF_L"]) { print $1; exit } }' \
                     "$claimed")"
                 if [ -n "$moved_new" ]; then
                     case "$moved_new" in

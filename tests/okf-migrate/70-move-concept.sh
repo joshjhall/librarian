@@ -272,6 +272,62 @@ Body.'
         "the appended block preserves sorted order (not c1, c3, c2)"
 }
 
+test_appended_line_keeps_literal_escape_sequences() {
+    local root body
+    root="$(fresh_bundle "$WORKDIR")"
+    command mkdir -p "$root/golem"
+    write_concept "$root" "MEMORY.md" '# Memory
+
+- [Golem](golem/index.md) — bucket'
+    write_concept "$root" "golem/index.md" '# golem
+
+- [Zero](zero.md) — a hook'
+    write_concept "$root" "golem/zero.md" '---
+type: feedback
+---
+
+Body.'
+    # A hook containing the two characters `\n` — ORDINARY in a repo that
+    # documents regexes constantly, and the exact input that breaks a naive
+    # block encoding. It must survive as two characters, never become a real
+    # newline, and it must not defeat the claimed-line lookup either (an
+    # `awk -v` assignment is escape-processed, which silently left this one
+    # line pointing at the concept while its siblings pointed at the sub-index).
+    write_concept "$root" "index-golem.md" '# Golem
+
+- [Plain](plain.md) — a hook
+- [Regex](rx.md) — matches \n and \t literally'
+    write_concept "$root" "plain.md" '---
+type: feedback
+---
+
+Body.'
+    write_concept "$root" "rx.md" '---
+type: feedback
+---
+
+Body.'
+
+    run_moves apply "$root" --transform move-concept --confirm --allow-dirty
+    assert_exit 0 "$OKF_RC" "move-concept applies cleanly"
+
+    body="$(command cat "$root/golem/index.md")"
+    assert_contains "$body" 'matches \n and \t literally' \
+        "a literal backslash-n in a hook survives the block encoding verbatim"
+    # 5 = heading + blank + the 1 pre-existing entry + the 2 appended ones. A
+    # decoded escape would split the Regex line and make it 6.
+    assert_equals "5" "$(command wc -l <"$root/golem/index.md" | command tr -d ' ')" \
+        "the block added exactly 2 lines — a decoded escape would add a third"
+
+    # And the escape must not defeat the claimed-line lookup: BOTH old index
+    # lines now point at the sub-index, not just the one without an escape.
+    assert_file_contains "$root/index-golem.md" "(golem/index.md)" \
+        "the plain line points at the sub-index"
+    assert_equals "2" \
+        "$(command grep -c "(golem/index.md)" "$root/index-golem.md")" \
+        "BOTH lines point at the sub-index — the escaped one is not left behind"
+}
+
 test_destination_collision_leaves_the_file_put() {
     local root before after
     root="$(fresh_bundle "$WORKDIR")"

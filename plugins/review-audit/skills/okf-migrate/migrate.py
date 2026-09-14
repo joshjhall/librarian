@@ -463,11 +463,11 @@ def render_plan(
                 continue
             if edit.old:
                 sys.stdout.write("-" + edit.old + "\n")
-            # A `\n`-escaped multi-line payload renders as SEVERAL `+` lines.
-            # The plan is the reviewable artifact and the write allowlist, so it
-            # must show the lines that will actually be written — a literal `\n`
-            # in the preview would misrepresent the change being approved.
-            for piece in edit.new.split("\\n"):
+            # An insert-block renders as SEVERAL `+` lines: the plan is the
+            # reviewable artifact AND the write allowlist, so it must show the
+            # lines that will actually be written.
+            pieces = edit.new.split("\n") if edit.kind == "insert-block" else [edit.new]
+            for piece in pieces:
                 sys.stdout.write("+" + piece + "\n")
     for note in notes:
         sys.stdout.write("# " + note + "\n")
@@ -599,13 +599,16 @@ def apply_edits(edits: list[Edit], allowlist: set, root: str) -> int:
                 if 0 <= idx < len(lines):
                     lines[idx] = edit.new
             elif edit.kind == "insert-line":
-                # A payload carrying `\n` expands to SEVERAL lines — move-concept
-                # appends a whole ordered block as ONE edit, since N separate
-                # appends interleave (edits apply highest-line-first against a
-                # growing list). The block travels `\n`-escaped through the
-                # line-oriented record, the same encoding a `create` body uses.
+                lines.insert(min(max(idx, 0), len(lines)), edit.new)
+            elif edit.kind == "insert-block":
+                # SEVERAL lines as ONE edit. move-concept appends a whole ordered
+                # block this way because N separate appends interleave — edits
+                # apply highest-line-first against a growing list, so len+1,
+                # len+2, len+3 do not land in that order. The distinct KIND (not
+                # a payload convention) is what keeps a line whose content holds
+                # the two characters `\n` from being split.
                 at = min(max(idx, 0), len(lines))
-                for offset, piece in enumerate(edit.new.split("\\n")):
+                for offset, piece in enumerate(edit.new.split("\n")):
                     lines.insert(at + offset, piece)
         with open(path, "w", encoding="utf-8") as fh:
             fh.write("\n".join(lines) + "\n")
