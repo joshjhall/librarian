@@ -156,3 +156,44 @@ Body.'
     assert_equals "3" "$py_rc" "python reports an ambiguity as 3, distinct from a refusal"
     assert_equals "$py_rc" "$sh_rc" "bash agrees on the ambiguity code"
 }
+
+test_parity_path_containing_a_tab() {
+    local root tabbed py_root
+    if [ "$OKF_HAVE_PY" -ne 1 ]; then
+        skip_test "python3 >= 3.11 unavailable — parity needs both runtimes"
+        return
+    fi
+    # A FILENAME CONTAINING A TAB. The edit record is tab-delimited, so an
+    # unescaped path splits the record and every later field shifts. Measured:
+    # python migrated `feedback/odd<TAB>name.md` and bash SILENTLY DID NOT —
+    # the grep that re-selects a target's rows could never match a path whose
+    # own tab had become a delimiter, so the file was listed in the plan with no
+    # hunks under it and then skipped at apply. A silent skip, not an error.
+    #
+    # Fixing it needed TWO changes, and the second is the non-obvious one:
+    # escaping the path field, AND matching encoded fields with `grep -F` —
+    # plain grep reads the escaped `\t` in the PATTERN as a regex escape and
+    # fails to match the literal two characters in the file.
+    root="$(fresh_bundle "$WORKDIR")"
+    py_root="$(fresh_bundle "$WORKDIR")"
+    for tabbed in "$root" "$py_root"; do
+        write_concept "$tabbed" "t.md" '---
+type: reference
+---
+
+T.'
+        command mkdir -p "$tabbed/feedback"
+        command printf -- '---\nname: odd\n---\n\nSee [[t]].\n' \
+            >"$tabbed/feedback/odd	name.md"
+    done
+
+    run_sh apply "$root" --confirm --allow-dirty
+    assert_exit 0 "$OKF_RC" "a bundle with a tab-bearing filename applies in bash"
+    run_py apply "$py_root" --confirm --allow-dirty
+    assert_exit 0 "$OKF_RC" "and in python"
+
+    assert_equals "$(tree_digest "$py_root")" "$(tree_digest "$root")" \
+        "both runtimes migrate a tab-bearing path identically"
+    assert_contains "$(command cat "$root/feedback/odd	name.md")" "type: feedback" \
+        "the tab-bearing file was actually migrated, not silently skipped"
+}

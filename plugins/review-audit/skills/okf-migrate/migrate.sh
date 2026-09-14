@@ -370,6 +370,14 @@ if [ -n "$TRANSFORM" ]; then
 fi
 
 # field N FILE — column N of the padded edit records, colon stripped.
+# field N FILE — column N of the padded edit records, colon stripped.
+#
+# DELIBERATELY DOES NOT DECODE escapes: the value it returns is used as a MATCH
+# KEY against the records themselves (`grep "\t:$key\t"`), so it must stay in
+# the same encoding the record holds. Decoding here would make a path carrying
+# an escaped tab un-matchable against its own rows — the file would be listed
+# and then silently skipped. Decode with `unpad` at the point of USE (display,
+# or opening the file), never here.
 field() {
     command cut -f"$1" "$2" | command sed -e 's/^://'
 }
@@ -385,6 +393,9 @@ render_check() {
     field 1 "$WORK/edits" | command sort -u >"$WORK/tnames"
     while IFS= read -r t || [ -n "$t" ]; do
         [ -n "$t" ] || continue
+        # NOT -F here: `^` must stay an anchor. The key is a transform NAME
+        # (a fixed kebab token this file defines), never a path, so it carries
+        # no regex metacharacter and no escaped tab.
         count="$(command grep -c "^:$t	" "$WORK/edits" || :)"
         files="$(command grep -c "^:$t	" "$WORK/tf" || :)"
         command printf '%-18s %4d file(s)  %4d edit(s)  [applicable]\n' "$t" "$files" "$count"
@@ -409,8 +420,13 @@ render_plan() {
     field 2 "$WORK/edits" | command sort -u >"$WORK/files"
     while IFS= read -r cur || [ -n "$cur" ]; do
         [ -n "$cur" ] || continue
-        command printf -- '--- a/%s\n+++ b/%s\n' "$cur" "$cur"
-        command grep "	:$cur	" "$WORK/edits" | command sort -t"$(command printf '\t')" -k4,4 |
+        _shown="$(unpad "$cur")"
+        command printf -- '--- a/%s\n+++ b/%s\n' "$_shown" "$_shown"
+        # `grep -F`: the key is an ENCODED path and may hold a literal `\t`,
+        # which basic grep would read as a regex escape and fail to match — the
+        # file would render a header with no hunks under it. Fixed, not worked
+        # around: every match on an encoded field is fixed-string.
+        command grep -F "	:$cur	" "$WORK/edits" | command sort -t"$(command printf '\t')" -k4,4 |
             while IFS="$(command printf '\t')" read -r t p k l o n note; do
                 t="$(unpad "$t")"
                 k="$(unpad "$k")"
@@ -497,8 +513,10 @@ fi
 # of paths, so a file that was not planned cannot be written by construction.
 field 2 "$WORK/edits" | command sort -u >"$WORK/targets"
 ROOT_REAL="$(cd "$ROOT" && command pwd -P)"
-while IFS= read -r target || [ -n "$target" ]; do
-    [ -n "$target" ] || continue
+while IFS= read -r target_enc || [ -n "$target_enc" ]; do
+    [ -n "$target_enc" ] || continue
+    # The ENCODED form matches the records; the DECODED form is the real path.
+    target="$(unpad "$target_enc")"
 
     # THE RESOLVED-ROOT CHECK — the half of the allowlist that can actually
     # fail. The target list is derived from the edits themselves, so comparing
@@ -528,9 +546,9 @@ while IFS= read -r target || [ -n "$target" ]; do
             ;;
     esac
 
-    command grep "	:$target	" "$WORK/edits" >"$WORK/group" || continue
+    command grep -F "	:$target_enc	" "$WORK/edits" >"$WORK/group" || continue
 
-    command grep '	:create	' "$WORK/group" >"$WORK/creates" 2>/dev/null || :
+    command grep -F '	:create	' "$WORK/group" >"$WORK/creates" 2>/dev/null || :
     if [ -s "$WORK/creates" ]; then
         _dir="${target%/*}"
         [ "$_dir" = "$target" ] || command mkdir -p "$_dir"

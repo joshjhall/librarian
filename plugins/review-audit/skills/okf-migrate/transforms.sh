@@ -201,14 +201,25 @@ esc_field() {
 # instead of a newline — which is how a generated index.md came out as one line
 # reading `---\nokf_version: 0.2\n---`. So the create kind skips the encoder and
 # every other kind gets it; unpad is the single decoder for both.
+# THE PATH IS ESCAPED TOO, for the same reason the content fields are: a
+# filename may legitimately contain a tab, and an unescaped one splits the
+# record so every later field shifts. Measured: with
+# `feedback/odd<TAB>name.md`, python migrated the file and bash silently did
+# not — the grep that re-selects a target's edit rows could never match a path
+# whose own tab had become a delimiter. Silent skip, not an error.
+#
+# `note` is deliberately NOT escaped: it is tool-generated prose that never
+# carries file content or a path, so it cannot contain a tab.
 emit_edit() {
-    local old="$5" new="$6"
+    local path new old="$5"
+    path="$(esc_field "$2")"
+    new="$6"
     if [ "$3" != "create" ]; then
         old="$(esc_field "$old")"
         new="$(esc_field "$new")"
     fi
     command printf ':%s\t:%s\t:%s\t:%06d\t:%s\t:%s\t:%s\n' \
-        "$1" "$2" "$3" "$4" "$old" "$new" "$7"
+        "$1" "$path" "$3" "$4" "$old" "$new" "$7"
 }
 
 # unpad VALUE — strip emit_edit's leading colon and decode esc_field's escapes.

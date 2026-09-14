@@ -136,6 +136,7 @@ run_fragment_test test_plan_only_transforms_are_visible_in_check "both plan-only
 run_fragment_test test_parity_check_mode "bash and python agree byte-for-byte in check mode"
 run_fragment_test test_parity_plan_mode "bash and python agree byte-for-byte in plan mode"
 run_fragment_test test_parity_applied_tree "bash and python produce byte-identical APPLIED TREES"
+run_fragment_test test_parity_path_containing_a_tab "a filename containing a tab migrates identically in both runtimes"
 run_fragment_test test_parity_refusal_exit_codes "bash and python agree on every refusal's exit code"
 
 generate_report
