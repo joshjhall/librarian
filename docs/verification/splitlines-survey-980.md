@@ -279,11 +279,12 @@ responsible for most of that growth, and #1038 tracks the split. Run
 `validate-python-ports.sh` is the one this PR genuinely grew — most of the added
 lines are the new fixtures and the direct probes the review cycles asked for.
 That growth is the deliverable (AC2 is "the corpus carries fixtures that fail
-without the fix"). At the PR base it measured **803** against the `sh` warning
-budget of **700**, so it was already ~103 lines over before this change: the
-split is a pre-existing debt this PR adds to rather than creates. Filed as #1038
-with the split shape the scanner itself recommends (sourced fragment + an
-explicit ordered list, the convention six other suites already follow).
+without the fix"). At the PR base it measured **819** production LOC against the
+`sh` warning budget of **700**, so it was already ~119 lines over before this
+change: the split is a pre-existing debt this PR adds to rather than creates.
+Filed as #1038 with the split shape the scanner itself recommends (sourced
+fragment + an explicit ordered list, the convention six other suites already
+follow).
 
 `migrate.py`'s ~19-line overage is small and genuinely pre-existing — it was 608
 lines on `main` before this branch, added by #1036 — so it is left to the
