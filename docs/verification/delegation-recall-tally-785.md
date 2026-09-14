@@ -387,11 +387,21 @@ works.
 **AC3 therefore remains open and needs a genuinely post-change window**: sessions
 started after this merge, on work neither planning nor measuring this issue. The
 denominator matters as much as the numerator — the 54 qualifying inline results
-here are what would make a non-zero count mean something.
+here are what would make a non-zero count mean something. That window is owned by
+[#1032](https://github.com/joshjhall/librarian/issues/1032), filed with #978 —
+named here rather than described, so a reader can check the deferral was actually
+filed instead of taking the word of the file that deferred it.
 
 ### What is still untested
 
 Unchanged from § Verdict: **recall is UNTESTED**, and AC6 is deferred with no
 gateway. Both were gated on adoption being non-zero *under the new guidance*,
-which this addendum explicitly does not establish. They are owned by the
-follow-up filed alongside #978, not by this file.
+which this addendum explicitly does not establish. Both are owned by
+[#1032](https://github.com/joshjhall/librarian/issues/1032), not by this file —
+it holds AC3, the recall row target, and AC6 together, because the second and
+third only become answerable once the first is non-zero.
+
+(A second follow-up, [#1033](https://github.com/joshjhall/librarian/issues/1033),
+records a *different* gap the #978 survey turned up — `ship-issue`'s CI triage and
+review-cycle steps are fan-out shaped but have no delegation call site at all. It
+is unrelated to this tally's measurement question.)
