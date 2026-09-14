@@ -178,3 +178,44 @@ See [[target]] and [[missing]].'
     assert_not_contains "$rows" "memory-dangling-index" \
         "a broken link in a concept body is tolerated (§6.1) and is not an index row"
 }
+
+test_literal_tab_in_content_survives() {
+    local root body
+    root="$(wikilink_fixture)"
+    write_concept "$root" "source.md" '---
+type: reference
+---
+
+A line with	a literal tab and [[target]] on it.'
+
+    run_sh apply "$root" --transform wikilink-convert --confirm --allow-dirty
+    assert_exit 0 "$OKF_RC" "content carrying a literal tab applies cleanly"
+
+    body="$(command cat "$root/source.md")"
+    # THE BASH EDIT RECORD IS TAB-DELIMITED, so an unescaped tab inside a
+    # content field is read as a field separator and shifts every later field.
+    # Measured before fixing: this exact line came back as
+    # "a literal tab and [[target]]." — the text BEFORE the tab silently gone
+    # and the wikilink unconverted, while python handled it correctly. Tab
+    # indentation is ordinary in markdown (code blocks, tables), so this is a
+    # real shape rather than a contrived one; it is also the sibling of the
+    # printf-metacharacter case above, reached through the record format instead
+    # of through printf.
+    assert_contains "$body" "A line with" "the text BEFORE the tab survived"
+    assert_contains "$body" "[target](/target.md)" "the wikilink after the tab converted"
+
+    if [ "$OKF_HAVE_PY" -ne 1 ]; then
+        skip_test "python3 >= 3.11 unavailable — the parity half of this case"
+        return
+    fi
+    local proot
+    proot="$(wikilink_fixture)"
+    write_concept "$proot" "source.md" '---
+type: reference
+---
+
+A line with	a literal tab and [[target]] on it.'
+    run_py apply "$proot" --transform wikilink-convert --confirm --allow-dirty
+    assert_equals "$(command cat "$proot/source.md")" "$body" \
+        "both runtimes produce the same bytes for tab-bearing content"
+}

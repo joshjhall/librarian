@@ -54,7 +54,7 @@ fail() {
 usage() {
     command cat >&2 <<'USAGE'
 Usage: migrate.sh [check|plan|apply] [--transform NAME] [--confirm]
-                  [--allow-dirty] [--format tsv|diff]
+                  [--allow-dirty]
 
   check   report what needs migrating (default, read-only)
   plan    render the change set for review (read-only)
@@ -256,10 +256,6 @@ while [ "$#" -gt 0 ]; do
             ;;
         --confirm) CONFIRM=1 ;;
         --allow-dirty) ALLOW_DIRTY=1 ;;
-        --format)
-            shift
-            [ "$#" -gt 0 ] || fail "--format requires a value"
-            ;;
         -h | --help)
             usage
             exit 0
@@ -301,7 +297,35 @@ fi
 # A concept is any `.md` that is not a reserved OKF filename (§3.1). Non-markdown
 # files inside a bundle are code or data, not concepts — the same exclusion the
 # validator applies.
-command find "$ROOT" -type f -name '*.md' | command sort >"$WORK/every"
+# `-type f` already excludes a SYMLINK (its own type is `l`), which is the
+# safety boundary the python twin had to add explicitly: a `.md` symlink inside
+# the bundle would otherwise be written through on apply, landing outside the
+# bundle root while the plan displayed the in-bundle path. Measured on the
+# python side before fixing; this impl was already correct, and the two now
+# agree — that agreement is the parity contract, so do not "simplify" this to
+# `-type f -o -type l`.
+#
+# DOT-DIRECTORIES are pruned BELOW the root, which the python twin does with
+# `dirnames[:] = [...]`. Without it a `.attic/` of scratch markdown under the
+# bundle root was part of the bundle here and not there — the same file set
+# disagreeing across runtimes.
+#
+# THE FILTER IS RELATIVE TO THE ROOT, and that is the whole difficulty: the root
+# is itself normally dot-bearing (`.claude/memory`), so a find predicate over the
+# ABSOLUTE path — `-not -path '*/.*/*'` — matches the root's own `.claude`
+# segment and excludes the ENTIRE bundle. Measured: with a `mktemp` root it
+# returned zero files and every transform silently found nothing to do, which
+# reads exactly like a clean bundle. Strip the root prefix first, then judge only
+# what lies beneath it.
+command find "$ROOT" -type f -name '*.md' | command sort >"$WORK/every.all"
+: >"$WORK/every"
+while IFS= read -r _p || [ -n "$_p" ]; do
+    [ -n "$_p" ] || continue
+    case "${_p#"$ROOT"/}" in
+        .* | */.*) continue ;;
+    esac
+    command printf '%s\n' "$_p" >>"$WORK/every"
+done <"$WORK/every.all"
 : >"$WORK/concepts"
 while IFS= read -r _p || [ -n "$_p" ]; do
     case "${_p##*/}" in
@@ -461,8 +485,31 @@ fi
 # THE ALLOWLIST IS THE PLAN (AC7) — the edit list built above is the only source
 # of paths, so a file that was not planned cannot be written by construction.
 field 2 "$WORK/edits" | command sort -u >"$WORK/targets"
+ROOT_REAL="$(cd "$ROOT" && command pwd -P)"
 while IFS= read -r target || [ -n "$target" ]; do
     [ -n "$target" ] || continue
+
+    # THE RESOLVED-ROOT CHECK — the half of the allowlist that can actually
+    # fail. The target list is derived from the edits themselves, so comparing
+    # against it is a tautology; resolving the path and requiring it under the
+    # bundle root enforces a claim no caller can launder. `cd … && pwd -P`
+    # rather than `realpath -m`, which is GNU-only and whose usual `|| echo`
+    # fallback returns the path UNRESOLVED — defeating exactly this guard
+    # (#932, and issue #21's surface).
+    _tdir="${target%/*}"
+    [ "$_tdir" != "$target" ] || _tdir="."
+    if [ -d "$_tdir" ]; then
+        _treal="$(cd "$_tdir" && command pwd -P)/${target##*/}"
+        case "$_treal" in
+            "$ROOT_REAL"/*) ;;
+            *)
+                command printf 'ERROR: apply refused: %s resolves outside the bundle root %s — refusing to write through it\n' \
+                    "$target" "$ROOT" >&2
+                exit 2
+                ;;
+        esac
+    fi
+
     command grep "	:$target	" "$WORK/edits" >"$WORK/group" || continue
 
     command grep '	:create	' "$WORK/group" >"$WORK/creates" 2>/dev/null || :

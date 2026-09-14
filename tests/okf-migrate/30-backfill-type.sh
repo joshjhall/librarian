@@ -231,3 +231,43 @@ Body.'
     assert_equals "1" "$(command grep -c '^type:' "$root/feedback/lesson.md")" \
         "the file carries exactly ONE top-level type key after two applies"
 }
+
+test_empty_type_is_replaced_not_duplicated() {
+    local root body count
+    root="$(fresh_bundle "$WORKDIR")"
+    # `type:` PRESENT BUT EMPTY — a distinct branch from "absent", and the one
+    # where a naive insert would leave the file carrying TWO top-level `type:`
+    # keys. The validator grades an empty type as okf-missing-type just like an
+    # absent one, so this shape is real rather than contrived.
+    write_concept "$root" "feedback/empty.md" '---
+name: empty
+type:
+---
+
+Body.'
+
+    run_sh apply "$root" --transform backfill-type --confirm --allow-dirty
+    assert_exit 0 "$OKF_RC" "the empty-type case applies cleanly"
+
+    body="$(command cat "$root/feedback/empty.md")"
+    assert_contains "$body" "type: feedback" "the empty value was filled in"
+    count="$(command grep -c '^type:' "$root/feedback/empty.md")"
+    assert_equals "1" "$count" \
+        "the line was REPLACED, not supplemented — exactly one top-level type key"
+
+    if [ "$OKF_HAVE_PY" -ne 1 ]; then
+        skip_test "python3 >= 3.11 unavailable — the parity half of this case"
+        return
+    fi
+    local proot
+    proot="$(fresh_bundle "$WORKDIR")"
+    write_concept "$proot" "feedback/empty.md" '---
+name: empty
+type:
+---
+
+Body.'
+    run_py apply "$proot" --transform backfill-type --confirm --allow-dirty
+    assert_equals "$body" "$(command cat "$proot/feedback/empty.md")" \
+        "both runtimes fill an empty type identically"
+}

@@ -106,6 +106,7 @@ run_fragment_test test_adopt_reversibility "after adopt-bundle, the real validat
 
 run_fragment_test test_backfill_lifts_nested_type "backfill-type lifts a nested metadata.type to the top level — the #991 shape"
 run_fragment_test test_backfill_infers_from_directory "backfill-type infers from a configured directory rule"
+run_fragment_test test_empty_type_is_replaced_not_duplicated "a present-but-empty type is REPLACED in place, never duplicated"
 run_fragment_test test_ambiguous_type_requires_a_human "an unmatched type is AMBIGUOUS: exit 3, candidates listed, nothing guessed (AC5)"
 run_fragment_test test_ambiguity_blocks_the_whole_apply "one ambiguity blocks the WHOLE apply — no partial migration (AC5)"
 run_fragment_test test_foreign_vocabulary_needs_no_code_change "a repo with an entirely different type vocabulary works by CONFIG alone (AC9)"
@@ -117,6 +118,7 @@ run_fragment_test test_unresolvable_target_is_preserved "an unresolvable target 
 run_fragment_test test_labelled_wikilink_keeps_its_label "a [[target|label]] keeps the label as the link text"
 run_fragment_test test_fenced_wikilink_is_not_rewritten "a wikilink inside a fenced block is sample text and is left alone"
 run_fragment_test test_printf_metacharacters_in_content_survive "printf metacharacters in a memory body are carried through verbatim"
+run_fragment_test test_literal_tab_in_content_survives "a literal tab in a memory body survives the tab-delimited edit record"
 run_fragment_test test_wikilink_is_idempotent "wikilink-convert applied twice equals applied once (AC4)"
 run_fragment_test test_wikilink_reversibility "the converted bundle carries no [[ ]] and the validator stays clean (AC3)"
 
@@ -125,6 +127,8 @@ run_fragment_test test_allow_dirty_escapes "--allow-dirty is the documented esca
 run_fragment_test test_non_repo_is_not_dirty "a bundle outside any git repo is NOT dirty — the gate is not a portability bug (AC9)"
 run_fragment_test test_apply_writes_only_planned_paths "apply touches only paths the plan listed — the plan is the allowlist (AC7)"
 run_fragment_test test_multiple_edits_to_one_file_keep_their_order "two transforms on ONE file apply highest-line-first — no shifted or lost lines"
+run_fragment_test test_symlinked_concept_is_never_written_through "a .md symlink is never written through — apply stays inside the bundle root (AC7)"
+run_fragment_test test_hidden_directories_are_not_part_of_the_bundle "a hidden directory under the bundle root is not part of the bundle, in both runtimes"
 run_fragment_test test_plan_only_transform_refuses_apply "a plan-only transform renders in plan and REFUSES apply at exit 2"
 run_fragment_test test_plan_only_transforms_are_visible_in_check "both plan-only transforms are NAMED in check output, never silently omitted"
 

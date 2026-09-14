@@ -101,7 +101,7 @@ def fail(message: str, code: int = 1) -> int:
 def usage() -> int:
     sys.stderr.write(
         "Usage: migrate.py [check|plan|apply] [--transform NAME] [--confirm]\n"
-        "                  [--allow-dirty] [--format tsv|diff]\n"
+        "                  [--allow-dirty]\n"
         "\n"
         "  check   report what needs migrating (default, read-only)\n"
         "  plan    render the change set for review (read-only)\n"
@@ -228,15 +228,42 @@ def collect_bundle(root: str) -> tuple[list[str], list[str]]:
     A concept is any `.md` that is not a reserved OKF filename. Non-markdown
     files inside a bundle are code or data, not concepts, and are ignored — the
     same exclusion the validator applies.
+
+    SYMLINKS ARE SKIPPED, and this is a SAFETY boundary, not tidiness. `os.walk`
+    lists a symlink-to-a-file among `filenames` (it only declines to *descend*
+    symlinked directories), and `open(path, "w")` follows it — so a `.md`
+    symlink inside the bundle made `apply` write through to wherever it pointed,
+    including outside the bundle root and outside the repo. Measured: a bundle
+    containing `feedback/lesson.md -> ../../../outside/target.md` had
+    `backfill-type` rewrite `outside/target.md`, while the plan displayed only
+    the in-bundle path — so the reviewed plan and the actual write target were
+    different files, which is exactly the guarantee "the plan is the write
+    allowlist" claims to provide.
+    That matters because this tool's whole premise is running against SOMEONE
+    ELSE'S bundle — content the operator did not author line by line.
+
+    It is also a parity break: `find -type f` in the bash twin never matched a
+    symlink (its type is `l`), so the two runtimes disagreed about the bundle's
+    membership. Skipping in both is what makes them agree again.
+
+    DOT-DIRECTORIES ARE PRUNED in both runtimes for the same reason — a
+    `.attic/` of scratch markdown under the bundle root is not part of the
+    bundle, and only this impl was skipping it.
     """
     concepts: list[str] = []
     every: list[str] = []
     for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = [d for d in dirnames if not d.startswith(".")]
+        dirnames[:] = [
+            d
+            for d in dirnames
+            if not d.startswith(".") and not os.path.islink(os.path.join(dirpath, d))
+        ]
         for name in filenames:
             if not name.endswith(".md"):
                 continue
             full = os.path.join(dirpath, name)
+            if os.path.islink(full):
+                continue
             every.append(full)
             if name not in RESERVED:
                 concepts.append(full)
@@ -391,19 +418,52 @@ def render_plan(
         )
 
 
-def apply_edits(edits: list[Edit], allowlist: set) -> int:
-    """Write EDITS, refusing any path not in ALLOWLIST.
+def under_root(path: str, root: str) -> bool:
+    """True when PATH resolves to a location inside ROOT.
+
+    RESOLVED, not lexical: `os.path.realpath` expands every symlink in the path,
+    which is the point — a lexically-fine `<root>/x.md` that is a symlink to
+    `/etc/x` is not inside the bundle in any sense that matters to a writer.
+
+    `os.path.realpath` rather than the GNU-only `realpath -m` its bash twin
+    cannot use; the twin's own note records that trap (#932).
+    """
+    real_root = os.path.realpath(root)
+    real_path = os.path.realpath(path)
+    return real_path == real_root or real_path.startswith(real_root + os.sep)
+
+
+def apply_edits(edits: list[Edit], allowlist: set, root: str) -> int:
+    """Write EDITS, refusing any path not in ALLOWLIST or not under ROOT.
 
     THE ALLOWLIST IS THE PLAN (AC7). A transform that discovered a new file
     between plan and apply is a bug, not a permitted widening, so the refusal is
     a hard error rather than a skip: silently writing more than was reviewed is
     exactly what the plan/apply split exists to prevent.
 
+    THE ROOT CHECK IS THE SECOND, INDEPENDENT HALF, and it is the one that can
+    actually fail. The allowlist is derived from these same edits by the caller,
+    so on its own it is a tautology — it documents the contract without
+    enforcing it. The resolved-root check enforces a claim the caller cannot
+    launder: whatever a transform nominated, a write that would land outside the
+    bundle is refused. Both are kept: the allowlist states the contract at the
+    boundary a future caller might pass a wider set through, the root check
+    holds the line today.
+
     Edits are applied per file, highest line first, so an insert cannot shift
     the line numbers of edits not yet applied.
     """
     by_file: dict[str, list[Edit]] = {}
     for edit in edits:
+        if not under_root(edit.path, root):
+            return fail(
+                "apply refused: "
+                + edit.path
+                + " resolves outside the bundle root "
+                + root
+                + " — refusing to write through it",
+                2,
+            )
         if edit.path not in allowlist:
             return fail(
                 "apply refused: " + edit.path + " is not in the reviewed plan", 2
@@ -457,10 +517,6 @@ def main(argv: list[str]) -> int:
             confirm = True
         elif arg == "--allow-dirty":
             allow_dirty = True
-        elif arg == "--format":
-            idx += 1
-            if idx >= len(args):
-                return fail("--format requires a value")
         elif arg in ("-h", "--help"):
             usage()
             return 0
@@ -545,7 +601,7 @@ def main(argv: list[str]) -> int:
             return 2
     if not edits:
         return 0
-    return apply_edits(edits, {e.path for e in edits})
+    return apply_edits(edits, {e.path for e in edits}, root)
 
 
 if __name__ == "__main__":

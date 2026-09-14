@@ -138,13 +138,72 @@ fm_lookup() {
 # wikilink replace at line 8 came out with "line one" deleted and the wikilink
 # unconverted — silent corruption of a memory's body, and only on files needing
 # two DIFFERENT transforms, which no single-transform fixture would have caught.
-emit_edit() {
-    command printf ':%s\t:%s\t:%s\t:%06d\t:%s\t:%s\t:%s\n' "$1" "$2" "$3" "$4" "$5" "$6" "$7"
+# A LITERAL TAB IN CONTENT IS ESCAPED TO \t, and unpad restores it. The record
+# is tab-delimited, so a tab inside `old`/`new` is read as a field separator and
+# shifts every later field — silent CORRUPTION of a memory's body rather than a
+# visible error. Measured before fixing: a line reading
+# `A line with<TAB>a literal tab and [[t]].` came back from the bash apply as
+# `a literal tab and [[t]].` — the text before the tab simply gone, while the
+# python twin converted the line correctly. Tab-indented content is ordinary in
+# markdown (code blocks, tables), so this is a real shape, not a contrived one.
+#
+# Same treatment newlines already get in a `create` body, for the same reason:
+# the record is line-and-tab structured, so both characters must travel escaped.
+esc_field() {
+    local v="$1" out=""
+    case "$v" in
+        *"$(command printf '\t')"*) ;;
+        *)
+            command printf '%s' "$v"
+            return 0
+            ;;
+    esac
+    local tab
+    tab="$(command printf '\t')"
+    while :; do
+        case "$v" in
+            *"$tab"*)
+                out="$out${v%%"$tab"*}\\t"
+                v="${v#*"$tab"}"
+                ;;
+            *)
+                out="$out$v"
+                break
+                ;;
+        esac
+    done
+    command printf '%s' "$out"
 }
 
-# unpad VALUE — strip emit_edit's leading colon.
+emit_edit() {
+    command printf ':%s\t:%s\t:%s\t:%06d\t:%s\t:%s\t:%s\n' \
+        "$1" "$2" "$3" "$4" "$(esc_field "$5")" "$(esc_field "$6")" "$7"
+}
+
+# unpad VALUE — strip emit_edit's leading colon and restore escaped tabs.
 unpad() {
-    command printf '%s' "${1#:}"
+    local v="${1#:}" out="" tab
+    tab="$(command printf '\t')"
+    case "$v" in
+        *'\t'*) ;;
+        *)
+            command printf '%s' "$v"
+            return 0
+            ;;
+    esac
+    while :; do
+        case "$v" in
+            *'\t'*)
+                out="$out${v%%\\t*}$tab"
+                v="${v#*\\t}"
+                ;;
+            *)
+                out="$out$v"
+                break
+                ;;
+        esac
+    done
+    command printf '%s' "$out"
 }
 
 # --- adopt-bundle ------------------------------------------------------------

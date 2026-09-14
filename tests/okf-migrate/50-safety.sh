@@ -205,3 +205,87 @@ test_plan_only_transforms_are_visible_in_check() {
     assert_contains "$out" "confirmed-merge" "confirmed-merge is named in check output"
     assert_contains "$out" "plan-only" "each is labelled plan-only"
 }
+
+test_symlinked_concept_is_never_written_through() {
+    local root outside before
+    root="$(fresh_bundle "$WORKDIR")"
+    outside="$(command mktemp -d "$WORKDIR/outside.XXXXXX")"
+    command printf -- '---\nname: victim\n---\n\nOriginal.\n' >"$outside/target.md"
+    before="$(command cat "$outside/target.md")"
+
+    write_concept "$root" "real.md" '---
+type: reference
+---
+
+Body.'
+    # A symlink whose NAME matches a type-inference rule, so backfill-type wants
+    # to edit it. An unmatched name would be blocked by the ambiguity gate and
+    # the case would pass for the wrong reason.
+    command mkdir -p "$root/feedback"
+    command ln -s "$outside/target.md" "$root/feedback/lesson.md"
+
+    run_sh apply "$root" --confirm --allow-dirty
+    assert_exit 0 "$OKF_RC" "the bundle still migrates"
+
+    # THE GUARANTEE: apply writes only inside the bundle. `open(path,"w")` and a
+    # shell redirect both FOLLOW a symlink, and os.walk lists symlinked FILES
+    # (it only declines to descend symlinked dirs) — so before the fix the
+    # python impl rewrote the out-of-bundle target while the plan displayed the
+    # in-bundle path. The reviewed plan and the real write target were different
+    # files, which is precisely what "the plan is the write allowlist" denies.
+    assert_equals "$before" "$(command cat "$outside/target.md")" \
+        "a file outside the bundle root is NEVER written through a symlink (AC7)"
+
+    if [ "$OKF_HAVE_PY" -ne 1 ]; then
+        skip_test "python3 >= 3.11 unavailable — the python half of this case"
+        return
+    fi
+    local proot poutside pbefore
+    proot="$(fresh_bundle "$WORKDIR")"
+    poutside="$(command mktemp -d "$WORKDIR/poutside.XXXXXX")"
+    command printf -- '---\nname: victim\n---\n\nOriginal.\n' >"$poutside/target.md"
+    pbefore="$(command cat "$poutside/target.md")"
+    write_concept "$proot" "real.md" '---
+type: reference
+---
+
+Body.'
+    command mkdir -p "$proot/feedback"
+    command ln -s "$poutside/target.md" "$proot/feedback/lesson.md"
+    run_py apply "$proot" --confirm --allow-dirty
+    assert_equals "$pbefore" "$(command cat "$poutside/target.md")" \
+        "python refuses the write-through too — the runtimes agree on the boundary"
+}
+
+test_hidden_directories_are_not_part_of_the_bundle() {
+    local root py_rows sh_rows
+    root="$(fresh_bundle "$WORKDIR")"
+    write_concept "$root" "real.md" '---
+type: reference
+---
+
+Body.'
+    # A dot-directory of scratch markdown under the bundle root. python pruned
+    # it via `dirnames[:] = [...]`; bash's plain `find` descended into it, so the
+    # two runtimes disagreed about what the bundle CONTAINS — a parity break no
+    # fixture created a hidden directory to catch.
+    write_concept "$root" ".attic/scratch.md" '---
+name: scratch
+---
+
+Scratch.'
+
+    run_sh check "$root"
+    sh_rows="$OKF_OUT"
+    assert_not_contains "$sh_rows" "AMBIGUOUS" \
+        "the hidden directory's file is not treated as a bundle concept"
+
+    if [ "$OKF_HAVE_PY" -ne 1 ]; then
+        skip_test "python3 >= 3.11 unavailable — the parity half of this case"
+        return
+    fi
+    run_py check "$root"
+    py_rows="$OKF_OUT"
+    assert_equals "$py_rows" "$sh_rows" \
+        "both runtimes agree on a bundle containing a hidden directory"
+}
