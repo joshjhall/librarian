@@ -14,17 +14,33 @@ call (see SKILL.md `## Autonomy Levels` and `autonomy.md`).
 
 1. Explore the relevant code areas (use Grep/Glob/Read).
 
-   **Route fan-out reading to a subagent — load `/dev-core:delegating-investigation`
-   and apply its break-even.** Planning is the most investigation-heavy phase in
-   the pipeline, and its reading is exactly the shape that pays: wide surveys
-   collapsing to a short conclusion. Delegate when
-   `result_tokens x turns_resident > ~24,650` (the measured median spawn prefix,
-   billing-weighted, #787) — surveying a tree, tracing a convention across the repo, "where is X
-   handled". Read **inline** when the file and line are already known: below the
-   break-even a subagent is slower *and* dearer. A delegated investigation
-   returns the answer plus `file:line` anchors, never a transcript of what it
-   read — otherwise the plan context absorbs the exploration anyway and the
-   delegation bought nothing.
+   **MANDATORY routing decision — make it BEFORE the first search, not after.**
+   Planning is the most investigation-heavy phase in the pipeline, and its
+   reading is exactly the shape that pays: wide surveys collapsing to a short
+   conclusion. Split the exploration in two and route each half:
+
+   - **Cannot yet name the file and line range?** — the investigation opens with
+     a broad `grep`/`find`/`Glob` whose job is to find out *where to look*
+     (surveying a tree, tracing a convention across the repo, "where is X
+     handled"). **Delegate it** to a subagent at the sonnet tier.
+   - **Can name them?** — read it **inline**. A known path or line range is
+     cheaper inline, always.
+
+   **Do NOT run the broad search inline merely because the Bash tool is right
+   there and the answer feels one `grep` away — actually dispatch the subagent.**
+   That reflex is the measured failure this step exists to stop: the guidance was
+   loaded in 12 of 13 sessions and fired **zero** times against 49 qualifying
+   investigations (#978). Do not defer the call until you have "seen how big it
+   is" — by then the result is already in the plan context and the delegation has
+   nothing left to save.
+
+   Load `/dev-core:delegating-investigation` for the rule's rationale, the
+   dispatch tier, and the return-shape contract. Note the break-even there
+   (`result_tokens x turns_resident > ~24,650`, #787) is the **post-hoc** yardstick,
+   **not** a precondition to evaluate here — `turns_resident` counts turns that
+   have not happened yet. A delegated investigation returns the answer plus
+   `file:line` anchors, never a transcript of what it read — otherwise the plan
+   context absorbs the exploration anyway and the delegation bought nothing.
 
 1. **Run the plan-lens sizing step** — load `plan-sizing.md` and follow it.
    Build the candidate file list from the exploration you just did, estimate the

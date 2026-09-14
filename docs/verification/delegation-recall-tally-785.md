@@ -314,3 +314,94 @@ One property worth keeping when that happens: the tool exits **3** on an empty
 corpus rather than reporting "0 delegations". An absent measurement and a
 measured zero are different claims, and only the second is evidence — the same
 distinction the 77 sentinel draws for a gate whose linter is missing (#538/#571).
+
+---
+
+## Addendum — 2026-09-14: the #978 change, and the window it was made in
+
+**This section is an append, not a revision.** Everything above is the 2026-09-09
+measurement and its verdict, left exactly as observed;
+[#978](https://github.com/joshjhall/librarian/issues/978) is the behavior change
+that verdict called for, and this addendum records its root cause and the corpus
+state at the moment it landed. Nothing above was edited to fit.
+
+### Root cause — the rule was not evaluable at the decision point
+
+§ *Why this is not a discoverability problem* listed three candidates. The
+answer is **hypothesis 2**, established from the instrument's own definition
+rather than inferred from the zero:
+
+`delegation-adoption.py:249-252` computes `turns_resident` as `len(records) -
+index` — **the records that follow the result**. The other factor,
+`result_tokens`, is the size of a result that does not exist until the
+investigation has already run inline. So **both** inputs to
+`result_tokens x turns_resident > 24,650` are retrospective, and an agent
+standing at the decision point can evaluate neither. The rule as written was
+unusable *by an agent trying to follow it* — which is the reading the issue
+flagged as implying a different fix from the other two.
+
+**Hypothesis 1 contributes.** Both call sites phrased delegation as advice
+inside a step whose main verb was something else ("explore the relevant code
+areas"), and `SKILL.md` made the un-evaluable product *the* question — "the
+question is never … it is whether this particular investigation's result, times
+how long it stays resident, is bigger than ~24.6k" — while demoting the
+qualitative list, the one test an agent **can** apply up front, to a consequence
+of it ("these clear the break-even easily").
+
+**Hypothesis 3** (cost invisible at decision time) is true but is a restatement
+of 2's consequence, not a separately actionable cause.
+
+The fix inverts the primacy: delegate when **you cannot yet name the file and
+line range the answer lives in**, decided before the first search. The break-even
+is kept as the justification and as the post-hoc yardstick this instrument audits
+with — explicitly *not* as a precondition to compute.
+
+### Corpus at change time — a BASELINE, not the post-change window
+
+Measured 2026-09-14T04:19Z, after the edits were written and before they could
+have influenced any session in the corpus. Recording it because the 2026-09-09
+corpus **has since rotated out** and the headline `0 of 49` is no longer
+reproducible — a later reader running the commands will not see it, and should
+not conclude the figure was wrong.
+
+| quantity | 2026-09-09 | 2026-09-14 (this window) |
+| --- | ---: | ---: |
+| corpus window | 09-07 .. 09-09 | 09-13T18:41 .. 09-13T23:19 |
+| spawns total | 118 | 92 |
+| …harness fan-out | 117 | 86 |
+| …**direct** (`Agent` tool) | **1** | **6** |
+| inline results >= 2k tok | 49 | 54 |
+| …clearing the break-even | 49 (100%) | 54 (100%) |
+
+**The 6 direct spawns do not settle AC3, and must not be read as adoption of the
+change.** Their provenance, because the split is the whole point: **four**
+predate this session entirely (21:54–22:46Z, from the `issue-974`, `issue-991`
+and `issue-973` worktrees); **one** is this session's own planning spawn; **one**
+is a concurrent peer session (`issue-671`, 03:58Z) running the *unmodified*
+guidance. Every one of them therefore measures the **old** text. They are
+evidence that direct delegation *occurs* on this machine — more than the 09-09
+window showed — but none is evidence about the new rule, and a spawn made by the
+session that wrote the change is the weakest possible evidence that the change
+works.
+
+**AC3 therefore remains open and needs a genuinely post-change window**: sessions
+started after this merge, on work neither planning nor measuring this issue. The
+denominator matters as much as the numerator — the 54 qualifying inline results
+here are what would make a non-zero count mean something. That window is owned by
+[#1032](https://github.com/joshjhall/librarian/issues/1032), filed with #978 —
+named here rather than described, so a reader can check the deferral was actually
+filed instead of taking the word of the file that deferred it.
+
+### What is still untested
+
+Unchanged from § Verdict: **recall is UNTESTED**, and AC6 is deferred with no
+gateway. Both were gated on adoption being non-zero *under the new guidance*,
+which this addendum explicitly does not establish. Both are owned by
+[#1032](https://github.com/joshjhall/librarian/issues/1032), not by this file —
+it holds AC3, the recall row target, and AC6 together, because the second and
+third only become answerable once the first is non-zero.
+
+(A second follow-up, [#1033](https://github.com/joshjhall/librarian/issues/1033),
+records a *different* gap the #978 survey turned up — `ship-issue`'s CI triage and
+review-cycle steps are fan-out shaped but have no delegation call site at all. It
+is unrelated to this tally's measurement question.)

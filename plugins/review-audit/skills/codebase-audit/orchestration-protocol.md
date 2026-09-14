@@ -12,18 +12,23 @@ lives in `finding-schema.md`; grouping templates and platform commands live in
 
 ## Step 1: Map the Codebase
 
-**Route the survey reading to a subagent — load
-`/dev-core:delegating-investigation` and apply its break-even.** Mapping a whole
-repo is the widest read-only investigation any skill in this marketplace
-performs, so it clears the break-even
-(`result_tokens x turns_resident > ~24,650`, the measured median spawn
-prefix, billing-weighted, #787) by a wide margin — and the mapping output then stays resident for
-the whole sweep, which is where the multiplier bites. Delegate the tree walks,
-convention traces, and "which files look like X" questions; keep **inline** the
-deterministic steps below whose output the manifest needs verbatim (the `wc -l`
-counts, `git ls-files` checks, and platform detection are single commands, well
-under the break-even). A delegated survey returns the classification and its
-`file:line` anchors, never a transcript.
+**MANDATORY — route the survey reading to a subagent before the first tree walk.**
+Mapping a whole repo is the widest read-only investigation any skill in this
+marketplace performs, and it is the textbook case of the rule in
+`/dev-core:delegating-investigation`: you cannot name the files and line ranges
+up front — finding out *which* files is the entire task. The mapping output then
+stays resident for the whole sweep, which is where the multiplier bites.
+
+Delegate the tree walks, convention traces, and "which files look like X"
+questions. Keep **inline** only the deterministic steps below whose output the
+manifest needs verbatim — the `wc -l` counts, `git ls-files` checks, and platform
+detection are single commands against known targets. **Do NOT walk the tree
+inline because the sweep "needs the real file list anyway" — actually dispatch
+the subagent** and have it return the classification and its `file:line` anchors,
+never a transcript.
+
+The break-even cited in that skill (`result_tokens x turns_resident > ~24,650`, #787)
+is the **post-hoc** yardstick, not a precondition to compute here.
 
 1. Run `Glob("**/*")` to get the full file tree within `scope`
 1. **Exclude vendored / submodule paths**: Run `git submodule status --recursive`
