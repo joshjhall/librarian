@@ -533,6 +533,59 @@ export async function run() {
     eq(tagged.tags[0], "memory", "redactMemoryFindings: an honest tag round-trips");
     ok(Array.isArray(redactMemoryFindings([{ ...leaky, tags: null }])[0].tags), "redactMemoryFindings: a null tags becomes [] (schema requires an array)");
 
+    // `category` and `related_files` are clamped for the SAME reason as `tags`,
+    // and the review that caught their omission was right: all three are written
+    // by the scan agent that just read the bundle, so a body redirected into one
+    // of them would walk straight past a redactor covering only the obvious
+    // fields. The schema bounds neither (`category` is an unconstrained string,
+    // `related_files` an unconstrained string[]). The invariant: on a memory
+    // finding, NO string reaches issueWriterPrompt without passing clampFragment.
+    const sneaky = redactMemoryFindings([{ ...leaky, category: BODY, related_files: [BODY, ".claude/memory/b.md"] }])[0];
+    ok(!sneaky.category.includes(leaked), "redactMemoryFindings: a body smuggled into `category` does not survive");
+    ok(sneaky.category.length <= 40, "redactMemoryFindings: category clamped to the slug cap");
+    ok(!JSON.stringify(sneaky.related_files).includes(leaked), "redactMemoryFindings: a body smuggled into `related_files` does not survive");
+    eq(sneaky.related_files[1], ".claude/memory/b.md", "redactMemoryFindings: an honest related path round-trips");
+    ok(Array.isArray(redactMemoryFindings([{ ...leaky, related_files: null }])[0].related_files), "redactMemoryFindings: a null related_files becomes [] (schema requires an array)");
+
+    // The invariant stated as one assertion: every string on a redacted memory
+    // finding is bounded. This is the check that would have caught the original
+    // `category`/`related_files` omission, so it is worth more than the sum of
+    // the field-by-field assertions above — a NEW unbounded field added later
+    // fails here without anyone remembering to write a test for it.
+    const everything = redactMemoryFindings([{
+      ...leaky, category: BODY, related_files: [BODY], tags: [BODY], title: BODY,
+    }])[0];
+    const strings = [];
+    const walk = (v) => {
+      if (typeof v === "string") strings.push(v);
+      else if (Array.isArray(v)) v.forEach(walk);
+      else if (v && typeof v === "object") Object.entries(v).forEach(([k, x]) => { if (k !== "ref") walk(x); });
+    };
+    walk(everything);
+    ok(strings.length > 0, "redactMemoryFindings: the invariant walk actually found strings (vacuity guard)");
+    ok(
+      strings.every((v) => !v.includes(leaked)),
+      "redactMemoryFindings: NO string on a redacted memory finding carries body text (whole-object invariant)",
+    );
+
+    // A malformed `ref` with no colon must not slice into a false domain match,
+    // and must still fall through to the category key rather than throwing.
+    ok(
+      isMemoryFinding({ ref: "memorynocolon", category: "memory-orphan" }),
+      "isMemoryFinding: a colon-less ref falls through to the category key",
+    );
+    ok(
+      !isMemoryFinding({ ref: "memorynocolon", category: "dead-code" }),
+      "isMemoryFinding: a colon-less ref does not itself create a domain match",
+    );
+
+    // clampFragment's exact boundary: at the cap it must pass through untouched,
+    // one over it must be truncated. An off-by-one here would either corrupt
+    // honest short values or let one character of a body through.
+    eq(clampFragment("x".repeat(80)).length, 80, "clampFragment: a value exactly at the cap is untouched");
+    eq(clampFragment("x".repeat(80)), "x".repeat(80), "clampFragment: at-cap value round-trips byte-identical");
+    ok(clampFragment("x".repeat(81)).length <= 80, "clampFragment: one char over the cap is truncated to the cap");
+
     // Purity: the caller's original array is never mutated (same discipline as
     // applyVerifyScores), so a later artifact write still has the full fidelity.
     eq(leaky.evidence, BODY, "redactMemoryFindings: the input finding is NOT mutated");

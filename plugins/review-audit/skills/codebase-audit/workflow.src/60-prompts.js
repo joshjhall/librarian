@@ -79,6 +79,12 @@ const verifyPrompt = (findings) =>
   `(false positive, misread context, acknowledged-but-missed, test fixture, ` +
   `placeholder); true if it is a genuine issue. Default to is_real=true only ` +
   `when the evidence clearly holds — but do NOT refute on mere uncertainty.\n` +
+  `  A deliberate DECLINE (suggestion begins "No action —") is NOT a false ` +
+  `positive: it is the auditor's own judgment that the evidence is real but ` +
+  `warrants no action. Do NOT set is_real:false merely because a finding ` +
+  `recommends no action — refute it only if the underlying EVIDENCE is wrong. ` +
+  `Refuting a decline deletes the recorded reasoning, which is the one thing ` +
+  `that distinguishes "examined and left alone" from "never examined".\n` +
   `- certainty: re-score level + confidence from the evidence alone.\n` +
   `Re-score and judge ONLY: do not add, remove, merge, or alter findings. Key ` +
   `each score back to its finding by the \`ref\` field carried on it — copy it ` +

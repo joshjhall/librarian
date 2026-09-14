@@ -167,11 +167,25 @@ const redactMemoryFindings = (findings) =>
       title: clampFragment(f.title, MEMORY_TITLE_CAP),
       evidence: clampFragment(f.evidence),
       suggestion: clampFragment(f.suggestion),
-      // `tags` is not rendered by ISSUE_TEMPLATE, but the issue-writer receives
-      // the whole object and composes the body itself — so an unbounded string
-      // array reaching it is a leak path that merely happens not to be taken by
-      // today's template. Clamp each element rather than trust the renderer: the
-      // guarantee should not depend on a template that a future edit may change.
+      // The three fields below are not rendered by today's ISSUE_TEMPLATE, but
+      // the issue-writer receives the whole object and composes the body itself
+      // — so each is a leak path that merely happens not to be taken right now.
+      // Clamp them rather than trust the renderer: the guarantee must not depend
+      // on a template that a future edit may change.
+      //
+      // All three are populated by the same scan agent that just READ the
+      // bundle, so they are exactly as untrusted as `evidence` — and a memory
+      // body redirected into one of them would walk straight past a redactor
+      // that only covered the obvious fields. `category` and `related_files`
+      // are schema-typed as an unconstrained string and string[] respectively
+      // (finding-schema.schema.json), so neither has a length bound of its own.
+      // The invariant this restores is simple and checkable: on a memory
+      // finding, NO string reaches issueWriterPrompt without passing through
+      // clampFragment.
+      category: clampFragment(f.category, 40),
       tags: Array.isArray(f.tags) ? f.tags.map((t) => clampFragment(t, 40)).filter(Boolean) : [],
+      related_files: Array.isArray(f.related_files)
+        ? f.related_files.map((r) => clampFragment(r, MEMORY_FRAGMENT_CAP)).filter(Boolean)
+        : [],
     }
   })

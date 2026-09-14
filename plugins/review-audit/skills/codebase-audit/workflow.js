@@ -702,12 +702,26 @@ const redactMemoryFindings = (findings) =>
       title: clampFragment(f.title, MEMORY_TITLE_CAP),
       evidence: clampFragment(f.evidence),
       suggestion: clampFragment(f.suggestion),
-      // `tags` is not rendered by ISSUE_TEMPLATE, but the issue-writer receives
-      // the whole object and composes the body itself — so an unbounded string
-      // array reaching it is a leak path that merely happens not to be taken by
-      // today's template. Clamp each element rather than trust the renderer: the
-      // guarantee should not depend on a template that a future edit may change.
+      // The three fields below are not rendered by today's ISSUE_TEMPLATE, but
+      // the issue-writer receives the whole object and composes the body itself
+      // — so each is a leak path that merely happens not to be taken right now.
+      // Clamp them rather than trust the renderer: the guarantee must not depend
+      // on a template that a future edit may change.
+      //
+      // All three are populated by the same scan agent that just READ the
+      // bundle, so they are exactly as untrusted as `evidence` — and a memory
+      // body redirected into one of them would walk straight past a redactor
+      // that only covered the obvious fields. `category` and `related_files`
+      // are schema-typed as an unconstrained string and string[] respectively
+      // (finding-schema.schema.json), so neither has a length bound of its own.
+      // The invariant this restores is simple and checkable: on a memory
+      // finding, NO string reaches issueWriterPrompt without passing through
+      // clampFragment.
+      category: clampFragment(f.category, 40),
       tags: Array.isArray(f.tags) ? f.tags.map((t) => clampFragment(t, 40)).filter(Boolean) : [],
+      related_files: Array.isArray(f.related_files)
+        ? f.related_files.map((r) => clampFragment(r, MEMORY_FRAGMENT_CAP)).filter(Boolean)
+        : [],
     }
   })
 // --- Audit output paths (need sanitizeDir above) -----------------------------
@@ -806,6 +820,12 @@ const verifyPrompt = (findings) =>
   `(false positive, misread context, acknowledged-but-missed, test fixture, ` +
   `placeholder); true if it is a genuine issue. Default to is_real=true only ` +
   `when the evidence clearly holds — but do NOT refute on mere uncertainty.\n` +
+  `  A deliberate DECLINE (suggestion begins "No action —") is NOT a false ` +
+  `positive: it is the auditor's own judgment that the evidence is real but ` +
+  `warrants no action. Do NOT set is_real:false merely because a finding ` +
+  `recommends no action — refute it only if the underlying EVIDENCE is wrong. ` +
+  `Refuting a decline deletes the recorded reasoning, which is the one thing ` +
+  `that distinguishes "examined and left alone" from "never examined".\n` +
   `- certainty: re-score level + confidence from the evidence alone.\n` +
   `Re-score and judge ONLY: do not add, remove, merge, or alter findings. Key ` +
   `each score back to its finding by the \`ref\` field carried on it — copy it ` +

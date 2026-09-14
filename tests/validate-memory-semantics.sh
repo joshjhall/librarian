@@ -842,6 +842,21 @@ test_declines_survive_the_severity_threshold() {
     assert_contains "$aggregate_region" "Declined Findings" \
         "the report carries a Declined Findings table"
 
+    # AND THE VERIFY BARRIER MUST NOT REFUTE IT. Between the scan filter and the
+    # aggregate grouping sits the adversarial judge, which is told to set
+    # is_real:false on a "false positive". A finding whose own suggestion reads
+    # "No action — <reason>" is precisely what that instruction invites a judge to
+    # discard, and applyVerifyScores then drops it permanently — reintroducing
+    # the silence-reads-as-a-pass failure one stage later than the severity
+    # filter, where the two earlier exemptions cannot see it.
+    local verify_region
+    verify_region="$(command awk '/^const verifyPrompt/ { c = 1 } c { print } c && /READONLY$/ { exit }' "$harness" | flatten)"
+    assert_not_empty "$verify_region" "the verify prompt is extractable"
+    assert_contains "$verify_region" "NOT a false" \
+        "the verify judge is told a decline is not a false positive"
+    assert_contains "$verify_region" "only if the underlying EVIDENCE is wrong" \
+        "the judge may refute a decline only on its evidence, never on its recommendation"
+
     # The report format is specified where the other tables are specified.
     local templates_region
     templates_region="$(command awk '/^### Declined Findings/ { c = 1; next } c && /^### / { c = 0 } c { print }' "$TEMPLATES" | flatten)"
