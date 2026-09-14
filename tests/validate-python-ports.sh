@@ -1713,11 +1713,18 @@ NO_CONTENT_READ = {
 # assertable here even though its CLI is not.
 #
 # Paths are relative to PLUGINS_DIR, passed in as argv[2].
+# Each entry is (module path relative to PLUGINS_DIR, attribute name). The
+# attribute is NAMED rather than assumed: migrate.py's config reader is
+# deliberately `_read_config_lines`, not `read_lines`, because migrate.py
+# IMPORTS transforms.read_lines and a same-named local would shadow it for the
+# apply path (measured: the shadow turned an unreadable file from "no edits"
+# into a raise). Naming the attribute here is what lets the test follow that
+# decision instead of silently probing the wrong function.
 EXTRA_READERS = [
-    "review-audit/skills/okf-migrate/transforms.py",
-    "review-audit/skills/okf-migrate/migrate.py",
-    "review-audit/skills/check-okf-conformance/bundle_graph.py",
-    "workflow/skills/ship-issue/split-verify.py",
+    ("review-audit/skills/okf-migrate/transforms.py", "read_lines"),
+    ("review-audit/skills/okf-migrate/migrate.py", "_read_config_lines"),
+    ("review-audit/skills/check-okf-conformance/bundle_graph.py", "read_lines"),
+    ("workflow/skills/ship-issue/split-verify.py", "read_lines"),
 ]
 
 bad = 0
@@ -1758,7 +1765,7 @@ for port in ports:
             print("FAIL %s read_lines(%s) -> %r, grep says %r" % (rel, name, got, want))
 
 # The same CASES and the same grep oracle, for the readers the glob cannot see.
-for rel_path in EXTRA_READERS:
+for rel_path, attr_name in EXTRA_READERS:
     mod_path = os.path.join(plugins_dir, rel_path)
     if not os.path.isfile(mod_path):
         bad += 1
@@ -1772,10 +1779,10 @@ for rel_path in EXTRA_READERS:
         bad += 1
         print("FAIL extra reader %s: import failed: %r" % (rel_path, exc))
         continue
-    fn = getattr(mod, "read_lines", None)
+    fn = getattr(mod, attr_name, None)
     if fn is None:
         bad += 1
-        print("FAIL extra reader %s: no read_lines()" % rel_path)
+        print("FAIL extra reader %s: no %s()" % (rel_path, attr_name))
         continue
     for name, data in CASES.items():
         path = os.path.join(fixdir, "rlx_" + name)
@@ -1785,7 +1792,10 @@ for rel_path in EXTRA_READERS:
         got = fn(path)
         if got != want:
             bad += 1
-            print("FAIL %s read_lines(%s) -> %r, grep says %r" % (rel_path, name, got, want))
+            print(
+                "FAIL %s %s(%s) -> %r, grep says %r"
+                % (rel_path, attr_name, name, got, want)
+            )
 
 if bad == 0:
     print("OK")
@@ -1801,6 +1811,120 @@ PY
         "read_lines: every port's line model matches grep -n on every separator shape (#980)"
 }
 
+# --- evidence carries no CR, end-to-end, for EVERY port (#980 cycle 2) -------
+#
+# read_lines() deliberately KEEPS a CRLF's `\r` in the line (grep does too), so
+# every port must strip it again at its evidence cap or the TSV differs from the
+# bash twin's by one byte -- the #902 divergence, re-opened by #980's own fix.
+#
+# Two things make this its own test rather than a corpus fixture:
+#
+#   1. The whole-corpus parity diff is RELATIVE (#684). If BOTH runtimes
+#      retained the `\r` it would compare equal and pass. Only an assertion on
+#      the BYTES can tell "they agree" from "they are right", and the contract
+#      here is the absence of a `\r`, not agreement.
+#   2. test_py_read_lines_grep_equivalence asserts the LINE MODEL, never the
+#      evidence cap -- a different function, reached by a different path. #980's
+#      first review cycle found exactly that gap: loop-make-it-tested slices at
+#      a LITERAL 60 rather than EVIDENCE_CAP, so a sweep keyed on the constant
+#      NAME missed it and the port shipped emitting `def thing():^M`.
+#
+# So this drives every port over a CRLF file and asserts no emitted row carries
+# a CR anywhere -- which is cap-width agnostic by construction, and therefore
+# cannot be defeated by another port using its own literal slice.
+#
+# The fixture is shaped to trip MANY detector families at once (secret, SQL,
+# debug print, weak hash, undocumented def, empty body, TODO, swallowed except,
+# an untested public def) because a port that emits NOTHING asserts nothing --
+# the vacuity trap this corpus records throughout. test_crlf_evidence_is_nonvacuous
+# below pins that at least one port actually emitted, so this can never silently
+# degrade into a test over zero rows.
+CRLF_EV_DIR="$WORKDIR/crlfev"
+CRLF_EV_LIST="$WORKDIR/crlfev.txt"
+
+setup_crlf_evidence_fixture() {
+    command mkdir -p "$CRLF_EV_DIR/tests"
+    {
+        command printf 'password = "realsecret123"\r\n'
+        command printf 'query = f"SELECT * FROM users WHERE id={uid}"\r\n'
+        command printf 'print("debug left in")\r\n'
+        command printf 'digest = md5(payload)\r\n'
+        command printf 'def undocumented_public(a):\r\n'
+        command printf '    pass\r\n'
+        command printf '# TODO: finish this\r\n'
+        command printf 'try:\r\n'
+        command printf '    risky()\r\n'
+        command printf 'except ValueError:\r\n'
+        command printf '    pass\r\n'
+    } >"$CRLF_EV_DIR/mod.py"
+    # A test file that does NOT mention undocumented_public, so the
+    # untested-public-api arm (the literal-60 slice) actually fires.
+    command printf 'def test_unrelated():\n    pass\n' >"$CRLF_EV_DIR/tests/test_mod.py"
+    command printf '%s\n' "$CRLF_EV_DIR/mod.py" >"$CRLF_EV_LIST"
+}
+
+# Rows emitted by PY over the CRLF fixture that contain a CR. Empty is the pass.
+crlf_rows_with_cr() {
+    python3 "$1" "$CRLF_EV_LIST" 2>/dev/null | command grep -c "$(command printf '\r')" || true
+}
+
+test_py_evidence_carries_no_cr() {
+    local py rel offenders=""
+    setup_crlf_evidence_fixture
+
+    while IFS= read -r py; do
+        [ -n "$py" ] || continue
+        rel="$(command basename "$(command dirname "$py")")/$(command basename "$py")"
+        if [ "$(crlf_rows_with_cr "$py")" != "0" ]; then
+            offenders="$offenders $rel"
+        fi
+    done <<<"$(list_python_ports)"
+
+    assert_equals "" "$offenders" \
+        "no port emits a CR in its TSV over a CRLF file (#902 via #980)"
+}
+
+# The guard on the test above: it passes trivially if every port emits NOTHING.
+# Measured at authoring time -- several ports emit over this fixture -- so a
+# drop to zero means the fixture stopped reaching any detector, not that the
+# code got better.
+test_crlf_evidence_is_nonvacuous() {
+    local py total=0 n
+    setup_crlf_evidence_fixture
+
+    while IFS= read -r py; do
+        [ -n "$py" ] || continue
+        n="$(python3 "$py" "$CRLF_EV_LIST" 2>/dev/null | command wc -l | command tr -d ' ')"
+        total=$((total + n))
+    done <<<"$(list_python_ports)"
+
+    assert_true [ "$total" -gt 0 ] \
+        "The CRLF evidence fixture reaches at least one detector (guard against a vacuous pass)"
+}
+
+# And the bash twins must agree on the same fixture -- the other half of the
+# contract. Asserted per-port so a failure names the port rather than the set.
+test_crlf_evidence_parity() {
+    local py sh rel a b mismatches=""
+    setup_crlf_evidence_fixture
+
+    while IFS= read -r py; do
+        [ -n "$py" ] || continue
+        sh="$(sibling_sh "$py")"
+        [ -f "$sh" ] || continue
+        rel="$(command basename "$(command dirname "$py")")"
+        a="$(python3 "$py" "$CRLF_EV_LIST" 2>/dev/null | command sort)"
+        b="$(PATTERNS_FORCE_BASH=1 SIZING_FORCE_BASH=1 PLAN_LENS_FORCE_BASH=1 \
+            bash "$sh" "$CRLF_EV_LIST" 2>/dev/null | command sort)"
+        if [ "$a" != "$b" ]; then
+            mismatches="$mismatches $rel"
+        fi
+    done <<<"$(list_python_ports)"
+
+    assert_equals "" "$mismatches" \
+        "python and bash emit identical TSV over a CRLF file, per port (#980)"
+}
+
 run_test test_corpus_non_empty "Python-port corpus is non-empty (gate is not a no-op)"
 run_test test_every_force_bash_var_is_set "Every port's *_FORCE_BASH var is set by the parity test (#695)"
 run_test test_py_is_test_file_direct "check-code-health/patterns.py: is_test_file called directly, both branches (#605)"
@@ -1809,6 +1933,9 @@ run_test test_py_read_yaml_list_direct "check-code-health/patterns.py: _read_yam
 run_test test_py_md_slug_direct "md_slug: both Python lenses and the shared awk twin agree (#730)"
 run_test test_py_family_prefix_direct "family_prefix: both Python lenses and the awk twin agree (#772)"
 run_test test_py_read_lines_grep_equivalence "read_lines: every port's line model matches grep -n (#980)"
+run_test test_py_evidence_carries_no_cr "evidence: no port emits a CR over a CRLF file (#902 via #980)"
+run_test test_crlf_evidence_is_nonvacuous "evidence: the CRLF fixture is non-vacuous (reaches a detector)"
+run_test test_crlf_evidence_parity "evidence: python and bash agree per-port over a CRLF file (#980)"
 
 while IFS= read -r py; do
     [ -n "$py" ] || continue

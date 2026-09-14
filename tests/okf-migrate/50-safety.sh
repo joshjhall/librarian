@@ -316,3 +316,83 @@ Deep.'
     assert_equals "$py_rows" "$sh_rows" \
         "both runtimes agree on a bundle containing a hidden directory"
 }
+
+# --- the config readers' OSError fallback, called DIRECTLY (#980) ------------
+#
+# migrate.py's config readers moved to a `newline=""` line model in #980. Making
+# them reachable from the parity gate meant giving the file a NAMED local reader
+# -- and the first spelling called it `read_lines`, which SHADOWED the
+# `transforms.read_lines` this module imports at the top and which `apply_edits`
+# relies on. Measured: the shadow turned an unreadable file from "yields no
+# edits" into a raise, in a migration engine whose stated design property is that
+# one odd file must not kill the run across N repos.
+#
+# The local reader is therefore deliberately named `_read_config_lines`. That is
+# a decision no end-to-end fixture can see -- both spellings produce identical
+# output on every READABLE file -- so it is pinned here, by calling the functions
+# directly and asserting the fallback rather than the happy path.
+#
+# Three distinct fallbacks, because the callers genuinely differ: read_config_list
+# returns [], read_config_scalar returns its default, and the imported
+# transforms.read_lines swallows OSError itself and returns [].
+test_migrate_config_readers_survive_unreadable() {
+    local out
+
+    if [ "$OKF_HAVE_PY" -ne 1 ]; then
+        skip_test "python3 >= 3.11 unavailable — this case is python-only by construction"
+        return
+    fi
+
+    out="$(command python3 -c "
+import importlib.util, os, sys
+
+path = '$OKF_MIGRATE_PY'
+sys.path.insert(0, os.path.dirname(path))
+spec = importlib.util.spec_from_file_location('migrate_under_test', path)
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+
+missing = '/nonexistent/librarian/no_such_thresholds.yml'
+
+# The NAME is the assertion: a local read_lines would shadow the import and
+# re-introduce the raise. Resolving to transforms.py is what keeps apply_edits
+# tolerant of an unreadable file.
+src = getattr(mod.read_lines, '__module__', '')
+where = os.path.basename(getattr(sys.modules.get(src), '__file__', '') or '')
+print('read_lines-from-transforms', where == 'transforms.py')
+
+# ...and it must still swallow, not raise.
+try:
+    print('read_lines-fallback', mod.read_lines(missing) == [])
+except OSError:
+    print('read_lines-fallback RAISED')
+
+# The two config readers keep their own distinct fallbacks.
+try:
+    print('list-fallback', mod.read_config_list(missing, 'sec', 'any_key') == [])
+except OSError:
+    print('list-fallback RAISED')
+try:
+    print('scalar-fallback', mod.read_config_scalar(missing, 'sec', 'key', 'dflt') == 'dflt')
+except OSError:
+    print('scalar-fallback RAISED')
+
+# The local reader itself DOES raise -- that is the contract its callers wrap.
+try:
+    mod._read_config_lines(missing)
+    print('local-raises', False)
+except OSError:
+    print('local-raises', True)
+" 2>&1)" || true
+
+    assert_contains "$out" "read_lines-from-transforms True" \
+        "migrate.read_lines resolves to transforms.py — the local reader does not shadow it (#980)"
+    assert_contains "$out" "read_lines-fallback True" \
+        "an unreadable file yields no edits rather than raising"
+    assert_contains "$out" "list-fallback True" \
+        "read_config_list falls back to [] on an unreadable thresholds.yml"
+    assert_contains "$out" "scalar-fallback True" \
+        "read_config_scalar falls back to its default on an unreadable thresholds.yml"
+    assert_contains "$out" "local-raises True" \
+        "_read_config_lines raises for its callers to wrap — the fallback lives at the call site"
+}

@@ -201,6 +201,54 @@ differently-named module was invisible to every assertion in this gate —
 the #836 trap reached by a new route: not a missing fixture but a missing
 *file*.
 
+## Review cycles
+
+Three defects were found after the work looked finished. All three were mine,
+and none was reachable from the full suite being green.
+
+**Cycle 1, correctness/HIGH — a #902 regression.** `loop-make-it-tested` slices
+evidence at a **literal `60`** (matching `truncate_chars 60` in its bash twin),
+not at `EVIDENCE_CAP`, so a sweep keyed on the constant *name* missed it. It took
+`read_lines()` (which keeps the CR) without the matching strip. The lesson:
+**the evidence cap is a behavior, not a constant name** — so the audit was redone
+behaviorally, running every port over a CRLF fixture rather than grepping for a
+symbol.
+
+**Cycle 1, tests/MEDIUM — four readers shipping unasserted.**
+`list_python_ports()` keys off `PORT_BASENAMES`, so `transforms.py`,
+`migrate.py`, `bundle_graph.py` and `split-verify.py` were invisible to this
+gate, and no other suite carried a separator-byte fixture. The #836 trap by a new
+route: not a missing fixture but a missing *file*.
+
+**Found while verifying the cycle-1 fix — a shadowing bug worse than the finding.**
+Collapsing `migrate.py`'s inline readers into a named `read_lines()` **shadowed
+the `transforms.read_lines` imported at the top**, which `apply_edits` relies on
+to swallow `OSError`. An unreadable file went from "yields no edits" to crashing
+the migration engine — in a tool whose design note says one odd file must not
+kill a run across N repos. The local reader is now `_read_config_lines`, and the
+name is load-bearing rather than cosmetic.
+
+This is the standard hazard of fixing under review pressure, and the reason the
+cycle loop exists: the fix for a MEDIUM finding introduced a worse defect than
+the finding.
+
+**Cycle 2 returned `clean` with zero blocking findings.** Its two substantive
+deferrables were closed rather than deferred, because both named the same real
+gap — a fix asserted by *prose* instead of by a test:
+
+- `test_py_evidence_carries_no_cr` drives every port over a CRLF file and asserts
+  no emitted row carries a CR anywhere. Deliberately cap-width agnostic, so
+  another port using its own literal slice cannot defeat it — the generalization
+  of the cycle-1 defect. Guarded by `test_crlf_evidence_is_nonvacuous`, since a
+  test over zero rows passes trivially.
+- `test_migrate_config_readers_survive_unreadable` pins the three distinct
+  `OSError` fallbacks **and** that `migrate.read_lines` still resolves to
+  `transforms.py`. No end-to-end fixture can see that: both spellings behave
+  identically on every *readable* file.
+
+Both were mutation-verified. Reverting `strip_eol_cr` turns the first red;
+renaming `_read_config_lines` back to `read_lines` turns the second red.
+
 ## Deferred
 
 Plan-lens flagged three files already over their production-LOC budgets

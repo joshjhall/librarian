@@ -92,7 +92,11 @@ RESERVED = ("index.md", "log.md")
 VALIDATOR_DIR = os.path.join(os.path.dirname(_HERE), "check-okf-conformance")
 
 
-def read_lines(path: str) -> list[str]:
+# NOT named read_lines: this module IMPORTS transforms.read_lines at the top,
+# and a same-named local would SHADOW it for the apply path below (which relies
+# on the transforms version swallowing OSError and returning []). Measured --
+# the shadow made an unreadable file RAISE where it used to yield no edits.
+def _read_config_lines(path: str) -> list[str]:
     r"""PATH's lines under grep's line model: split on `\n` ONLY (#980).
 
     `newline=""` disables universal-newline translation. Without it a lone `\r`
@@ -187,7 +191,7 @@ def read_config_list(path: str, section: str, key: str) -> list[str]:
     (the #686 divergence).
     """
     try:
-        lines = read_lines(path)
+        lines = _read_config_lines(path)
     except OSError:
         return []
     in_section = False
@@ -218,7 +222,7 @@ def read_config_list(path: str, section: str, key: str) -> list[str]:
 def read_config_scalar(path: str, section: str, key: str, default: str) -> str:
     """The scalar `<section>.<key>` in a thresholds.yml, or DEFAULT."""
     try:
-        lines = read_lines(path)
+        lines = _read_config_lines(path)
     except OSError:
         return default
     in_section = False
