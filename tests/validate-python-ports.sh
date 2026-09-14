@@ -217,6 +217,7 @@ func lifecycle() {
 	l2, err := net.ListenUnix("unix", a)
 	l3, err := net.ListenTCP("tcp", a)
 	sig.Notify(c, syscall.SIGTERM)
+	watcher.Notify(fsnotify.Write)
 	f, err := os.Open("x.txt")
 	g, err := os.Create("y.txt")
 	t := time.NewTimer(d)

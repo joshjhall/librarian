@@ -176,6 +176,26 @@ review found the literal spelling defeated by an **aliased import** — `import 
 silent double loss rather than a category swap. The listener arm is widened the
 same way so the two stay in step, and both halves are fixture-pinned.
 
+The widening has a cost, named here for the same reason `Command::new`'s is
+below: a qualified `.Notify(` also matches unrelated methods — an fsnotify
+watcher's `watcher.Notify(...)`, or any type with a `Notify` method. Measured on
+a probe file, both runtimes agreeing exactly. That is within this scanner's
+declared tolerance — every row is `MEDIUM`, a candidate pass-2 confirms or
+dismisses — and it is the **cheap** direction: the alternative false *negative*
+is what #871 was filed about, and it was silent. Worth knowing before reading a
+report.
+
+The trade runs **both ways**, and the second direction is worth stating because
+it is the quieter one. The same widened test sits in the terminate arm's
+*exclusion*, so a line carrying `syscall.SIGTERM` **and** any qualified
+`.Notify(` is dropped from `terminate-without-kill` — measured, not reasoned
+about: `watcher.Notify(syscall.SIGTERM)` emits `unpaired-listener` and nothing
+else. Constructing that in real Go is hard (a method literally named `.Notify(`
+taking a signal-shaped argument is almost certainly a registration), which is
+why the widening is still the right call — but it is a false *negative*, the
+expensive direction, so it is named here rather than left for someone to
+rediscover.
+
 **The remaining gap is per-line, and is recorded rather than papered over.** Both
 runtimes test one line at a time, so a `Notify` call whose argument list is
 **wrapped** across lines puts `Notify(` and `syscall.SIGTERM` on different lines,

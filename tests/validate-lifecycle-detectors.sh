@@ -619,6 +619,17 @@ test_unpaired_listener() {
     assert_fires "$list" unpaired-listener "Listener/timer registered without visible removal" \
         "lifecycle: Go aliased sig.Notify still fires as a registration (#871)"
 
+    # The widening's COST, pinned so it stays observable: a qualified `.Notify(`
+    # also matches unrelated methods (an fsnotify watcher, say). Tolerated — every
+    # row is MEDIUM, a candidate pass-2 dismisses — and it is the cheap direction,
+    # since the alternative false NEGATIVE is what #871 was filed about. If this
+    # ever needs narrowing, this fixture is where the decision is recorded.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'watcher.Notify(fsnotify.Write)' >"$d/fp.go"
+    list="$(make_list "$d/l" "$d/fp.go")"
+    assert_fires "$list" unpaired-listener "Listener/timer registered without visible removal" \
+        "lifecycle: Go a non-signal .Notify( also matches — tolerated FP at MEDIUM (#871)"
+
     d="$(fresh_dir)"
     command printf '%s\n' 'ticker := time.NewTicker(d)' >"$d/tick.go"
     list="$(make_list "$d/l" "$d/tick.go")"
