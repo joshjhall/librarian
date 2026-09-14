@@ -30,4 +30,6 @@ the bash runtime only; that exclusion was later replaced by an unanchored one fo
 an unrelated reason, so read this as the rule it is rather than hunting for the
 site — [[parity-blind-to-exit-code-divergence]] is the sibling shape, and
 [[grep-q-under-pipefail-inverts-a-match]] is the other `grep`-stage trap in the
-same pipelines.
+same pipelines, and
+[[filled-cell-can-emit-under-the-wrong-category]] is the case that needed such
+an exclusion in the first place (#871).
