@@ -132,8 +132,14 @@ def read_config_list(path: str, key: str) -> list[str] | None:
     bash glob is not (the #686 divergence).
     """
     try:
-        with open(path, "r", encoding="utf-8", errors="replace") as fh:
-            lines = fh.read().splitlines()
+        # newline="" + a `\n`-only split, matching the bash twin's grep line
+        # model: read() rewrites a lone `\r` to `\n` without it, and
+        # splitlines() (which this replaced) also splits on `\x0b`/`\x0c`/
+        # `\x1c`-`\x1e`/U+2028/2029 (#980).
+        with open(path, "r", encoding="utf-8", errors="replace", newline="") as fh:
+            lines = fh.read().split("\n")
+        if lines and lines[-1] == "":
+            lines.pop()
     except OSError:
         return None
     in_health = False
@@ -334,10 +340,18 @@ def scan_bundle(root: str, emit, thresholds_path: str) -> None:
 
     def read(name: str) -> list[str]:
         try:
+            # newline="" + a `\n`-only split — the grep line model (#980).
             with open(
-                os.path.join(root, name), "r", encoding="utf-8", errors="replace"
+                os.path.join(root, name),
+                "r",
+                encoding="utf-8",
+                errors="replace",
+                newline="",
             ) as fh:
-                return fh.read().splitlines()
+                lines = fh.read().split("\n")
+            if lines and lines[-1] == "":
+                lines.pop()
+            return lines
         except OSError:
             return []
 

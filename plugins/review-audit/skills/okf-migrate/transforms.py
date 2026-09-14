@@ -86,10 +86,17 @@ def read_lines(path: str) -> list[str]:
     matters across N repos. An unreadable file simply yields no edits.
     """
     try:
-        with open(path, "r", encoding="utf-8", errors="replace") as fh:
-            return fh.read().splitlines()
+        with open(path, "r", encoding="utf-8", errors="replace", newline="") as fh:
+            lines = fh.read().split("\n")
     except OSError:
         return []
+    # A lone `\r` is rewritten to `\n` by read() unless newline="" is set, and
+    # str.splitlines() (which this replaced) splits on `\x0b`/`\x0c`/`\x1c`-
+    # `\x1e`/U+2028/2029 too -- none of which the bash twin's grep treats as a
+    # separator (#980). Drop only the trailing empty a final newline leaves.
+    if lines and lines[-1] == "":
+        lines.pop()
+    return lines
 
 
 def frontmatter_span(lines: list[str]) -> tuple[int, int]:

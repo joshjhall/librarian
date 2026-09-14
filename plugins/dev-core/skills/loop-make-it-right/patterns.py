@@ -46,6 +46,44 @@ PY_VARNAME_RE = re.compile(r"^\s*([a-zA-Z])\s*=")
 SKIP_VARNAMES = {"i", "j", "k", "n", "x", "y", "_", "e", "f"}
 
 
+def strip_eol_cr(content: str) -> str:
+    r"""One trailing CR off a line before it becomes evidence (#902, #980).
+
+    Mirrors truncate_chars() in the bash fallback, which has stripped it since
+    #902 -- same strip, same before-the-slice order. read_lines() deliberately
+    KEEPS a CRLF's `\r` in the line so `$`-anchored regexes behave as they do
+    under grep (#980); without this the retained `\r` would reach the TSV and
+    the two runtimes' evidence would differ by one byte on any CRLF match.
+    """
+    return content[:-1] if content.endswith("\r") else content
+
+
+def read_lines(path: str) -> list[str]:
+    r"""PATH's lines under grep's line model: split on `\n` ONLY (#980).
+
+    `newline=""` disables universal-newline translation. Without it a lone `\r`
+    is rewritten to `\n` by read() BEFORE any split can see it, so even
+    `.split("\n")` reports two lines where `grep -n` reports one -- the bash
+    fallback reaches every line through grep, so grep's model is the contract.
+    str.splitlines(), which this replaced, additionally splits on `\x0b`,
+    `\x0c`, `\x1c`-`\x1e` and U+2028/2029, none of which grep treats as a
+    separator.
+
+    The trailing empty left by a final newline is dropped so the count matches
+    `grep -n` at both ends (a file with no trailing newline keeps its last line;
+    a file that is a bare newline still has one, empty, line).
+
+    A CRLF's `\r` STAYS in the line, exactly as it does under grep -- stripping
+    it here would silently change every `$`-anchored regex in every scanner.
+    It comes off at the evidence cap instead, mirroring truncate_chars (#902).
+    """
+    with open(path, "r", encoding="utf-8", errors="replace", newline="") as fh:
+        lines = fh.read().split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()
+    return lines
+
+
 def _int_env(name: str, default: int) -> int:
     """Read an integer env override, falling back to default on unset/empty/bad —
     mirrors bash `${VAR:-default}` followed by integer use."""
@@ -101,7 +139,7 @@ def scan_long_functions(path: str, lines: list[str], ext: str, max_lines: int) -
                     break
             func_lines = end_off if end_off is not None else (total - idx)
             if func_lines > max_lines:
-                ev = content[:EVIDENCE_CAP]
+                ev = strip_eol_cr(content)[:EVIDENCE_CAP]
                 emit(
                     path,
                     idx,
@@ -120,7 +158,7 @@ def scan_long_functions(path: str, lines: list[str], ext: str, max_lines: int) -
                     break
             func_lines = next_off if next_off is not None else (total - idx)
             if func_lines > max_lines:
-                ev = content[:EVIDENCE_CAP]
+                ev = strip_eol_cr(content)[:EVIDENCE_CAP]
                 emit(
                     path,
                     idx,
@@ -143,7 +181,7 @@ def scan_deep_nesting(path: str, lines: list[str], ext: str, max_depth: int) -> 
             continue
         depth = _leading_ws_len(line) // unit
         if depth > max_depth:
-            ev = line[:EVIDENCE_CAP]
+            ev = strip_eol_cr(line)[:EVIDENCE_CAP]
             emit(
                 path,
                 idx,
@@ -169,7 +207,7 @@ def scan_single_char_names(path: str, lines: list[str], ext: str) -> None:
         varname = m.group(1)
         if varname in SKIP_VARNAMES:
             continue
-        ev = content[:EVIDENCE_CAP]
+        ev = strip_eol_cr(content)[:EVIDENCE_CAP]
         emit(
             path,
             idx,
@@ -276,8 +314,7 @@ def main(argv: list[str]) -> int:
         if not path:
             continue
         try:
-            with open(path, "r", encoding="utf-8", errors="replace") as fh:
-                lines = fh.read().splitlines()
+            lines = read_lines(path)
         except OSError:
             continue
         scan_file(path, lines, max_lines, max_depth)

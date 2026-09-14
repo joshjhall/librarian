@@ -167,8 +167,14 @@ def read_config_list(path: str, section: str, key: str) -> list[str]:
     (the #686 divergence).
     """
     try:
-        with open(path, "r", encoding="utf-8", errors="replace") as fh:
-            lines = fh.read().splitlines()
+        # newline="" + a `\n`-only split, matching the bash twin's grep line
+        # model: read() rewrites a lone `\r` to `\n` without it, and
+        # splitlines() (which this replaced) also splits on `\x0b`/`\x0c`/
+        # `\x1c`-`\x1e`/U+2028/2029 (#980).
+        with open(path, "r", encoding="utf-8", errors="replace", newline="") as fh:
+            lines = fh.read().split("\n")
+        if lines and lines[-1] == "":
+            lines.pop()
     except OSError:
         return []
     in_section = False
@@ -199,8 +205,14 @@ def read_config_list(path: str, section: str, key: str) -> list[str]:
 def read_config_scalar(path: str, section: str, key: str, default: str) -> str:
     """The scalar `<section>.<key>` in a thresholds.yml, or DEFAULT."""
     try:
-        with open(path, "r", encoding="utf-8", errors="replace") as fh:
-            lines = fh.read().splitlines()
+        # newline="" + a `\n`-only split, matching the bash twin's grep line
+        # model: read() rewrites a lone `\r` to `\n` without it, and
+        # splitlines() (which this replaced) also splits on `\x0b`/`\x0c`/
+        # `\x1c`-`\x1e`/U+2028/2029 (#980).
+        with open(path, "r", encoding="utf-8", errors="replace", newline="") as fh:
+            lines = fh.read().split("\n")
+        if lines and lines[-1] == "":
+            lines.pop()
     except OSError:
         return default
     in_section = False

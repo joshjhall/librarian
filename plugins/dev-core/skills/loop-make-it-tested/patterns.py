@@ -56,6 +56,32 @@ PY_ALL_NAME_RE = re.compile(r"\"[a-zA-Z_][a-zA-Z0-9_]*\"|'[a-zA-Z_][a-zA-Z0-9_]*
 PY_MAIN_GUARD_RE = re.compile(r"^if[ \t]+__name__[ \t]*==[ \t]*[\"']__main__[\"']")
 
 
+def read_lines(path: str) -> list[str]:
+    r"""PATH's lines under grep's line model: split on `\n` ONLY (#980).
+
+    `newline=""` disables universal-newline translation. Without it a lone `\r`
+    is rewritten to `\n` by read() BEFORE any split can see it, so even
+    `.split("\n")` reports two lines where `grep -n` reports one -- the bash
+    fallback reaches every line through grep, so grep's model is the contract.
+    str.splitlines(), which this replaced, additionally splits on `\x0b`,
+    `\x0c`, `\x1c`-`\x1e` and U+2028/2029, none of which grep treats as a
+    separator.
+
+    The trailing empty left by a final newline is dropped so the count matches
+    `grep -n` at both ends (a file with no trailing newline keeps its last line;
+    a file that is a bare newline still has one, empty, line).
+
+    A CRLF's `\r` STAYS in the line, exactly as it does under grep -- stripping
+    it here would silently change every `$`-anchored regex in every scanner.
+    It comes off at the evidence cap instead, mirroring truncate_chars (#902).
+    """
+    with open(path, "r", encoding="utf-8", errors="replace", newline="") as fh:
+        lines = fh.read().split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()
+    return lines
+
+
 def _py_public_symbols_gate(lines: list[str]) -> str:
     """This MODULE's public-API policy — "all:<names>", "none", or "open".
 
@@ -314,8 +340,7 @@ def main(argv: list[str]) -> int:
         if any(fnmatch(path, g) for g in SKIP_GLOBS):
             continue
         try:
-            with open(path, "r", encoding="utf-8", errors="replace") as fh:
-                lines = fh.read().splitlines()
+            lines = read_lines(path)
         except OSError:
             continue
         scan_file(path, lines)

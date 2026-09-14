@@ -88,7 +88,15 @@ MD_LINK_RE = re.compile(r"\]\(([^)]+)\)")
 
 
 def read_lines(path: str) -> list[str]:
-    with open(path, encoding="utf-8", errors="replace") as fh:
+    r"""PATH's lines under grep's line model: split on `\n` ONLY.
+
+    `newline=""` disables universal-newline translation, which otherwise
+    rewrites a lone `\r` to `\n` inside read() -- before this split can see it,
+    so the split alone does not match grep (#980). A CRLF's `\r` stays in the
+    line, as it does under grep. The trailing empty from a final newline is
+    dropped so the count matches `grep -n` at both ends.
+    """
+    with open(path, encoding="utf-8", errors="replace", newline="") as fh:
         lines = fh.read().split("\n")
     if lines and lines[-1] == "":
         lines.pop()
