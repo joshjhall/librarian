@@ -90,6 +90,28 @@ which is exactly the class of thing AC3 exists to check.
 (`ubuntu`, `ubuntu-esm-*`, `ubuntu-pro-*`) and reports each one it keeps, with
 `test_keeps_ubuntu_own_sources` pinning the behaviour.
 
+### Confirming run, after the fix
+
+[Run 34793733912](https://github.com/joshjhall/librarian/actions/runs/34793733912),
+same job ([103822738980](https://github.com/joshjhall/librarian/actions/runs/34793733912/job/103822738980)),
+all checks green:
+
+```text
+apt-install: disabled third-party source /etc/apt/sources.list.d/microsoft-prod.list
+apt-install: disabled third-party source /etc/apt/sources.list.d/google-chrome.sources
+apt-install: keeping Ubuntu source /etc/apt/sources.list.d/ubuntu.sources
+apt-install: disabled 2 third-party source(s) in /etc/apt/sources.list.d
+Get:1 file:/etc/apt/apt-mirrors.txt Mirrorlist [144 B]
+Get:3 http://azure.archive.ubuntu.com/ubuntu noble-updates InRelease [126 kB]
+Get:4 http://azure.archive.ubuntu.com/ubuntu noble-backports InRelease [126 kB]
+Get:5 http://azure.archive.ubuntu.com/ubuntu noble-security InRelease [126 kB]
+```
+
+The two third-party sources are gone, Ubuntu's is kept, and — the line the first
+run could not produce — `apt-get update` **actually fetches Ubuntu's indexes**.
+That is the difference between an install that works and one that merely has
+nothing to do.
+
 ## Notes
 
 - Original failure: PR #979,
