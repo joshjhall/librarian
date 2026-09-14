@@ -119,6 +119,7 @@ run_fragment_test test_labelled_wikilink_keeps_its_label "a [[target|label]] kee
 run_fragment_test test_fenced_wikilink_is_not_rewritten "a wikilink inside a fenced block is sample text and is left alone"
 run_fragment_test test_printf_metacharacters_in_content_survive "printf metacharacters in a memory body are carried through verbatim"
 run_fragment_test test_literal_tab_in_content_survives "a literal tab in a memory body survives the tab-delimited edit record"
+run_fragment_test test_backslash_escape_sequences_in_content_survive "a literal \\t in content is never decoded into a real tab (round-trip safe)"
 run_fragment_test test_wikilink_is_idempotent "wikilink-convert applied twice equals applied once (AC4)"
 run_fragment_test test_wikilink_reversibility "the converted bundle carries no [[ ]] and the validator stays clean (AC3)"
 

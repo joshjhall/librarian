@@ -150,56 +150,118 @@ fm_lookup() {
 # Same treatment newlines already get in a `create` body, for the same reason:
 # the record is line-and-tab structured, so both characters must travel escaped.
 esc_field() {
-    local v="$1" out=""
+    local v="$1" out="" tab head
+    tab="$(command printf '\t')"
     case "$v" in
-        *"$(command printf '\t')"*) ;;
+        *"$tab"* | *'\'*) ;;
         *)
             command printf '%s' "$v"
             return 0
             ;;
     esac
-    local tab
-    tab="$(command printf '\t')"
-    while :; do
+    # THE BACKSLASH IS ESCAPED FIRST, and that ordering is the whole contract.
+    # Escaping only the tab is NOT round-trip safe: content that already holds
+    # the two characters `\t` — ordinary in this repo, which documents regexes
+    # constantly — would be decoded back into a REAL TAB it never contained.
+    # Measured before fixing: `Regex \t means tab.` came out of the bash apply
+    # as `Regex <TAB> means tab.` while python left it alone, so the escape
+    # meant to fix a parity break introduced a subtler one.
+    #
+    # Escaping `\` -> `\\` first and decoding it LAST (see unpad) makes the
+    # mapping injective, which is what "round trip" requires.
+    while [ -n "$v" ]; do
         case "$v" in
-            *"$tab"*)
-                out="$out${v%%"$tab"*}\\t"
-                v="${v#*"$tab"}"
+            '\'*)
+                out="$out\\\\"
+                v="${v#?}"
+                ;;
+            "$tab"*)
+                out="$out\\t"
+                v="${v#?}"
                 ;;
             *)
-                out="$out$v"
-                break
+                # Copy the run up to the next character needing an escape.
+                head="${v%%[\\"$tab"]*}"
+                if [ "$head" = "$v" ]; then
+                    out="$out$v"
+                    break
+                fi
+                out="$out$head"
+                v="${v#"$head"}"
                 ;;
         esac
     done
     command printf '%s' "$out"
 }
 
+# A `create` body is ALREADY ENCODED by its producer (adopt_bundle builds it
+# with literal `\n` markers, because a real newline cannot travel in a
+# line-oriented record). Running esc_field over it again would escape those
+# markers' backslashes, and unpad would then decode them back to a literal `\n`
+# instead of a newline — which is how a generated index.md came out as one line
+# reading `---\nokf_version: 0.2\n---`. So the create kind skips the encoder and
+# every other kind gets it; unpad is the single decoder for both.
 emit_edit() {
+    local old="$5" new="$6"
+    if [ "$3" != "create" ]; then
+        old="$(esc_field "$old")"
+        new="$(esc_field "$new")"
+    fi
     command printf ':%s\t:%s\t:%s\t:%06d\t:%s\t:%s\t:%s\n' \
-        "$1" "$2" "$3" "$4" "$(esc_field "$5")" "$(esc_field "$6")" "$7"
+        "$1" "$2" "$3" "$4" "$old" "$new" "$7"
 }
 
-# unpad VALUE — strip emit_edit's leading colon and restore escaped tabs.
+# unpad VALUE — strip emit_edit's leading colon and decode esc_field's escapes.
+#
+# LEFT TO RIGHT, ONE ESCAPE AT A TIME, which is what makes it the exact inverse
+# of esc_field: `\\` decodes to a single backslash and is then DONE, so it can
+# never combine with a following `t` to produce a tab the content never had.
+# A pass that decoded `\t` globally first would do exactly that.
 unpad() {
-    local v="${1#:}" out="" tab
+    local v="${1#:}" out="" tab head
     tab="$(command printf '\t')"
     case "$v" in
-        *'\t'*) ;;
+        *'\'*) ;;
         *)
             command printf '%s' "$v"
             return 0
             ;;
     esac
-    while :; do
+    while [ -n "$v" ]; do
         case "$v" in
-            *'\t'*)
-                out="$out${v%%\\t*}$tab"
-                v="${v#*\\t}"
+            '\\'*)
+                out="$out\\"
+                v="${v#??}"
+                ;;
+            '\t'*)
+                out="$out$tab"
+                v="${v#??}"
+                ;;
+            '\n'*)
+                # The `create` body carries its newlines as `\n` (the record is
+                # line-oriented, so a real newline cannot travel in a field).
+                # Decoding it HERE, in the same left-to-right pass, is what lets
+                # ONE decoder serve every field: a separate `sed 's/\\n/…/'` on
+                # the create path would double-decode content esc_field had
+                # already escaped, which is exactly how `---` became `---\`.
+                out="$out
+"
+                v="${v#??}"
+                ;;
+            '\'*)
+                # A lone backslash esc_field never emits; pass it through rather
+                # than dropping it, so an unexpected input stays lossless.
+                out="$out\\"
+                v="${v#?}"
                 ;;
             *)
-                out="$out$v"
-                break
+                head="${v%%\\*}"
+                if [ "$head" = "$v" ]; then
+                    out="$out$v"
+                    break
+                fi
+                out="$out$head"
+                v="${v#"$head"}"
                 ;;
         esac
     done

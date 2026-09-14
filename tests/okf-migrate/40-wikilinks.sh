@@ -219,3 +219,52 @@ A line with	a literal tab and [[target]] on it.'
     assert_equals "$(command cat "$proot/source.md")" "$body" \
         "both runtimes produce the same bytes for tab-bearing content"
 }
+
+test_backslash_escape_sequences_in_content_survive() {
+    local root body proot
+    root="$(wikilink_fixture)"
+    # CONTENT THAT ALREADY CONTAINS `\t` — ordinary in a repo that documents
+    # regexes, and the case that makes the bash edit record's tab-escaping
+    # round-trip rather than merely one-way. Three separate defects lived here,
+    # each found by this exact shape:
+    #
+    #   1. esc_field escaped the TAB but not the BACKSLASH, so a literal `\t`
+    #      decoded back into a REAL TAB the content never had.
+    #   2. `awk -v new=…` processes escape sequences in the assignment, so awk
+    #      re-introduced the tab no matter how faithful the record was. Fixed by
+    #      passing the bytes through ENVIRON[], which is not escape-processed.
+    #   3. the `create` body is pre-encoded with `\n` markers, so escaping it a
+    #      second time made a generated index.md come out as ONE line reading
+    #      `---\nokf_version: 0.2\n---`.
+    write_concept "$root" "source.md" '---
+type: reference
+---
+
+Regex \t means tab, \\ is a backslash, and [[target]] is a link.'
+
+    run_sh apply "$root" --confirm --allow-dirty
+    assert_exit 0 "$OKF_RC" "content with escape sequences applies cleanly"
+
+    body="$(command cat "$root/source.md")"
+    assert_contains "$body" 'Regex \t means tab' \
+        "a literal backslash-t stays two characters — it is not decoded into a tab"
+    assert_contains "$body" '\\ is a backslash' "an escaped backslash survives verbatim"
+    assert_contains "$body" "[target](/target.md)" "the wikilink on that line still converted"
+    # The generated index is a `create` body, whose newlines travel as markers.
+    assert_true "[ \"\$(command head -n1 '$root/index.md')\" = '---' ]" \
+        "the created index.md is real lines, not one line of escaped markers"
+
+    if [ "$OKF_HAVE_PY" -ne 1 ]; then
+        skip_test "python3 >= 3.11 unavailable — the parity half of this case"
+        return
+    fi
+    proot="$(wikilink_fixture)"
+    write_concept "$proot" "source.md" '---
+type: reference
+---
+
+Regex \t means tab, \\ is a backslash, and [[target]] is a link.'
+    run_py apply "$proot" --confirm --allow-dirty
+    assert_equals "$(tree_digest "$proot")" "$(tree_digest "$root")" \
+        "both runtimes produce byte-identical trees for escape-bearing content"
+}

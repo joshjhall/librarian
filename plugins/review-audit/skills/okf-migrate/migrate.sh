@@ -516,9 +516,13 @@ while IFS= read -r target || [ -n "$target" ]; do
     if [ -s "$WORK/creates" ]; then
         _dir="${target%/*}"
         [ "$_dir" = "$target" ] || command mkdir -p "$_dir"
-        command cut -f6 "$WORK/creates" | command head -n1 | command sed -e 's/^://' \
-            -e 's/\\n/\
-/g' >"$target"
+        # ONE DECODER for every field: unpad handles the `\n` a create body
+        # carries AND the `\t`/`\\` esc_field adds. The old `sed 's/\\n/…/'`
+        # here was a SECOND decoder over already-escaped bytes, so an escaped
+        # backslash survived into the file (`---` was written as `---\`).
+        _body="$(command cut -f6 "$WORK/creates" | command head -n1)"
+        unpad "$_body" >"$target"
+        command printf '\n' >>"$target"
         continue
     fi
 
@@ -533,14 +537,24 @@ while IFS= read -r target || [ -n "$target" ]; do
         l="$(unpad "$l")"
         n="$(unpad "$n")"
         : "$p" "$o" "$note"
+        # THE LINE CONTENT TRAVELS THROUGH THE ENVIRONMENT, never `awk -v`.
+        # POSIX awk processes escape sequences in a `-v` assignment, so a body
+        # line legitimately containing the two characters `\t` — ordinary in a
+        # repo that documents regexes — is turned into a REAL TAB by awk itself,
+        # no matter how faithfully the edit record carried it. Measured:
+        # `Regex \t means tab.` was written back as `Regex <TAB> means tab.`,
+        # while python left it alone. ENVIRON[] is not escape-processed, so the
+        # bytes arrive verbatim. Also covers `\\`, `\n` and friends.
         case "$k" in
             replace-line)
-                command awk -v ln="$l" -v new="$n" \
-                    'NR==ln{print new; next}{print}' "$WORK/buf" >"$WORK/buf.new"
+                OKF_NEW="$n" command awk \
+                    'NR==ln{print ENVIRON["OKF_NEW"]; next}{print}' \
+                    ln="$l" "$WORK/buf" >"$WORK/buf.new"
                 ;;
             insert-line)
-                command awk -v ln="$l" -v new="$n" \
-                    'NR==ln{print new}{print}' "$WORK/buf" >"$WORK/buf.new"
+                OKF_NEW="$n" command awk \
+                    'NR==ln{print ENVIRON["OKF_NEW"]}{print}' \
+                    ln="$l" "$WORK/buf" >"$WORK/buf.new"
                 ;;
             *) command cp "$WORK/buf" "$WORK/buf.new" ;;
         esac
