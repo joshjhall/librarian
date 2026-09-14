@@ -270,11 +270,18 @@ is the **claim**: this file is several hundred lines over budget, this PR is
 responsible for most of that growth, and #1038 tracks the split. Run
 `pre-review-gates.sh` for the exact current number.
 
-| File | Budget | Final | This PR added | Tracked by |
-| ---- | ------ | ----- | ------------- | ---------- |
-| `tests/validate-python-ports.sh` | 700 | **~995** | ~394 | [#1038](https://github.com/joshjhall/librarian/issues/1038) |
-| `check-security/patterns.py` | 500 | **666** | 40 | [#1037](https://github.com/joshjhall/librarian/issues/1037) |
-| `okf-migrate/migrate.py` | 500 | **519** | 26 | left to the existing backlog |
+Every number below is **production LOC**, measured the same way, at the PR base
+(`origin/main`) and at the tip. The `+diff` column is the raw `git diff --numstat`
+insertion count and is a *different unit* — it is shown because it is what a
+reviewer sees on the PR, and it is deliberately labelled so the two are not read
+as the same measure. (They diverge because a diff insertion may be a comment, a
+blank line, or a test-excluded region, none of which count as production LOC.)
+
+| File | Budget | Base | Final | Production LOC added | +diff | Tracked by |
+| ---- | ------ | ---- | ----- | -------------------- | ----- | ---------- |
+| `tests/validate-python-ports.sh` | 700 | 819 | **~995** | ~176 | 402 | [#1038](https://github.com/joshjhall/librarian/issues/1038) |
+| `check-security/patterns.py` | 500 | 638 | **666** | 28 | 40 | [#1037](https://github.com/joshjhall/librarian/issues/1037) |
+| `okf-migrate/migrate.py` | 500 | 505 | **519** | 14 | 26 | left to the existing backlog |
 
 `validate-python-ports.sh` is the one this PR genuinely grew — most of the added
 lines are the new fixtures and the direct probes the review cycles asked for.
