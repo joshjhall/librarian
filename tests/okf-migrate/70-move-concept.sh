@@ -695,6 +695,58 @@ Body.'
         "...and no in-bundle content leaked into the outside file"
 }
 
+test_foreign_index_name_works_by_config_alone() {
+    local root cfg
+    root="$(fresh_bundle "$WORKDIR")"
+    # A repo whose index is NOT called MEMORY.md or index*.md. The epic's whole
+    # premise is running against SOMEONE ELSE'S bundle, and the validator already
+    # reads index_names from config — but okf-migrate hardcoded librarian's own
+    # convention, so this repo got "nothing to move" at exit 0. Silently wrong,
+    # not a refusal.
+    write_concept "$root" "catalog.md" '# Catalog
+
+- [Thing](thing.md) — a hook'
+    write_concept "$root" "thing.md" '---
+type: feedback
+---
+
+Body.'
+    cfg="$WORKDIR/cfg.foreign.$$"
+    write_taxonomy "$cfg" "index:catalog.md = bucket"
+
+    OKF_RC=0
+    OKF_OUT="$(PATTERNS_FORCE_BASH=1 OKF_BUNDLE_ROOT="$root" \
+        OKF_MIGRATE_CONFIG_DIR="$cfg" OKF_INDEX_NAMES="catalog.md" \
+        OKF_PINNED_VERSION="${OKF_TEST_VERSION:-0.2}" \
+        command bash "$OKF_MIGRATE_SH" apply --transform move-concept \
+        --confirm --allow-dirty 2>&1)" || OKF_RC=$?
+    assert_exit 0 "$OKF_RC" "a foreign index vocabulary applies by CONFIG alone"
+    assert_file_exists "$root/bucket/thing.md" \
+        "the concept was routed by an index this engine had never heard of"
+
+    # TEETH: without the override the SAME bundle moves nothing, so the pass
+    # above is attributable to the config rather than to a rule that fires
+    # regardless.
+    local root2
+    root2="$(fresh_bundle "$WORKDIR")"
+    write_concept "$root2" "catalog.md" '# Catalog
+
+- [Thing](thing.md) — a hook'
+    write_concept "$root2" "thing.md" '---
+type: feedback
+---
+
+Body.'
+    OKF_RC=0
+    OKF_OUT="$(PATTERNS_FORCE_BASH=1 OKF_BUNDLE_ROOT="$root2" \
+        OKF_MIGRATE_CONFIG_DIR="$cfg" \
+        OKF_PINNED_VERSION="${OKF_TEST_VERSION:-0.2}" \
+        command bash "$OKF_MIGRATE_SH" apply --transform move-concept \
+        --confirm --allow-dirty 2>&1)" || OKF_RC=$?
+    assert_file_exists "$root2/thing.md" \
+        "...and without the override the same bundle moves nothing"
+}
+
 test_destination_collision_leaves_the_file_put() {
     local root before after
     root="$(fresh_bundle "$WORKDIR")"

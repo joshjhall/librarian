@@ -84,6 +84,31 @@ scan_links() {
 
 # --- index membership --------------------------------------------------------
 
+# is_index_name BASE — true when BASE names an index, per $OKF_MIGRATE_INDEX_NAMES
+# (space-separated, set by migrate.sh from the toolset's single source).
+#
+# CONFIG, NOT CONVENTION, and this is portability rather than polish: the epic's
+# premise is running against SOMEONE ELSE'S bundle, and check-okf-conformance
+# already reads `index_names` from thresholds.yml. A hardcoded `MEMORY.md`/
+# `index*` test meant a repo whose index is called `catalog.md` got "nothing to
+# move" from the `index:` rule source — measured, silently, at exit 0.
+#
+# LITERAL EQUALITY FIRST, then glob — the same ordering (and reason) the
+# validator's is_index documents: a configured name is operator input, not a
+# pattern language they opted into, so `notes[1].md` must match the file
+# literally called that rather than being read as a character class.
+is_index_name() {
+    local base="$1" name
+    for name in ${OKF_MIGRATE_INDEX_NAMES:-MEMORY.md index.md index-*.md}; do
+        [ "$base" = "$name" ] && return 0
+    done
+    for name in ${OKF_MIGRATE_INDEX_NAMES:-MEMORY.md index.md index-*.md}; do
+        # shellcheck disable=SC2254  # pattern is config, glob intended
+        case "$base" in $name) return 0 ;; esac
+    done
+    return 1
+}
+
 # index_members ROOT FILE_LIST — print `concept_rel<TAB>index_rel` rows.
 #
 # ALL NAMING INDEXES, NOT THE FIRST. A concept listed in both a root MEMORY.md
@@ -98,10 +123,7 @@ index_members() {
     while IFS= read -r path || [ -n "$path" ]; do
         [ -n "$path" ] || continue
         base="${path##*/}"
-        case "$base" in
-            MEMORY.md | index*) ;;
-            *) continue ;;
-        esac
+        is_index_name "$base" || continue
         rel_index="${path#"$root"/}"
         here="${path%/*}"
         _fence=0
@@ -582,9 +604,7 @@ rewrite_inbound_links() {
             # TEXT, so an ordinary body line equal to a claimed index line would
             # be repointed at the bucket index instead of following the concept.
             _isidx=0
-            case "${here_rel##*/}" in
-                MEMORY.md | index*) _isidx=1 ;;
-            esac
+            is_index_name "${here_rel##*/}" && _isidx=1
             if [ "$_isidx" -eq 1 ] && [ -n "$claimed" ] && [ -s "$claimed" ]; then
                 # ENVIRON, NEVER `awk -v`: a `-v` assignment is
                 # ESCAPE-PROCESSED, so a hook legitimately containing the two

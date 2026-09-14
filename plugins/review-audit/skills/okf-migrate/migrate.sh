@@ -295,6 +295,24 @@ read_config_list transforms plan_only >"$WORK/plan_only"
 read_config_list type_inference rules >"$WORK/rules"
 read_config_list type_inference known_types >"$WORK/known"
 read_config_list taxonomy rules >"$WORK/taxonomy"
+
+# INDEX NAMES come from the toolset's single source (the validator's
+# thresholds.yml), with $OKF_INDEX_NAMES overriding — the same resolution order
+# the python twin uses, so the two agree about what an index IS. That decides
+# both what the `index:` taxonomy source routes by and which files may relocate
+# an index line.
+if [ -n "${OKF_INDEX_NAMES+set}" ]; then
+    OKF_MIGRATE_INDEX_NAMES="$OKF_INDEX_NAMES"
+else
+    OKF_MIGRATE_INDEX_NAMES="$(CONFIG="$_here/../check-okf-conformance/thresholds.yml" \
+        read_config_list health index_names 2>/dev/null | command tr '\n' ' ')"
+    # `${v// /}` is a bash-4 construct the portability gate bans; a `case` glob
+    # is the bash-3.2 way to ask "is this only whitespace?".
+    case "$OKF_MIGRATE_INDEX_NAMES" in
+        '' | ' '*) OKF_MIGRATE_INDEX_NAMES="MEMORY.md index.md index-*.md" ;;
+    esac
+fi
+export OKF_MIGRATE_INDEX_NAMES
 LINK_FORM="$(read_config_scalar links form bundle_relative)"
 CONVERT_UNRESOLVED="$(read_config_scalar links convert_unresolvable true)"
 ADOPT_TITLE="$(read_config_scalar adopt title 'Memory Bundle')"

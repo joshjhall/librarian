@@ -61,6 +61,7 @@ if _HERE not in sys.path:
 # "this bundle needs no migration".
 try:
     from moves import (  # noqa: E402
+        is_index_name,  # noqa: F401
         parse_taxonomy_rules,
         plan_directory_indexes,
         plan_moves,
@@ -157,6 +158,43 @@ def bundle_root() -> str:
     while root.endswith("/"):
         root = root[:-1]
     return root
+
+
+def read_index_names() -> list[str]:
+    """The configured index basenames, from the VALIDATOR's own resolver.
+
+    Delegated rather than reimplemented, for the same reason the version pin is:
+    that file is the single source for the whole toolset, and a second copy here
+    would let the two halves disagree about what an index IS — which decides
+    both what the `index:` taxonomy source can route by and which files may
+    relocate an index line. It also inherits `$OKF_INDEX_NAMES` and the
+    empty-override semantics for free.
+
+    $OKF_INDEX_NAMES IS READ HERE TOO, not only inside the validator, so the
+    override still works when that import is unavailable. Without it the
+    fallback returned librarian's own defaults and the env var was SILENTLY
+    IGNORED — a consuming repo whose index is `catalog.md` got "nothing to move"
+    at exit 0, which is the wrong-answer-quietly shape rather than a refusal.
+
+    THE sys.path INSERT IS LOAD-BEARING: the validator is a sibling skill
+    directory, not an installed package, so without it the import fails in the
+    CLI (it only succeeded under a test harness that had already inserted the
+    path). read_pinned_version does the same thing for the same reason.
+    """
+    env = os.environ.get("OKF_INDEX_NAMES")
+    if env is not None:
+        return env.split()
+    if VALIDATOR_DIR not in sys.path:
+        sys.path.insert(0, VALIDATOR_DIR)
+    try:
+        from patterns import read_index_names as validator_names  # noqa: PLC0415
+
+        got = validator_names(os.path.join(VALIDATOR_DIR, "thresholds.yml"))
+        if got:
+            return got
+    except (ImportError, AttributeError):
+        pass
+    return ["MEMORY.md", "index.md", "index-*.md"]
 
 
 def read_pinned_version() -> str:
@@ -363,6 +401,7 @@ def build_plan(
     )
     title = read_config_scalar(cfg, "adopt", "title", "Memory Bundle")
     taxonomy = parse_taxonomy_rules(read_config_list(cfg, "taxonomy", "rules"))
+    index_names = read_index_names()
 
     edits: list[Edit] = []
     ambiguities: list[Ambiguity] = []
@@ -379,14 +418,16 @@ def build_plan(
         # The link rewrites are derived from the SAME mapping the moves are, so
         # the two cannot disagree about where a file lands. Apply ordering (link
         # rewrites before renames) is the driver's job — see apply_edits.
-        move_edits, mapping = plan_moves(root, concepts, every, taxonomy)
+        move_edits, mapping = plan_moves(root, concepts, every, taxonomy, index_names)
         # §8 ORDER: build each new directory's index first, because it CLAIMS the
         # index lines that named the moved concepts. The inbound rewriter then
         # repoints those claimed lines at the sub-index rather than at the
         # concept — naming the concept in both places would be memory-multi-index.
         index_edits, relocated = plan_directory_indexes(root, every, mapping)
         edits.extend(index_edits)
-        edits.extend(rewrite_inbound_links(root, every, mapping, relocated))
+        edits.extend(
+            rewrite_inbound_links(root, every, mapping, relocated, index_names)
+        )
         edits.extend(move_edits)
 
     # PLAN-ONLY TRANSFORMS are surfaced as notes rather than silently omitted.

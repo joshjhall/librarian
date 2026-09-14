@@ -74,7 +74,9 @@ def parse_taxonomy_rules(raw: list[str]) -> list[tuple[str, str, str]]:
     return out
 
 
-def index_members(root: str, every: list[str]) -> dict[str, list[str]]:
+def index_members(
+    root: str, every: list[str], index_names: list[str]
+) -> dict[str, list[str]]:
     """Map each concept's bundle-relative path to EVERY index file naming it.
 
     This is what makes "mirror the buckets we already have" expressible as
@@ -94,8 +96,7 @@ def index_members(root: str, every: list[str]) -> dict[str, list[str]]:
     """
     members: dict[str, list[str]] = {}
     for path in sorted(every):
-        base = os.path.basename(path)
-        if base != "MEMORY.md" and not base.startswith("index"):
+        if not is_index_name(os.path.basename(path), index_names):
             continue
         rel_index = os.path.relpath(path, root)
         here = os.path.dirname(path)
@@ -168,6 +169,7 @@ def plan_moves(
     concepts: list[str],
     every: list[str],
     rules: list[tuple[str, str, str]],
+    index_names: list[str],
 ) -> tuple[list[Edit], dict[str, str]]:
     """(move edits, old_rel -> new_rel) for every concept the taxonomy relocates.
 
@@ -189,7 +191,7 @@ def plan_moves(
         return ([], {})
     edits: list[Edit] = []
     mapping: dict[str, str] = {}
-    member_of = index_members(root, every)
+    member_of = index_members(root, every, index_names)
     taken: set = {os.path.relpath(p, root) for p in concepts}
     for path in sorted(concepts):
         rel = os.path.relpath(path, root)
@@ -416,11 +418,28 @@ def _retarget_line(line: str, base: str) -> str:
     return line
 
 
-def _is_index_path(rel: str) -> bool:
-    """True when REL is an index file (MEMORY.md, or a basename starting
-    `index`) — the same membership test index_members applies."""
-    base = os.path.basename(rel)
-    return base == "MEMORY.md" or base.startswith("index")
+def is_index_name(base: str, index_names: list[str]) -> bool:
+    """True when BASE names an index, per the CONFIGURED index_names.
+
+    CONFIG, NOT CONVENTION, and this is a portability requirement rather than a
+    nicety: the epic's premise is running against SOMEONE ELSE'S bundle, and
+    check-okf-conformance already reads `index_names` from thresholds.yml. A
+    hardcoded `MEMORY.md`/`index*` test meant a repo whose index is called
+    `catalog.md` got "nothing to move" from the `index:` rule source — measured,
+    silently, at exit 0.
+
+    LITERAL EQUALITY FIRST, then glob — the same ordering (and the same reason)
+    the validator's is_index documents: a configured name is operator input, not
+    a pattern language they opted into, so `notes[1].md` must match the file
+    literally called that rather than being read as a character class.
+    """
+    for name in index_names:
+        if base == name:
+            return True
+    for name in index_names:
+        if fnmatch.fnmatch(base, name):
+            return True
+    return False
 
 
 def rewrite_inbound_links(
@@ -428,6 +447,7 @@ def rewrite_inbound_links(
     every: list[str],
     mapping: dict[str, str],
     relocated: dict[str, str] | None = None,
+    index_names: list[str] | None = None,
 ) -> list[Edit]:
     """Rewrite EVERY inbound reference to a moved file, bundle-wide.
 
@@ -473,7 +493,9 @@ def rewrite_inbound_links(
             # Gating on the FILE rather than tightening the key is the honest
             # fix: "this line is an index entry" is a property of where it
             # lives, not of what it says.
-            if line in moved_lines and _is_index_path(here_rel):
+            if line in moved_lines and is_index_name(
+                os.path.basename(here_rel), index_names or []
+            ):
                 # This line's concept now lives in a directory index. Repoint it
                 # at that SUB-INDEX (§8's routing: the root names the bucket, the
                 # bucket names its concepts) rather than at the concept itself.

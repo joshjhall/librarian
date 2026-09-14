@@ -148,6 +148,7 @@ run_fragment_test test_taxonomy_rules_are_first_match_wins "taxonomy rules are F
 run_fragment_test test_malformed_taxonomy_rules_are_skipped_not_fatal "a malformed taxonomy rule is skipped, never fatal, and its siblings still apply"
 run_fragment_test test_two_concepts_moving_together_keep_their_relative_link "two concepts moving together keep a valid relative link (recomputed from the LANDING spot)"
 run_fragment_test test_symlinked_existing_index_is_never_written_through "a symlinked existing directory index is never written through (write-path guard)"
+run_fragment_test test_foreign_index_name_works_by_config_alone "a repo whose index is named differently works by CONFIG alone (AC9 portability)"
 run_fragment_test test_destination_collision_leaves_the_file_put "a destination collision skips the move and never overwrites the incumbent"
 run_fragment_test test_move_is_idempotent "move-concept applied twice equals applied once, byte-compared (AC5)"
 run_fragment_test test_move_reversibility "after the move the real validator emits no dangling/orphan rows (AC6)"
