@@ -104,26 +104,32 @@ different places. **Try both, in order:**
 ${CLAUDE_PLUGIN_ROOT}/../workflow/scripts/harness-stage.sh stage codebase-audit
 
 # Then: installed — an installed plugin root carries a <version> segment, so the
-#   sibling is one level deeper. ${CLAUDE_PLUGIN_ROOT} here is
-#   .../review-audit/<version>, hence ../../workflow/<version>/…
-#   RESOLVE the version directory to ONE path first, then invoke it. Never put
-#   the glob in command position — see below.
-ls -d ${CLAUDE_PLUGIN_ROOT}/../../workflow/*/scripts/harness-stage.sh | tail -1
-# then run the single path that printed:
-<that path> stage codebase-audit
+#   sibling is one level deeper. List the candidates, then run ANY ONE of them
+#   (see below — which one does not matter):
+ls -d ${CLAUDE_PLUGIN_ROOT}/../../workflow/*/scripts/harness-stage.sh
+# then invoke a single printed path:
+<one of those paths> stage codebase-audit
 # -> path=…  source=…  staged=true|false
 ```
 
-**Why the glob is resolved first rather than executed.** A `*` in *command
-position* is expanded before the command runs, so with two `workflow` version
-directories present — mid-`plugin update`, or a stale cache beside the current
-one — bash produces two words: the first is executed and **the second becomes
-its first argument**. `harness-stage.sh` then sees a path where it expects a
-subcommand and exits 2 `unknown subcommand`, never reaching the numeric version
-preference it implements for exactly this case. Measured, not theorized: two
-versions present yields `ARGS: …/1.0.0/scripts/harness-stage.sh stage
-codebase-audit`. Resolving to a single path first is what makes the multi-version
-tree work instead of being the one tree that fails.
+**Two rules here, and both were learned the hard way.**
+
+**Never put the glob in command position.** A `*` there is expanded before the
+command runs, so with two `workflow` version directories present bash produces
+two words: the first is executed and **the second becomes its first argument**.
+`harness-stage.sh` then sees a path where it expects a subcommand and exits 2
+`unknown subcommand`. Measured: two versions present yields
+`ARGS: …/1.0.0/scripts/harness-stage.sh stage codebase-audit`.
+
+**Do not try to pick the "newest" candidate.** It is tempting to append
+`| tail -1`, and it is wrong: `ls` sorts lexicographically, so it selects `0.9.0`
+over `0.10.0` — the same defect `harness-stage.sh`'s own `_ver_gt` exists to
+avoid and the reason `sort -V` is banned repo-wide. **You do not need to choose.**
+Any copy of the stager resolves the *target* harness by its own probes, which
+already implement the numeric comparison; the stager's own version has no bearing
+on which `codebase-audit/workflow.js` it finds. Re-deriving version selection in
+prose is how a second, worse copy of that logic gets written — so this recipe
+deliberately does not have one.
 
 **Do not collapse these to the first one alone.** On an installed tree the
 sibling has a `<version>` path segment that spelling has no way to name, so it

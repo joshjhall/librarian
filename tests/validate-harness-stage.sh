@@ -548,6 +548,67 @@ test_symlinked_staging_dir_refuses() {
     command rm -rf "$dest" "$elsewhere"
 }
 
+# A PRE-EXISTING but LOOSE staging directory must still be tightened. The first
+# version of the hardening keyed on "did this run create the directory", which
+# left a directory created by an older version of this script, an unrelated
+# tool's `mkdir -p`, or a permissive first run loose for its entire lifetime —
+# the hardening bypassed on exactly the directories that needed it.
+#
+# Its counterpart is test_stricter_dir_mode_is_left_alone below: together they
+# pin that the condition is the MODE, not the provenance.
+test_loose_preexisting_dir_is_tightened() {
+    local dest
+    dest="$(new_tree)"
+    [ -n "$dest" ] || {
+        skip_test "mktemp unavailable"
+        return 0
+    }
+
+    command mkdir -p "$dest/.claude/tmp/harness"
+    command chmod 777 "$dest/.claude/tmp/harness"
+
+    run_stager "$STAGER" stage orchestrate --dir "$dest"
+    assert_equals "0" "$LAST_RC" "staging into a loose pre-existing directory succeeds"
+
+    local dirmode
+    dirmode="$(command ls -ld "$dest/.claude/tmp/harness" | command cut -c1-10)"
+    assert_equals "drwx------" "$dirmode" \
+        "a pre-existing world-writable staging directory is tightened to 0700"
+
+    command rm -rf "$dest"
+}
+
+# The other direction: a directory deliberately locked STRICTER than 0700 is left
+# exactly as found. An unconditional chmod would re-grant write here and turn the
+# refusal that test_copy_failure_refuses_loudly pins into a silent success.
+test_stricter_dir_mode_is_left_alone() {
+    local dest
+    dest="$(new_tree)"
+    [ -n "$dest" ] || {
+        skip_test "mktemp unavailable"
+        return 0
+    }
+    if [ "$(command id -u)" = "0" ]; then
+        command rm -rf "$dest"
+        skip_test "running as root — permission bits do not apply"
+        return 0
+    fi
+
+    command mkdir -p "$dest/.claude/tmp/harness"
+    command chmod 500 "$dest/.claude/tmp/harness"
+
+    run_stager "$STAGER" stage orchestrate --dir "$dest"
+    assert_equals "3" "$LAST_RC" "a 0500 staging directory still refuses (not re-granted)"
+
+    local dirmode
+    dirmode="$(command ls -ld "$dest/.claude/tmp/harness" | command cut -c1-10)"
+    assert_equals "dr-x------" "$dirmode" \
+        "a deliberately stricter mode is left exactly as found"
+
+    command chmod 700 "$dest/.claude/tmp/harness" 2>/dev/null || true
+    command rm -rf "$dest"
+}
+
 # A regular FILE squatting on the staging path. Not a symlink and not a
 # directory, so neither the `-L` guard nor the `-d` check catches it: `mkdir -p`
 # fails with EEXIST-not-a-directory. The requirement is only that it refuse
@@ -707,6 +768,8 @@ run_test test_absent_plugin_exits_4 "an absent owning plugin exits 4 (skip appli
 run_test test_present_plugin_missing_harness_exits_3 "a broken install exits 3 (delivery stops)"
 run_test test_installed_layout_distinguishes_broken_from_absent "installed layout: broken (3) vs absent (4) stay distinct"
 run_test test_symlinked_staging_dir_refuses "a symlinked staging directory refuses rather than staging through it"
+run_test test_loose_preexisting_dir_is_tightened "a loose pre-existing staging dir is tightened"
+run_test test_stricter_dir_mode_is_left_alone "a stricter staging dir mode is left alone"
 run_test test_regular_file_at_staging_path_refuses "a regular file at the staging path refuses"
 run_test test_refusal_lists_every_probe "a refusal lists every probe it tried"
 run_test test_unwritable_cwd_refuses "an unwritable cwd exits 3, never a skip"

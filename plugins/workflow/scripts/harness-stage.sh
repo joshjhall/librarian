@@ -459,8 +459,6 @@ cmd_stage() {
             "can vouch for. Remove the link and re-run."
     fi
 
-    _cs_dir_existed=true
-    [ -d "$_cs_dir" ] || _cs_dir_existed=false
     command mkdir -p "$_cs_dir" 2>/dev/null ||
         _refuse 3 "cannot create the staging directory: $_cs_dir" \
             "The session's working directory must be writable to stage a harness."
@@ -473,21 +471,39 @@ cmd_stage() {
     # harness's authority. `mktemp` already gives the temp file 0600; this closes
     # the directory and the final name.
     #
-    # The `-d` test before `mkdir` is what makes this narrow, and it is not a
-    # nicety: an unconditional chmod RE-GRANTS write on a directory the operator
-    # (or a prior failure) deliberately locked to 0500, converting a refusal into
-    # a silent success. Caught by test_copy_failure_refuses_loudly, which went
-    # from exit 3 to exit 0 the moment the unconditional form landed.
-    # Fail LOUD if the hardening itself fails, matching every other failure mode
-    # in this function. `|| true` here would let the script proceed to copy an
+    # The condition is the directory's ACTUAL MODE, not merely whether this run
+    # created it — and that distinction took two tries to get right.
+    #
+    # An UNCONDITIONAL chmod re-grants write on a directory the operator (or a
+    # prior failure) deliberately locked to 0500, converting a refusal into a
+    # silent success; test_copy_failure_refuses_loudly went from exit 3 to exit 0
+    # the moment that form landed. But keying on "did this run create it" is
+    # wrong in the other direction: a directory left LOOSE by an older version of
+    # this script, an unrelated tool's `mkdir -p`, or a permissive umask on first
+    # use is then never tightened on any later call, so the hardening is bypassed
+    # for that directory's entire lifetime.
+    #
+    # Tighten only when group or other bits are set, which satisfies both: a
+    # deliberately-stricter directory is left alone, a loose one is fixed however
+    # it came to be loose. `ls -ld` parsing rather than `stat`, whose format flags
+    # differ between BSD and GNU (`stat -f %Lp` vs `stat -c %a`).
+    #
+    # Fail LOUD when the tightening is needed and cannot be done, matching every
+    # other failure in this function: `|| true` would copy an
     # executable-as-scriptPath into a directory whose mode is whatever the umask
-    # produced — asserting "regardless of umask" in a comment while not enforcing
-    # it, which is the silence-reads-as-a-pass shape this whole file is about.
-    if [ "$_cs_dir_existed" = "false" ]; then
-        command chmod 700 "$_cs_dir" 2>/dev/null ||
-            _refuse 3 "cannot restrict permissions on the staging directory: $_cs_dir" \
-                "Refusing to stage into a directory whose mode cannot be secured."
-    fi
+    # produced, while the comment above claimed otherwise.
+    _cs_mode="$(command ls -ld "$_cs_dir" 2>/dev/null | command cut -c1-10)"
+    case "$_cs_mode" in
+        d???------)
+            # Owner-only already. Includes 0700 and stricter modes like 0500,
+            # which is the deliberate-lockdown case: leave it exactly as found.
+            ;;
+        *)
+            command chmod 700 "$_cs_dir" 2>/dev/null ||
+                _refuse 3 "cannot restrict permissions on the staging directory: $_cs_dir" \
+                    "Refusing to stage into a directory whose mode cannot be secured."
+            ;;
+    esac
 
     # RE-CHECK after mkdir, and this is the load-bearing half of the symlink
     # guard. The `-L` test above is check-then-act: between it and `mkdir -p`
