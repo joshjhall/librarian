@@ -257,16 +257,22 @@ this PR narrow — its diff is wide and shallow, and a module split alongside it
 would bury the one thing a reviewer must check: that all ports now share one line
 model.
 
-The figures below are the **final** ones, re-measured with `pre-review-gates.sh`
-at the last commit — not the planning-time estimates. The first version of this
-section quoted the plan-lens numbers taken *before* implementation, which the
-work then invalidated; cycle 3 caught them understating the overage by about a
-quarter. A deferral note that goes stale is worse than none, because it reads as
-current.
+The figures below were measured with `pre-review-gates.sh` near the end of the
+work — not the planning-time estimates. The first version of this section quoted
+the plan-lens numbers taken *before* implementation, which the work then
+invalidated; cycle 3 caught them understating the overage by about a quarter. A
+deferral note that goes stale is worse than none, because it reads as current.
+
+They are marked approximate deliberately. A figure for a file the same PR is
+still editing is stale the moment a later commit touches it — chasing it to the
+byte just reintroduces the staleness in a smaller font. What has to be accurate
+is the **claim**: this file is several hundred lines over budget, this PR is
+responsible for most of that growth, and #1038 tracks the split. Run
+`pre-review-gates.sh` for the exact current number.
 
 | File | Budget | Final | This PR added | Tracked by |
 | ---- | ------ | ----- | ------------- | ---------- |
-| `tests/validate-python-ports.sh` | 700 | **990** | 365 | [#1038](https://github.com/joshjhall/librarian/issues/1038) |
+| `tests/validate-python-ports.sh` | 700 | **~995** | ~394 | [#1038](https://github.com/joshjhall/librarian/issues/1038) |
 | `check-security/patterns.py` | 500 | **666** | 40 | [#1037](https://github.com/joshjhall/librarian/issues/1037) |
 | `okf-migrate/migrate.py` | 500 | **519** | 26 | left to the existing backlog |
 
