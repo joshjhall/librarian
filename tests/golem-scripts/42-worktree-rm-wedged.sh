@@ -637,6 +637,17 @@ test_worktree_rm_attributes_ebadf_to_virtiofs() {
         "names the correct layer, and flags the correction for a reader who knows the old text"
     assert_file_contains "$WT_RM" "unmounting the bindfs overlay" \
         "records the measurement, so the next reader does not re-run it"
+    # #1017 widened this: the same EBADF shape reproduced on a LINUX
+    # devcontainer overlay, so the virtiofs paragraph above is the measured
+    # macOS mechanism rather than the full set of platforms. Pinned because the
+    # pre-existing assertions here — and the runtime `virtiofs` substring check
+    # in test_worktree_rm_partial_leftover_removal_is_tolerated — all still
+    # match the OLD narrower text, so a regression that quietly narrowed the
+    # attribution back to macOS-only would leave the suite green.
+    assert_file_contains "$WT_RM" "NOT MACOS-ONLY" \
+        "keeps the attribution widened past macOS (#1017)"
+    assert_file_contains "$WT_RM" "reproduced on a Linux" \
+        "the runtime message names the Linux overlay too, not just the comment"
 }
 
 # --- #1017: a REGISTERED worktree's force failure must reach the quarantine ---
