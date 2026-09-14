@@ -398,8 +398,56 @@ while IFS= read -r file; do
             ;;
         *.[Gg][Oo])
             emit_rows '\bexec\.Command[[:space:]]*\(' "unreaped-subprocess" "$L_SUBPROCESS" "$file"
-            emit_rows '\bos\.Interrupt\b' "terminate-without-kill" "$L_TERMINATE" "$file"
+            # terminate-without-kill keys on the GRACEFUL SEND site, the way the
+            # Rust and Bash arms below read this category — flag the SIGTERM,
+            # let pass-2 confirm it escalates.
+            #
+            # It used to key on the bare token os.Interrupt (#871), and that was
+            # wrong in a way worth recording: in Go that token never appears at
+            # a send site on its own line. Its common spelling is as an ARGUMENT
+            # to a registration, so the scanner filed a listener registration
+            # under this category — worse than silence, because the evidence
+            # then reads as a different defect.
+            #
+            # The EXCLUSION stops the same bug returning under the new token: a
+            # registration is just as commonly spelled
+            # `signal.Notify(c, syscall.SIGTERM)`, which matches the pattern and
+            # is not a send site either. Excluding it leaves that line to the
+            # unpaired-listener arm below, so it emits exactly ONE row of the
+            # right category.
+            #
+            # The exclusion is UNANCHORED on purpose. emit_rows_unless matches
+            # EXCLUDE against `grep -n` output, which carries a `NNN:` prefix, so
+            # a `^`-anchored exclusion binds to the line number and silently
+            # stops excluding — on the bash runtime only. See the rule at
+            # emit_rows_unless's definition.
+            emit_rows_unless '\bsyscall\.SIGTERM\b' "terminate-without-kill" "$L_TERMINATE" "$file" '\bsignal\.Notify[[:space:]]*\('
             emit_rows '\bos\.(Open|Create)[[:space:]]*\(' "unclosed-handle" "$L_HANDLE" "$file"
+            # Registration sites (#871). Go has no DOM-style addEventListener;
+            # the registrations that outlive their statement and want an
+            # explicit teardown are a signal-channel registration (signal.Stop),
+            # a ticker (ticker.Stop) and a bound listening socket (ln.Close).
+            #
+            # time.NewTimer / time.AfterFunc are deliberately NOT matched: a
+            # one-shot timer that fires is self-retiring, so flagging it would
+            # report the ordinary case as the defect — the trade #838 refused
+            # for Rust's `let _ =`. NewTicker re-arms forever and leaks until
+            # stopped, which is the difference.
+            #
+            # Boundaries spelled as in the Rust arm below: a leading `\b` (a
+            # helper-call site tests/lint-shell-portability.sh allows) and a
+            # REQUIRED trailing `[[:space:]]*\(`. No emit_rows_word is needed —
+            # that helper exists only because Python's Unicode `\w` boundary had
+            # no portable bracket spelling; every idiom here is ASCII and
+            # package-qualified.
+            #
+            # ONE emit_rows call, one alternation, as the Python arm above
+            # spells it. A second call re-greps the whole file, so a line
+            # matching two members would emit TWO rows here against the twin's
+            # one — a real divergence. (Row ORDER alone is safe: this gate sorts
+            # both sides before diffing. The Python arm's comment describes the
+            # stricter case; do not read it as license to split this one.)
+            emit_rows '\bsignal\.Notify[[:space:]]*\(|\btime\.NewTicker[[:space:]]*\(|\bnet\.Listen(TCP|Unix)?[[:space:]]*\(' "unpaired-listener" "$L_LISTENER" "$file"
             ;;
         *.[Rr][Ss])
             # Rust (#838). std::process::Command is the spawn site.

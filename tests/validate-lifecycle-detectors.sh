@@ -268,11 +268,32 @@ test_terminate_without_kill() {
     assert_fires "$list" terminate-without-kill "Terminate without kill escalation" \
         "lifecycle: JS .terminate() fires"
 
+    # Go: the GRACEFUL SEND site (#871). This arm used to key on the bare token
+    # os.Interrupt, which in Go is an ARGUMENT to signal.Notify rather than a
+    # send site — so a listener registration was filed under this category. The
+    # three fixtures below pin the corrected split: a send site fires, and
+    # BOTH registration spellings stay silent here (they are asserted as
+    # unpaired-listener in test_unpaired_listener).
     d="$(fresh_dir)"
-    command printf '%s\n' 'signal.Notify(c, os.Interrupt)' >"$d/d.go"
+    command printf '%s\n' 'p.Signal(syscall.SIGTERM)' >"$d/d.go"
     list="$(make_list "$d/l" "$d/d.go")"
     assert_fires "$list" terminate-without-kill "Terminate without kill escalation" \
-        "lifecycle: Go os.Interrupt fires"
+        "lifecycle: Go syscall.SIGTERM send site fires"
+
+    d="$(fresh_dir)"
+    command printf '%s\n' 'signal.Notify(c, os.Interrupt)' >"$d/notify.go"
+    list="$(make_list "$d/l" "$d/notify.go")"
+    assert_silent "$list" terminate-without-kill \
+        "lifecycle: Go signal.Notify(os.Interrupt) is NOT terminate-without-kill (#871)"
+
+    # The exclusion's whole point: re-keying onto syscall.SIGTERM would have
+    # reproduced the same mis-fire under a new token, because this spelling of
+    # the registration matches the pattern too.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'signal.Notify(c, syscall.SIGTERM)' >"$d/notify2.go"
+    list="$(make_list "$d/l" "$d/notify2.go")"
+    assert_silent "$list" terminate-without-kill \
+        "lifecycle: Go signal.Notify(syscall.SIGTERM) registration is excluded (#871)"
 
     # Rust explicit SIGTERM (#838) — the graceful send site, which is what this
     # category asks about.
@@ -396,7 +417,7 @@ test_unclosed_handle() {
 }
 
 # ============================================================================
-# unpaired-listener — registration sites (JS + Swift)
+# unpaired-listener — registration sites (JS + Swift + Rust + Python + Go)
 # ============================================================================
 test_unpaired_listener() {
     local d list
@@ -556,6 +577,61 @@ test_unpaired_listener() {
     list="$(make_list "$d/l" "$d/bare.py")"
     assert_silent "$list" unpaired-listener \
         "lifecycle: Python bare Timer( is excluded (only threading.Timer matches)"
+
+    # --- Go registration sites (#871) ---------------------------------------
+    # One fixture per alternation member, each in its own fresh_dir: the label
+    # is shared across languages, so a composite file would still pass with
+    # only one alternative firing.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'signal.Notify(c, os.Interrupt)' >"$d/notify.go"
+    list="$(make_list "$d/l" "$d/notify.go")"
+    assert_fires "$list" unpaired-listener "Listener/timer registered without visible removal" \
+        "lifecycle: Go signal.Notify fires (pairs with signal.Stop)"
+
+    d="$(fresh_dir)"
+    command printf '%s\n' 'ticker := time.NewTicker(d)' >"$d/tick.go"
+    list="$(make_list "$d/l" "$d/tick.go")"
+    assert_fires "$list" unpaired-listener "Listener/timer registered without visible removal" \
+        "lifecycle: Go time.NewTicker fires (pairs with ticker.Stop)"
+
+    d="$(fresh_dir)"
+    command printf '%s\n' 'ln, err := net.Listen("tcp", addr)' >"$d/ln.go"
+    list="$(make_list "$d/l" "$d/ln.go")"
+    assert_fires "$list" unpaired-listener "Listener/timer registered without visible removal" \
+        "lifecycle: Go net.Listen fires (pairs with ln.Close)"
+
+    d="$(fresh_dir)"
+    command printf '%s\n' 'l2, err := net.ListenUnix("unix", a)' >"$d/lnu.go"
+    list="$(make_list "$d/l" "$d/lnu.go")"
+    assert_fires "$list" unpaired-listener "Listener/timer registered without visible removal" \
+        "lifecycle: Go net.ListenUnix fires (the optional TCP/Unix suffix)"
+
+    # The deliberate DECLINE (#871, contract.md): a one-shot timer that fires is
+    # self-retiring, so flagging it would report the ordinary case as the
+    # defect — the trade #838 refused for Rust's `let _ =`. Silence here is a
+    # decision, and an undeclared arm would flip it without anything noticing.
+    d="$(fresh_dir)"
+    command printf '%s\n%s\n' 't := time.NewTimer(d)' 'time.AfterFunc(d, fn)' >"$d/timer.go"
+    list="$(make_list "$d/l" "$d/timer.go")"
+    assert_silent "$list" unpaired-listener \
+        "lifecycle: Go time.NewTimer/AfterFunc are deliberately NOT matched (#871)"
+
+    # THE issue's acceptance criterion: a registration emits exactly ONE row, of
+    # the right category — not a second row under terminate-without-kill, and
+    # not two listener rows from a split alternation.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'signal.Notify(c, syscall.SIGTERM)' >"$d/one.go"
+    list="$(make_list "$d/l" "$d/one.go")"
+    assert_equals "1" "$(emit_rows sh "$list" unpaired-listener | command wc -l | command tr -d ' ')" \
+        "lifecycle: Go signal.Notify emits ONE unpaired-listener row (bash)"
+    assert_equals "0" "$(emit_rows sh "$list" terminate-without-kill | command wc -l | command tr -d ' ')" \
+        "lifecycle: Go signal.Notify emits NO terminate-without-kill row (bash)"
+    if [ "$HAVE_PY" -eq 1 ]; then
+        assert_equals "1" "$(emit_rows py "$list" unpaired-listener | command wc -l | command tr -d ' ')" \
+            "lifecycle: Go signal.Notify emits ONE unpaired-listener row (python)"
+        assert_equals "0" "$(emit_rows py "$list" terminate-without-kill | command wc -l | command tr -d ' ')" \
+            "lifecycle: Go signal.Notify emits NO terminate-without-kill row (python)"
+    fi
 
     # The boundary class ADMITS `.`, so a QUALIFIED registration still fires.
     # This is the fixture the boundary mutation asked for: an earlier draft
@@ -954,9 +1030,9 @@ test_evidence_truncation_parity() {
 }
 
 run_test test_unreaped_subprocess "check-lifecycle: swift/py/js/go subprocess spawn arms + word-boundary negative"
-run_test test_terminate_without_kill "check-lifecycle: .terminate() + os.Interrupt terminate arms"
+run_test test_terminate_without_kill "check-lifecycle: .terminate() + Go syscall.SIGTERM send site and its signal.Notify exclusion (#871)"
 run_test test_unclosed_handle "check-lifecycle: py/go/js handle assignment fires, scoped with-open stays silent"
-run_test test_unpaired_listener "check-lifecycle: JS/Swift/Rust/Python registration arms + Python boundary and single-row negatives"
+run_test test_unpaired_listener "check-lifecycle: JS/Swift/Rust/Python/Go registration arms + boundary, decline and single-row negatives"
 run_test test_ruled_out_false_positives "check-lifecycle: draining pipe-reader + cleared dict negative fixtures (issue FPs)"
 run_test test_test_file_and_skip "check-lifecycle: wholesale test-file skip + segment anchoring + SKIP_GLOBS"
 run_test test_test_dir_does_not_skip_source "check-lifecycle: a test_*-named DIRECTORY does not skip the source inside it (#836)"

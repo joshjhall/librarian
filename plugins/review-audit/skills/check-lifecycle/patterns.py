@@ -198,10 +198,54 @@ def scan_file(path: str, lines: list[str]) -> None:
         elif ext == "go":
             if re.search(r"\bexec\.Command\s*\(", line):
                 emit(path, idx, "unreaped-subprocess", L_SUBPROCESS, line)
-            if re.search(r"\bos\.Interrupt\b", line):
+            # terminate-without-kill keys on the GRACEFUL SEND site, the way the
+            # Rust and Bash arms below/above read this category -- flag the
+            # SIGTERM, let pass-2 confirm it escalates.
+            #
+            # It used to key on the bare token os.Interrupt (#871). That was
+            # wrong in a way worth recording: in Go that token is not a send
+            # site on its own. Its ordinary spelling is as an ARGUMENT to a
+            # registration, `signal.Notify(c, os.Interrupt)`, so the
+            # scanner filed the registration under this category -- a worse
+            # failure than silence, because the evidence reads as a different
+            # defect. The send site in Go is an explicit Signal() call, and
+            # syscall.SIGTERM is what names it.
+            #
+            # The EXCLUSION is what stops the same bug returning under a new
+            # token: a registration is just as commonly spelled
+            # `signal.Notify(c, syscall.SIGTERM)`, which matches the pattern
+            # above and is not a send site either. Excluding the registration
+            # leaves that line to the unpaired-listener arm below, so it emits
+            # exactly one row of the right category. The bash twin spells this
+            # with emit_rows_unless and an UNANCHORED exclusion -- read the note
+            # at that helper's definition before touching either side.
+            if re.search(r"\bsyscall\.SIGTERM\b", line) and not re.search(
+                r"\bsignal\.Notify\s*\(", line
+            ):
                 emit(path, idx, "terminate-without-kill", L_TERMINATE, line)
             if re.search(r"\bos\.(Open|Create)\s*\(", line):
                 emit(path, idx, "unclosed-handle", L_HANDLE, line)
+            # Registration sites (#871). Go has no DOM-style addEventListener;
+            # the registrations that outlive their statement and want an
+            # explicit teardown are a signal-channel registration
+            # (signal.Stop), a ticker (ticker.Stop) and a bound listening
+            # socket (ln.Close).
+            #
+            # time.NewTimer and time.AfterFunc are deliberately NOT matched. A
+            # one-shot timer that fires is self-retiring, so flagging one would
+            # report the ordinary case as the defect -- the same trade #838
+            # refused for Rust's `let _ =`. NewTicker is different in kind: it
+            # re-arms forever and leaks until stopped.
+            #
+            # ONE re.search over a single alternation, mirroring the bash
+            # twin's single emit_rows -- a split would make a line matching two
+            # members emit two rows on one runtime and one on the other.
+            if re.search(
+                r"\bsignal\.Notify\s*\(|\btime\.NewTicker\s*\("
+                r"|\bnet\.Listen(TCP|Unix)?\s*\(",
+                line,
+            ):
+                emit(path, idx, "unpaired-listener", L_LISTENER, line)
         elif ext == "rs":
             # Rust (#838). std::process::Command is the spawn site.
             #
