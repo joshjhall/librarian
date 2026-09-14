@@ -397,7 +397,18 @@ EOF
         # not" (exit 3, a broken environment). The discriminator is whether the
         # plugin ROOT resolved at all — a present plugin missing its own bundled
         # harness is corruption, not an uninstalled optional dependency.
-        if [ -d "${SCRIPT_DIR}/../../${_cr_plugin}" ]; then
+        #
+        # BOTH depths are tested, and the second one is not optional: probe 2
+        # finds a sibling plugin two levels up (dev checkout, flat siblings),
+        # while probe 3 needs THREE because an installed plugin root carries a
+        # <version> segment. Checking only the dev depth meant that on a real
+        # installed tree the test looked inside the *workflow* plugin's own
+        # version directory for a sibling name — a path that essentially never
+        # exists — so an installed-but-corrupted sibling reported exit 4 "not
+        # installed" and the caller applied its skip-and-park. That inverts the
+        # exact distinction AC5 asks for, on the deployment that matters most.
+        if [ -d "${SCRIPT_DIR}/../../${_cr_plugin}" ] ||
+            [ -d "${SCRIPT_DIR}/../../../${_cr_plugin}" ]; then
             _refuse 3 \
                 "harness '$_cr_id' is missing from the '$_cr_plugin' plugin, which IS present" \
                 "This is a broken install, not an absent optional plugin." \
@@ -433,6 +444,21 @@ cmd_stage() {
     fi
 
     _cs_dir="$_cs_root/.claude/tmp/harness"
+
+    # A pre-existing SYMLINK here is refused, not followed. `-d` follows links,
+    # so without this test an attacker with write access to `.claude/tmp` could
+    # pre-create `harness` as a link to a directory they control: `-d` reports
+    # true, the hardening below is skipped as "already existed", `mkdir -p` is a
+    # no-op, and the harness is staged into their directory — then handed to the
+    # `Workflow` tool as a trusted scriptPath. Same shape as the #21 symlink
+    # defeat this file's `_is_under` comment records, one operation over.
+    if [ -L "$_cs_dir" ]; then
+        _refuse 3 "the staging path is a symlink: $_cs_dir" \
+            "Refusing to stage a harness through a link — the destination is" \
+            "executed as a scriptPath, so it must be a real directory this run" \
+            "can vouch for. Remove the link and re-run."
+    fi
+
     _cs_dir_existed=true
     [ -d "$_cs_dir" ] || _cs_dir_existed=false
     command mkdir -p "$_cs_dir" 2>/dev/null ||

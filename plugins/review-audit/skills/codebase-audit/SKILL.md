@@ -93,7 +93,7 @@ objective; pass `report: false` only if the user asked to suppress the file
 **Stage the harness, then invoke the `Workflow` tool** on the `path=` it prints.
 The `Workflow` tool only accepts a `scriptPath` under the session's cwd, and the
 installed plugin root never is — so the bundled path must be staged, not handed
-over directly (#973):
+over directly (#973).
 
 The stager ships with the **`workflow`** plugin, so this is the one site that
 reaches across a plugin boundary — and the two layouts put a sibling plugin in

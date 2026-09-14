@@ -468,6 +468,86 @@ test_present_plugin_missing_harness_exits_3() {
     command rm -rf "$root"
 }
 
+# The exit-3-vs-exit-4 discriminator on the INSTALLED layout, which is the shape
+# that matters and the one the two cases above cannot reach: both of those use
+# `install_stager <root> plugins/workflow` — a dev-shaped tree with no <version>
+# segment, which happens to match the two-levels-up test the code performed.
+#
+# So a discriminator that only knew the dev depth passed both of them while
+# being wrong on every real install: on an installed tree, two levels up from
+# .../workflow/<version>/scripts lands INSIDE the workflow plugin's own version
+# directory, where a sibling plugin name never appears. An installed-but-
+# corrupted sibling therefore reported exit 4 "not installed", telling the caller
+# its skip-and-park was correct for what is actually a broken environment —
+# inverting AC5 precisely. This fixture is what makes that depth checkable.
+test_installed_layout_distinguishes_broken_from_absent() {
+    local root
+    root="$(new_tree)"
+    [ -n "$root" ] || {
+        skip_test "mktemp unavailable"
+        return 0
+    }
+
+    # A real installed shape: <cache>/<marketplace>/<plugin>/<version>/...
+    install_stager "$root" "librarian/workflow/0.14.0"
+    local stager="$root/librarian/workflow/0.14.0/scripts/harness-stage.sh"
+
+    # (a) sibling plugin entirely absent -> exit 4, the skip-and-park case.
+    run_stager "$stager" path codebase-audit
+    assert_equals "4" "$LAST_RC" \
+        "installed layout: a genuinely absent sibling plugin still exits 4"
+
+    # (b) sibling plugin PRESENT (its version dir exists) but its harness file is
+    #     missing -> exit 3. This is the assertion the dev-only depth got wrong.
+    command mkdir -p "$root/librarian/review-audit/0.14.0/skills/codebase-audit"
+    run_stager "$stager" path codebase-audit
+    assert_equals "3" "$LAST_RC" \
+        "installed layout: a present-but-corrupted sibling plugin exits 3, not 4"
+    assert_contains "$LAST_OUT" "broken install" \
+        "installed layout: the refusal names it a broken install"
+
+    command rm -rf "$root"
+}
+
+# A pre-existing symlink at the staging path is refused, not followed. `-d`
+# follows links, so the "already existed, skip hardening" branch would otherwise
+# stage the harness into whatever directory the link points at — and that file is
+# then handed to the `Workflow` tool as a trusted scriptPath.
+#
+# Note this is a DIFFERENT case from test_symlinked_root_resolves: there the
+# link is the stage ROOT the caller passed (legitimate — a worktree reached
+# through a link), and resolving it is correct. Here the link is the staging
+# directory the script itself creates, which it must own outright.
+test_symlinked_staging_dir_refuses() {
+    local dest elsewhere
+    dest="$(new_tree)"
+    elsewhere="$(new_tree)"
+    [ -n "$dest" ] && [ -n "$elsewhere" ] || {
+        skip_test "mktemp unavailable"
+        return 0
+    }
+
+    command mkdir -p "$dest/.claude/tmp"
+    command ln -s "$elsewhere" "$dest/.claude/tmp/harness" 2>/dev/null || {
+        command rm -rf "$dest" "$elsewhere"
+        skip_test "cannot create a symlink here"
+        return 0
+    }
+
+    run_stager "$STAGER" stage orchestrate --dir "$dest"
+    assert_equals "3" "$LAST_RC" "a symlinked staging directory exits 3"
+    assert_contains "$LAST_OUT" "symlink" "the refusal says the path is a symlink"
+    assert_not_contains "$LAST_OUT" "path=" "a refused stage emits no path="
+
+    # The decisive assertion: nothing was written through the link.
+    local leaked
+    leaked="$(command find "$elsewhere" -name '*.workflow.js' 2>/dev/null || true)"
+    assert_equals "" "$leaked" \
+        "no harness is staged into the symlink's target directory"
+
+    command rm -rf "$dest" "$elsewhere"
+}
+
 # THE PROBE LOG MUST SURVIVE. This is a regression test for a real bug in the
 # first draft: the probe list was accumulated into a global from inside a command
 # substitution — a subshell — so every append was discarded and the refusal
@@ -555,6 +635,13 @@ test_usage_errors_exit_2() {
 
     run_stager "$STAGER" stage ship-issue --dir /no/such/dir
     assert_equals "2" "$LAST_RC" "--dir naming a missing directory exits 2"
+
+    run_stager "$STAGER" stage ship-issue --bogus
+    assert_equals "2" "$LAST_RC" "an unrecognized flag exits 2"
+    assert_contains "$LAST_OUT" "unknown flag" "the error names the unknown flag"
+
+    run_stager "$STAGER" stage ship-issue --dir
+    assert_equals "2" "$LAST_RC" "--dir with no value exits 2"
 }
 
 # THE INVARIANT, asserted directly over every id: never exit 0 without a usable
@@ -596,6 +683,8 @@ run_test test_installed_version_fallback_is_numeric "probe 3b: version fallback 
 run_test test_malformed_version_cannot_win "a malformed version directory cannot win"
 run_test test_absent_plugin_exits_4 "an absent owning plugin exits 4 (skip applies)"
 run_test test_present_plugin_missing_harness_exits_3 "a broken install exits 3 (delivery stops)"
+run_test test_installed_layout_distinguishes_broken_from_absent "installed layout: broken (3) vs absent (4) stay distinct"
+run_test test_symlinked_staging_dir_refuses "a symlinked staging directory refuses rather than staging through it"
 run_test test_refusal_lists_every_probe "a refusal lists every probe it tried"
 run_test test_unwritable_cwd_refuses "an unwritable cwd exits 3, never a skip"
 run_test test_usage_errors_exit_2 "usage errors exit 2, distinct from absence"
