@@ -378,7 +378,20 @@ def scan_bundle(root: str, emit, thresholds_path: str) -> None:
     for name in entries:
         if not name.endswith(".md"):
             continue
-        if not os.path.isfile(os.path.join(root, name)):
+        # THE ROOT LEVEL NEEDS THE SAME SYMLINK GUARD AS THE SUBDIRECTORIES.
+        # `os.path.isfile` FOLLOWS a symlink, so `leaked.md -> /outside/x.md` was
+        # admitted as a concept and then READ — and the health checks echo a
+        # memory's own `stale_check` text into their evidence, so content from
+        # outside the bundle was disclosed in the scanner's own report.
+        # Measured: a sentinel string in an off-root file appeared verbatim in a
+        # memory-stale row.
+        #
+        # This gap existed because the first fix guarded the level the finding
+        # NAMED (subdirectories) rather than the whole class. A symlink is
+        # followed by every `isfile`/`isdir` in this pass, so each one needs the
+        # guard, not just the one that was reported.
+        full = os.path.join(root, name)
+        if not os.path.isfile(full) or os.path.islink(full):
             continue
         if is_index(name, index_names):
             indexes.append(name)
@@ -413,7 +426,12 @@ def scan_bundle(root: str, emit, thresholds_path: str) -> None:
     index_set = set(indexes)
     for target in sorted(named):
         if target.endswith("/index.md"):
-            if not os.path.isfile(os.path.join(root, target)):
+            # PRESENT MEANS "a real file we will actually walk". A SYMLINKED
+            # sub-index is skipped by the directory walk below, so counting it
+            # as present here would leave its directory silently unchecked while
+            # no dangling row fired either — the gap reading as a clean pass.
+            _sub = os.path.join(root, target)
+            if not os.path.isfile(_sub) or os.path.islink(_sub):
                 src, line_no = named[target][0]
                 emit(
                     os.path.join(root, src),

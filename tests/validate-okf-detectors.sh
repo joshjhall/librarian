@@ -987,6 +987,49 @@ test_subdirectory_index_routing() {
             "okf: a symlinked subdirectory is never descended (python)"
     fi
 
+    # THE ROOT LEVEL NEEDS THE SAME GUARD, and this case exists because the
+    # first fix guarded only the level the finding NAMED (subdirectories). Both
+    # `os.path.isfile` and `[ -f ]` follow a symlink, so a root-level
+    # `leaked.md -> /outside/x.md` was admitted as a concept and READ — and the
+    # health checks echo a memory's own stale_check into their evidence, so
+    # off-root CONTENT was disclosed in the report. Measured in both runtimes.
+    b="$(fresh_bundle)"
+    command mkdir -p "$WORKDIR/offroot.$$"
+    command printf -- '---\ntype: reference\nstale_after: 2020-01-01\nstale_check: OFFROOT-SENTINEL\n---\n\nBody.\n' \
+        >"$WORKDIR/offroot.$$/secret.md"
+    command printf -- '# Index\n\n* [Leaked](leaked.md) - x\n* [Kept](kept.md) - x\n' >"$b/MEMORY.md"
+    command printf -- '---\ntype: reference\n---\n\nBody.\n' >"$b/kept.md"
+    command ln -s "$WORKDIR/offroot.$$/secret.md" "$b/leaked.md"
+    list="$(list_bundle "$b")"
+    assert_not_contains "$(emit_rows sh "$list" memory-stale)" "OFFROOT-SENTINEL" \
+        "okf: a ROOT-LEVEL symlinked concept is never read (bash)"
+    if [ "$HAVE_PY" -eq 1 ]; then
+        assert_not_contains "$(emit_rows py "$list" memory-stale)" "OFFROOT-SENTINEL" \
+            "okf: a ROOT-LEVEL symlinked concept is never read (python)"
+    fi
+    # TEETH, so this cannot pass by the whole pass having gone silent: a REAL
+    # root-level concept carrying the same expired frontmatter DOES produce its
+    # stale row. `kept.md` is named by the index, so orphan is the wrong
+    # property to assert here — staleness is the one the symlink case suppresses.
+    command printf -- '---\ntype: reference\nstale_after: 2020-01-01\nstale_check: INBUNDLE-SENTINEL\n---\n\nBody.\n' \
+        >"$b/kept.md"
+    list="$(list_bundle "$b")"
+    assert_contains "$(emit_rows sh "$list" memory-stale)" "INBUNDLE-SENTINEL" \
+        "okf: ...while a REAL root-level concept is still read and judged"
+
+    # A SYMLINKED SUB-INDEX reads as ABSENT, not present. The walk skips it, so
+    # counting it present would leave its directory silently unchecked while no
+    # dangling row fired either — the gap reading as a clean pass.
+    b="$(fresh_bundle)"
+    command mkdir -p "$WORKDIR/offidx.$$" "$b/fake"
+    command printf -- '# x\n' >"$WORKDIR/offidx.$$/index.md"
+    command printf -- '# Index\n\n* [Fake](fake/index.md) - bucket\n' >"$b/MEMORY.md"
+    command ln -s "$WORKDIR/offidx.$$/index.md" "$b/fake/index.md"
+    command printf -- '---\ntype: reference\n---\n\nBody.\n' >"$b/fake/c.md"
+    list="$(list_bundle "$b")"
+    assert_fires "$list" memory-dangling-index "fake/index.md" \
+        "okf: a SYMLINKED sub-index reads as absent, never silently present"
+
     # A root line naming an ABSENT sub-index is still dangling. Presence is what
     # the check tests, so without this the sub-index arm would be a blanket
     # exemption for anything ending in `/index.md`.

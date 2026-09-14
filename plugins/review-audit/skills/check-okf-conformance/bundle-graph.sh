@@ -295,6 +295,13 @@ scan_bundle() {
     local indexes="" concepts=""
     for f in "$root"/*.md; do
         [ -f "$f" ] || continue
+        # THE ROOT LEVEL NEEDS THE SAME SYMLINK GUARD AS THE SUBDIRECTORIES
+        # below. `[ -f ]` FOLLOWS a symlink, so `leaked.md -> /outside/x.md` was
+        # admitted as a concept and then READ — and the health checks echo a
+        # memory's own `stale_check` into their evidence, so off-root content was
+        # disclosed in the report. Measured in BOTH runtimes: a sentinel string
+        # in an outside file appeared verbatim in a memory-stale row.
+        [ -L "$f" ] && continue
         base="${f##*/}"
         if is_index "$base" "$names"; then
             indexes="${indexes}${base}
@@ -347,7 +354,11 @@ EOF
         # exists. It is not a concept and must never be judged as one.
         case "$target" in
             */index.md)
-                if [ ! -f "$root/$target" ]; then
+                # PRESENT MEANS "a real file we will actually walk": a SYMLINKED
+                # sub-index is skipped by the directory walk, so counting it
+                # present would leave its directory silently unchecked while no
+                # dangling row fired either.
+                if [ ! -f "$root/$target" ] || [ -L "$root/$target" ]; then
                     first_idx="$(command printf '%s' "$named" | command awk -F"$TAB" -v t="$target" '$1 == t { print $2; exit }')"
                     first_line="$(command printf '%s' "$named" | command awk -F"$TAB" -v t="$target" '$1 == t { print $3; exit }')"
                     emit "$root/$first_idx" "$first_line" "$C_DANGLING_INDEX" \
