@@ -1918,7 +1918,15 @@ test_crlf_evidence_is_nonvacuous() {
     setup_crlf_evidence_fixture
 
     for skill in $CRLF_EV_MUST_EMIT; do
-        py="$(list_python_ports | command grep "/${skill}/patterns\.py$" | command head -1)"
+        # No `| head -1`: under `set -o pipefail` a downstream head that closes
+        # the pipe early can SIGPIPE the upstream grep and surface as rc 141,
+        # turning a found port into a suite failure. Measured reproducible with
+        # a many-match upstream; the real corpus matches once per skill, so it
+        # cannot fire today -- which makes it a latent trap keyed to the DATA
+        # rather than to the code, exactly the `grep -q` shape CLAUDE.md records
+        # from #932. The pattern is anchored and skill names are unique, so the
+        # match is single by construction and `head` bought nothing.
+        py="$(list_python_ports | command grep "/${skill}/patterns\.py$" || true)"
         if [ -z "$py" ]; then
             silent="$silent ${skill}(not-found)"
             continue
