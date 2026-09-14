@@ -36,6 +36,7 @@
 - [An issue's symbol inventory needs re-measuring](issue-symbol-inventory-needs-remeasuring.md) — the table counts NAMES and has drifted; grep declarations, diff bodies
 - [Gate header claims an unimplemented check](gate-header-claims-an-unimplemented-check.md) — grep for the enforcing code; a rule written before it was testable stays prose
 - [A vacuous scan reads as a clean verdict](vacuous-scan-reads-as-a-clean-verdict.md) — zero findings can mean "never looked"; assert the corpus was non-empty BEFORE reporting clean (#934)
+- [Parity proves agreement, not correctness](parity-proves-agreement-not-correctness.md) — a twin-parity assertion is blind to any defect BOTH runtimes share; assert content too (#934: caught 1 of 3)
 - [Targeted gates miss what only the suite checks](targeted-gates-miss-what-only-the-suite-checks.md) — repo-wide invariants (file modes, manifests) belong to no per-area gate; run the full suite when a change ADDS a file (#934)
 - [Detector needs a certainty tier](detector-needs-a-certainty-tier.md) — measure the idiom's hit rate before implementing; 723 FPs vs 2 TPs is "not at this tier"
 - [An issue's stated cause can be false](issue-cause-may-be-falsified-by-measurement.md) — A/B the SUGGESTED fix; a no-op fix means the diagnosis is wrong (#766)
