@@ -83,7 +83,22 @@ GATE="${MEMORY_BASELINE_GATE:-$PROJECT_ROOT/tests/validate-okf-bundle.sh}"
 # materialized staged tree, so this is a path fragment, not a location on disk.
 BUNDLE_REL="${MEMORY_BUNDLE_REL:-.claude/memory}"
 
-BASELINE="${OKF_BUNDLE_BASELINE:-$PROJECT_ROOT/tests/okf-bundle.baseline}"
+# The baseline path, RELATIVE TO THE REPO ROOT — resolved inside the
+# materialized staged tree below, for the same reason the bundle is.
+#
+# THE BASELINE IS PART OF THE STAGED TREE TOO, and reading it from disk is this
+# guard's own bug reintroduced one file over. The documented remedy for a block
+# is "raise the entry in tests/okf-bundle.baseline" — so the author edits it,
+# re-runs `git commit`, and if they forgot to `git add` it the guard reads the
+# bumped DISK copy, exits 0, and the commit lands carrying the OLD baseline
+# against the new finding. Main then reds at pre-push: precisely #1007, arriving
+# through the guard built to prevent it. Measured both directions before the fix
+# (unstaged bump => false pass; staged bump reverted on disk => false block).
+#
+# $OKF_BUNDLE_BASELINE still overrides with a LITERAL path — the meta-test points
+# it at a sandbox file that is not in any index, so the override cannot be
+# re-rooted without breaking every case that uses it.
+BASELINE_REL="${MEMORY_BASELINE_REL:-tests/okf-bundle.baseline}"
 
 die() {
     command printf 'check-memory-baselines: %s\n' "$1" >&2
@@ -130,6 +145,33 @@ command git -C "$PROJECT_ROOT" rev-parse --git-dir >/dev/null 2>&1 ||
 # buries the one file the author actually touched under four screens of noise
 # — which is "something is wrong" again, the thing AC2 asks this guard not to
 # be. The staged set is what makes the diagnostic actionable.
+#
+# THE DIFF'S EXIT STATUS IS CHECKED, and a process substitution cannot carry it:
+# `done < <(git …)` leaves the loop reading an empty stream when git fails, so a
+# corrupt index or a resource failure would set STAGED_MEMORY=0 and the guard
+# would exit 0 announcing "nothing to check". That is the silent skip this
+# script's own header forbids, in the one git call that had no die() around it.
+# Run it to a file first so the status is git's own, and keep stderr for the
+# diagnostic rather than discarding it.
+# ONE trap for both temporaries. A second `trap … EXIT` later in the file would
+# REPLACE this handler rather than add to it (bash keeps one per signal), so the
+# earlier temp would leak on every run — the reason both paths are cleaned here.
+STAGED_RAW="$(command mktemp)" ||
+    die 'mktemp failed — cannot read the staged file list.'
+WORKDIR=""
+cleanup() {
+    command rm -f "$STAGED_RAW" "$STAGED_RAW.err"
+    [ -n "$WORKDIR" ] && command rm -rf "$WORKDIR"
+    return 0
+}
+trap cleanup EXIT
+
+command git -C "$PROJECT_ROOT" diff --cached --name-only -z \
+    >"$STAGED_RAW" 2>"$STAGED_RAW.err" ||
+    die "git diff --cached failed (exit $?):" \
+        "$(command sed 's/^/  /' <"$STAGED_RAW.err" 2>/dev/null)" \
+        'Refusing to read a failed diff as "nothing staged".'
+
 STAGED_MEMORY=0
 STAGED_LIST=""
 while IFS= read -r -d '' path; do
@@ -141,7 +183,7 @@ while IFS= read -r -d '' path; do
 "
             ;;
     esac
-done < <(command git -C "$PROJECT_ROOT" diff --cached --name-only -z 2>/dev/null)
+done <"$STAGED_RAW"
 
 # Nothing in the bundle — the overwhelming majority of commits. Cost so far is
 # one `git diff --cached`, so the guard is effectively free on them.
@@ -157,7 +199,6 @@ fi
 
 WORKDIR="$(command mktemp -d)" ||
     die 'mktemp failed — cannot materialize the staged tree.'
-trap 'command rm -rf "$WORKDIR"' EXIT
 
 # `-a` writes every tracked path, not just the staged ones: the bundle's graph
 # health is a WHOLE-CORPUS property. memory-orphan asks whether a file is
@@ -170,6 +211,19 @@ command git -C "$PROJECT_ROOT" checkout-index -a --prefix="$WORKDIR/" \
         'Refusing to report on a tree that was never built.'
 
 STAGED_BUNDLE="$WORKDIR/$BUNDLE_REL"
+
+# Resolve the baseline against the SAME materialized tree, so the bundle and the
+# allowance it is judged against come from one consistent snapshot — the commit.
+# An explicit $OKF_BUNDLE_BASELINE wins as a literal path (see BASELINE_REL).
+if [ -n "${OKF_BUNDLE_BASELINE:-}" ]; then
+    BASELINE="$OKF_BUNDLE_BASELINE"
+else
+    BASELINE="$WORKDIR/$BASELINE_REL"
+    # Staged-for-deletion, or never tracked. The gate treats an absent baseline
+    # as all-zeros, which is the TIGHTER reading — deleting the ratchet must not
+    # silently widen it.
+    [ -f "$BASELINE" ] || BASELINE="$PROJECT_ROOT/$BASELINE_REL"
+fi
 
 # The bundle is staged-for-DELETION down to nothing, or was never tracked.
 # Either way there is no corpus to judge and no way to raise a count.

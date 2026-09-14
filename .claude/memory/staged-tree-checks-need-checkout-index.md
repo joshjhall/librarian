@@ -1,13 +1,13 @@
 ---
 name: staged-tree-checks-need-checkout-index
-description: "A pre-commit check that runs a repo gate must materialize the index with `git checkout-index` — `ls-files` reads the INDEX but scanners read CONTENT from the worktree, so a staged-broken/worktree-fixed file reports clean; and `--diff-filter=ACMR` silently drops the deletion route"
+description: "A pre-commit check that runs a repo gate must materialize the index — its CONFIG file too, not just the corpus — with `git checkout-index`: `ls-files` reads the INDEX but scanners read CONTENT from the worktree, so a staged-broken/worktree-fixed file reports clean; and `--diff-filter=ACMR` silently drops the deletion route"
 type: feedback
 ---
 
 A pre-commit guard judges **what is about to be committed**, and neither half of
 that comes for free from running an existing gate in the working directory.
 
-**Two measured traps, both silent** (#1007, `bin/check-memory-baselines.sh`):
+**Three measured traps, all silent** (#1007, `bin/check-memory-baselines.sh`):
 
 - **Index vs worktree are different trees.** `tests/validate-okf-bundle.sh`
   enumerates with `git ls-files` — which reads the **index**, so a staged-but-
@@ -21,6 +21,16 @@ that comes for free from running an existing gate in the working directory.
   its `MEMORY.md` pointer leaves `memory-dangling-index`, an unlisted category
   whose implicit baseline is 0 — one is enough. With `ACMR` the guard exits 0 on
   exactly that commit. Drop the filter; let the gate decide what matters.
+
+**And the check's own CONFIG file is part of the staged tree.** Materializing the
+corpus is only half of it: the guard also read `tests/okf-bundle.baseline` — the
+allowance it judges against — from `$PROJECT_ROOT`, i.e. from disk. The remedy the
+tool prints for a block is "raise the entry in that file", so the author edits it,
+re-runs `git commit`, and a forgotten `git add` lets the guard see the bumped disk
+copy, exit 0, and land a commit carrying the OLD baseline against the new finding.
+Main reds at pre-push — the exact bug, reintroduced one file over, inside the
+guard built to prevent it. Found by the pre-PR review and reproduced before
+fixing. Resolve **both** the corpus and its thresholds against the same snapshot.
 
 Materialize with **`-a`** (every tracked path), not just the changed ones:
 graph-health findings are whole-corpus properties. `memory-orphan` asks whether a

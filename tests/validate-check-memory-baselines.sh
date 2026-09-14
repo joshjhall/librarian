@@ -138,6 +138,21 @@ run_guard() {
         "$REAL_BASH" "$repo/bin/check-memory-baselines.sh" 2>&1)" || GUARD_RC=$?
 }
 
+# run_guard_default_baseline <repo> — same, but WITHOUT OKF_BUNDLE_BASELINE, so
+# the guard resolves the baseline itself. Required by the staged-baseline cases:
+# the override is a literal path and would bypass the very resolution they test.
+run_guard_default_baseline() {
+    local repo="$1"
+    shift
+    GUARD_RC=0
+    command cp "$GUARD" "$repo/bin/check-memory-baselines.sh"
+    GUARD_OUT="$(/usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
+        -uBASH_ENV \
+        MEMORY_BASELINE_GATE="$REPO_ROOT/tests/validate-okf-bundle.sh" \
+        "$@" \
+        "$REAL_BASH" "$repo/bin/check-memory-baselines.sh" 2>&1)" || GUARD_RC=$?
+}
+
 # --- AC4: the mutation, both directions -------------------------------------
 
 # Stage a memory missing its required body sections; the guard must fire, and
@@ -503,7 +518,142 @@ EOF
         "the materialization prefix is stripped — not left absolute, which would defeat the staged-file lookup"
 }
 
+# --- the baseline is part of the staged tree too -----------------------------
+
+# THE GUARD'S OWN BUG, ONE FILE OVER (found by the pre-PR review, reproduced
+# before fixing). The remedy this script prints for a block is "raise the entry
+# in tests/okf-bundle.baseline" — so the author edits it and re-runs `git
+# commit`. If the baseline were read from DISK, a forgotten `git add` would let
+# the guard see the bumped copy, exit 0, and land a commit carrying the OLD
+# baseline against the new finding. Main reds at pre-push: #1007 exactly,
+# arriving through the guard built to prevent it.
+#
+# These two cases run WITHOUT the OKF_BUNDLE_BASELINE override, because that
+# override is a literal path and would bypass the resolution under test.
+test_unstaged_baseline_bump_does_not_pass_the_guard() {
+    local repo=""
+    make_repo repo
+
+    command cat >"$repo/.claude/memory/nu.md" <<'EOF'
+---
+name: nu
+description: a memory with no why sections
+type: feedback
+---
+
+Body with no why sections.
+EOF
+    index_line "$repo" nu.md Nu
+    command git -C "$repo" add -A 2>/dev/null
+
+    # Raise the allowance on DISK only — never staged.
+    command printf '# test baseline\n\nmemory-missing-why 2\n' \
+        >"$repo/tests/okf-bundle.baseline"
+
+    run_guard_default_baseline "$repo"
+
+    assert_true "[ '$GUARD_RC' -eq 1 ]" \
+        "an UNSTAGED baseline bump does not satisfy the guard (exit $GUARD_RC) — the commit would carry the old baseline and red main"
+}
+
+test_staged_baseline_bump_passes() {
+    local repo=""
+    make_repo repo
+
+    command cat >"$repo/.claude/memory/xi.md" <<'EOF'
+---
+name: xi
+description: a memory with no why sections
+type: feedback
+---
+
+Body with no why sections.
+EOF
+    index_line "$repo" xi.md Xi
+    command printf '# test baseline\n\nmemory-missing-why 2\n' \
+        >"$repo/tests/okf-bundle.baseline"
+    command git -C "$repo" add -A 2>/dev/null
+
+    run_guard_default_baseline "$repo"
+
+    assert_true "[ '$GUARD_RC' -eq 0 ]" \
+        "a STAGED baseline bump does satisfy it (exit $GUARD_RC) — the guard blocks the omission, not the deliberate raise"
+}
+
 # --- fail loud, never silently ----------------------------------------------
+
+# A failing `git diff --cached` must not read as "nothing staged". A process
+# substitution cannot carry the status, so the loop would see an empty stream,
+# leave STAGED_MEMORY at 0, and exit 0 announcing a clean run — the silent skip
+# this script's own header forbids, in the one git call that had no die().
+test_a_failing_git_diff_fails_loud() {
+    local repo="" out="" rc=0
+    make_repo repo
+    command cp "$GUARD" "$repo/bin/check-memory-baselines.sh"
+
+    # A corrupt index makes `git diff --cached` exit non-zero for a real reason.
+    command printf 'garbage' >"$repo/.git/index"
+
+    out="$(/usr/bin/env "${GIT_SCRUB[@]/#/-u}" -uBASH_ENV \
+        MEMORY_BASELINE_GATE="$REPO_ROOT/tests/validate-okf-bundle.sh" \
+        "$REAL_BASH" "$repo/bin/check-memory-baselines.sh" 2>&1)" || rc=$?
+
+    assert_true "[ '$rc' -eq 2 ]" \
+        "a failing git diff exits 2, never 0 (exit $rc) — an unreadable index must not read as an empty one"
+    assert_contains "$out" "git diff --cached failed" \
+        "and names the failure rather than reporting a clean scan"
+}
+
+# The two earliest die() paths, which nothing else pins: a regression that
+# guarded either with `|| true` would otherwise pass this suite.
+test_absent_git_fails_loud() {
+    local repo="" out="" rc=0
+    make_repo repo
+    command cp "$GUARD" "$repo/bin/check-memory-baselines.sh"
+
+    # An empty PATH: `command -v git` finds nothing.
+    out="$(/usr/bin/env "${GIT_SCRUB[@]/#/-u}" -uBASH_ENV PATH="/nonexistent" \
+        "$REAL_BASH" "$repo/bin/check-memory-baselines.sh" 2>&1)" || rc=$?
+
+    assert_true "[ '$rc' -eq 2 ]" \
+        "an absent git exits 2 (exit $rc)"
+    assert_contains "$out" "git not found" \
+        "and says so"
+}
+
+test_non_git_directory_fails_loud() {
+    local plain="" out="" rc=0
+    plain="$(command mktemp -d "$WORKDIR/plain.XXXXXX")"
+    command mkdir -p "$plain/bin"
+    command cp "$GUARD" "$plain/bin/check-memory-baselines.sh"
+
+    out="$(/usr/bin/env "${GIT_SCRUB[@]/#/-u}" -uBASH_ENV \
+        "$REAL_BASH" "$plain/bin/check-memory-baselines.sh" 2>&1)" || rc=$?
+
+    assert_true "[ '$rc' -eq 2 ]" \
+        "a non-git directory exits 2 (exit $rc) — never a silent pass"
+    assert_contains "$out" "not a git checkout" \
+        "and names the reason"
+}
+
+# --- the whole-bundle-gone branch -------------------------------------------
+
+# A separately-coded early exit: if the staged tree has no bundle directory at
+# all, there is no corpus to judge. The single-file deletion cases above do not
+# reach it — only removing every file under .claude/memory/ in one commit does.
+test_deleting_the_whole_bundle_passes() {
+    local repo=""
+    make_repo repo
+
+    command git -C "$repo" rm -q -r "$repo/.claude/memory" 2>/dev/null
+
+    run_guard "$repo"
+
+    assert_true "[ '$GUARD_RC' -eq 0 ]" \
+        "removing the entire bundle in one commit exits 0 (exit $GUARD_RC) — no corpus to judge, and no way to raise a count"
+}
+
+# --- fail loud, never silently (gate paths) ---------------------------------
 
 # A missing gate must NOT be a pass. There is no 77 here: the guard's runtime is
 # git plus the in-repo gate, so absence is a broken checkout rather than an
@@ -596,6 +746,18 @@ run_test test_non_ascii_filename_is_still_in_scope \
     "a non-ASCII memory filename is still in scope"
 run_test test_rows_render_repo_relative_under_a_hostile_tmpdir \
     "rows render repo-relative under a hostile TMPDIR"
+run_test test_unstaged_baseline_bump_does_not_pass_the_guard \
+    "an unstaged baseline bump does not satisfy the guard"
+run_test test_staged_baseline_bump_passes \
+    "a staged baseline bump does satisfy it"
+run_test test_a_failing_git_diff_fails_loud \
+    "a failing git diff fails loud, never reads as nothing staged"
+run_test test_absent_git_fails_loud \
+    "an absent git fails loud"
+run_test test_non_git_directory_fails_loud \
+    "a non-git directory fails loud"
+run_test test_deleting_the_whole_bundle_passes \
+    "removing the entire bundle in one commit exits 0"
 run_test test_missing_gate_fails_loud \
     "an absent gate fails loud (exit 2), never passes and never skips"
 run_test test_broken_gate_is_distinguished_from_findings \
