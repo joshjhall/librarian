@@ -193,7 +193,13 @@ const clampFragment = (v, cap = MEMORY_FRAGMENT_CAP) => {
 const redactMemoryFindings = (findings) =>
   (Array.isArray(findings) ? findings : []).map((f) => {
     if (!isMemoryFinding(f)) return f
-    const where = `${f.file || '(unknown file)'}:${f.line_start == null ? '?' : f.line_start}`
+    // `f.file` is clamped like every other string, even though the schema calls
+    // it a short repo-relative path: nothing BOUNDS it, and it is written by the
+    // same scan agent as `evidence`. Leaving it raw would have made the stated
+    // invariant false on the one field the rewrite interpolates — the redacted
+    // description would carry unbounded agent-authored text straight into the
+    // issue body. The cap is generous enough for any real path.
+    const where = `${clampFragment(f.file) || '(unknown file)'}:${f.line_start == null ? '?' : f.line_start}`
     return {
       ...f,
       description:

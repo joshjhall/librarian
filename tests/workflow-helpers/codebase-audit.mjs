@@ -572,6 +572,14 @@ export async function run() {
       "redactMemoryFindings: NO string on a redacted memory finding carries body text (whole-object invariant)",
     );
 
+    // `file` is interpolated into the rewritten description, so it must be
+    // clamped too — it is written by the same agent as `evidence` and the schema
+    // bounds it no more tightly. Leaving it raw made the stated invariant false
+    // on the one field the rewrite actually inlines.
+    const fileLeak = redactMemoryFindings([{ ...leaky, file: BODY }])[0];
+    ok(!fileLeak.description.includes(leaked), "redactMemoryFindings: a body smuggled into `file` does not reach the description");
+    ok(!fileLeak.description.includes("\n"), "redactMemoryFindings: the rewritten description stays single-line");
+
     // THE CROSS-DOMAIN CASE (#698 review cycle 2). The Step 2 routing table sends
     // every bundle file to BOTH `memory` and `decomposition`, so audit-decomposition
     // reads the same bodies and emits ai-file-bloat / decomposition-seam rows under

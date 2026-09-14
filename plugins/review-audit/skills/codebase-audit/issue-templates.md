@@ -287,6 +287,7 @@ filing or file output alike). Format:
 | -------------------------------- | ------------- | ------------------------- | --------------------------------- |
 | `src/config.py`                  | file-length   | 2025-06-01 (baseline=450) | Intentionally large config module |
 | `.claude/skills/custom/SKILL.md` | skill-quality | 2025-09-01                | Broad scope is intentional        |
+| ...                              |               |                           |                                   |
 
 ### Declined Findings ({D} examined, left as-is)
 
@@ -306,7 +307,6 @@ later reader can disagree with it.
 This table is distinct from Acknowledged Findings above: an acknowledgment is a
 **human's** prior suppression via an inline `audit:acknowledge` comment; a
 decline is the **auditor's own** judgment on this run.
-| ...                              |               |                           |                                   |
 ```
 
 ---
