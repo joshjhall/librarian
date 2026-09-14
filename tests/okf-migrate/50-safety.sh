@@ -274,11 +274,38 @@ name: scratch
 ---
 
 Scratch.'
+    # A dot-prefixed FILE directly under the root is a DIFFERENT case from a
+    # dot-prefixed DIRECTORY, and the two runtimes must agree on it too. python
+    # prunes dot-DIRECTORIES only (`dirnames[:] = [...]`) and says nothing about
+    # files, so a `.hidden.md` IS a concept there. An over-broad bash filter
+    # (`.*`) dropped it and the runtimes disagreed — measured: an ambiguity row
+    # in python, invisible in bash.
+    write_concept "$root" ".hidden.md" '---
+name: hidden
+---
+
+Hidden.'
+    # And a dot-directory nested one level down, whose files a `*/.*/*`-only
+    # filter would catch but a first-level `.attic/x.md` would slip past.
+    write_concept "$root" "sub/.nested/deep.md" '---
+name: deep
+---
+
+Deep.'
 
     run_sh check "$root"
     sh_rows="$OKF_OUT"
-    assert_not_contains "$sh_rows" "AMBIGUOUS" \
-        "the hidden directory's file is not treated as a bundle concept"
+    # A dot-DIRECTORY's contents are NOT bundle files at either depth...
+    assert_not_contains "$sh_rows" "scratch.md" \
+        "a file inside a first-level dot-directory is not a bundle concept"
+    assert_not_contains "$sh_rows" "deep.md" \
+        "nor is one inside a dot-directory nested further down"
+    # ...but a dot-prefixed FILE is. python prunes dot-DIRECTORIES only, so this
+    # is the reference behaviour and bash must match it rather than the other
+    # way round — an over-broad filter that dropped it would silently exclude a
+    # file someone deliberately put in the bundle.
+    assert_contains "$sh_rows" ".hidden.md" \
+        "a dot-prefixed FILE is still a concept — only directories are pruned"
 
     if [ "$OKF_HAVE_PY" -ne 1 ]; then
         skip_test "python3 >= 3.11 unavailable — the parity half of this case"

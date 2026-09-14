@@ -321,8 +321,19 @@ command find "$ROOT" -type f -name '*.md' | command sort >"$WORK/every.all"
 : >"$WORK/every"
 while IFS= read -r _p || [ -n "$_p" ]; do
     [ -n "$_p" ] || continue
+    # DIRECTORIES ONLY, matching the python twin's `dirnames[:] = [...]`, which
+    # prunes dot-prefixed DIRECTORIES and says nothing about files. A `.*` arm
+    # here would also drop a dot-prefixed FILE directly under the root, and the
+    # two runtimes then disagree about it: measured, `.hidden.md` was a concept
+    # in python (reported as an ambiguity) and invisible in bash. Parity is the
+    # contract, and python's reading is the reference — a leading-dot FILE is
+    # still a file someone put in the bundle.
+    #
+    # `*/.*/*` alone is not enough either: it misses a dot-directory whose file
+    # sits directly inside it at the FIRST level (`.attic/x.md` has no leading
+    # `*/`), which is the common shape. Both arms are needed.
     case "${_p#"$ROOT"/}" in
-        .* | */.*) continue ;;
+        .*/* | */.*/*) continue ;;
     esac
     command printf '%s\n' "$_p" >>"$WORK/every"
 done <"$WORK/every.all"
@@ -496,19 +507,26 @@ while IFS= read -r target || [ -n "$target" ]; do
     # rather than `realpath -m`, which is GNU-only and whose usual `|| echo`
     # fallback returns the path UNRESOLVED — defeating exactly this guard
     # (#932, and issue #21's surface).
+    # FAILS CLOSED when the parent cannot be resolved. Today the only `create`
+    # target is `$ROOT/index.md`, whose parent is the root itself, so an
+    # unresolvable parent is unreachable — but a guard that SKIPS on the case it
+    # cannot evaluate is one new transform away from being no guard at all, and
+    # that silent-permit shape is the thing this whole file argues against.
+    # Refusing costs nothing while the case stays unreachable.
     _tdir="${target%/*}"
     [ "$_tdir" != "$target" ] || _tdir="."
+    _treal=""
     if [ -d "$_tdir" ]; then
         _treal="$(cd "$_tdir" && command pwd -P)/${target##*/}"
-        case "$_treal" in
-            "$ROOT_REAL"/*) ;;
-            *)
-                command printf 'ERROR: apply refused: %s resolves outside the bundle root %s — refusing to write through it\n' \
-                    "$target" "$ROOT" >&2
-                exit 2
-                ;;
-        esac
     fi
+    case "$_treal" in
+        "$ROOT_REAL"/*) ;;
+        *)
+            command printf 'ERROR: apply refused: %s resolves outside the bundle root %s — refusing to write through it\n' \
+                "$target" "$ROOT" >&2
+            exit 2
+            ;;
+    esac
 
     command grep "	:$target	" "$WORK/edits" >"$WORK/group" || continue
 
