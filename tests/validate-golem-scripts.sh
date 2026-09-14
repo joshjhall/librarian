@@ -101,6 +101,7 @@ source_fragments "$SCRIPT_DIR/golem-scripts" \
     25-worktree-new-cargo.sh \
     30-config-repo-root.sh \
     40-worktree-rm.sh \
+    42-worktree-rm-wedged.sh \
     45-worktree-rm-symlink.sh \
     47-worktree-rm-named.sh \
     50-attach.sh \
@@ -295,6 +296,10 @@ run_fragment_test test_worktree_rm_quarantine_does_not_claim_reclaimed_space "wo
 run_fragment_test test_worktree_rm_ordinary_teardown_never_quarantines "worktree-rm: an ordinary teardown never quarantines (#936)"
 run_fragment_test test_worktree_rm_never_quarantines_a_symlink "worktree-rm: a symlinked worktree path is refused, never renamed aside (#936)"
 run_fragment_test test_worktree_rm_attributes_ebadf_to_virtiofs "worktree-rm: the EBADF root cause is attributed to virtiofs, not bindfs (#936)"
+run_fragment_test test_worktree_rm_registered_force_failure_reaches_quarantine "worktree-rm: a registered worktree's force failure reaches the quarantine (#1017)"
+run_fragment_test test_worktree_rm_force_failure_states_the_recovery "worktree-rm: the force failure states the recovery, not just the cause (#1017)"
+run_fragment_test test_worktree_rm_force_failure_without_deregistration_still_refuses "worktree-rm: a force failure that did not deregister still refuses, with a next action (#1017)"
+run_fragment_test test_worktree_rm_force_fallthrough_still_honors_the_residue_guard "worktree-rm: the force fall-through still honors the residue guard (#1017)"
 run_fragment_test test_worktree_rm_repairs_stale_core_worktree "worktree-rm: repairs a stale main-repo core.worktree (#258)"
 run_fragment_test test_worktree_rm_preserves_valid_core_worktree "worktree-rm: preserves a valid core.worktree (#258)"
 
