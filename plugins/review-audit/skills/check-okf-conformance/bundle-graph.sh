@@ -359,8 +359,15 @@ EOF
                 # present would leave its directory silently unchecked while no
                 # dangling row fired either.
                 if [ ! -f "$root/$target" ] || [ -L "$root/$target" ]; then
-                    first_idx="$(command printf '%s' "$named" | command awk -F"$TAB" -v t="$target" '$1 == t { print $2; exit }')"
-                    first_line="$(command printf '%s' "$named" | command awk -F"$TAB" -v t="$target" '$1 == t { print $3; exit }')"
+                    # ENVIRON, NEVER `awk -v`: a `-v` assignment is
+                    # escape-processed, so a target containing the two
+                    # characters `\n` decodes and stops matching the literal
+                    # field — the row still fires, but with an EMPTY index name
+                    # and line number, which is a finding nobody can act on.
+                    # Same rule moves.sh follows; these two sites were added by
+                    # the very commit that fixed the class elsewhere.
+                    first_idx="$(command printf '%s' "$named" | OKF_T="$target" command awk -F"$TAB" '$1 == ENVIRON["OKF_T"] { print $2; exit }')"
+                    first_line="$(command printf '%s' "$named" | OKF_T="$target" command awk -F"$TAB" '$1 == ENVIRON["OKF_T"] { print $3; exit }')"
                     emit "$root/$first_idx" "$first_line" "$C_DANGLING_INDEX" \
                         "Index names a subdirectory index that does not exist: $target" "HIGH"
                 fi
@@ -375,7 +382,10 @@ $indexes" in
 $target
 "*) continue ;;
         esac
-        sites="$(command printf '%s' "$named" | command awk -F"$TAB" -v t="$target" '$1 == t { print $2 "\t" $3 }')"
+        # ENVIRON here too: pre-existing, but this diff's index_targets change
+        # widened what shapes `$target` can take (a `<dir>/index.md` now keeps
+        # its slash), so the exposure grew with it.
+        sites="$(command printf '%s' "$named" | OKF_T="$target" command awk -F"$TAB" '$1 == ENVIRON["OKF_T"] { print $2 "\t" $3 }')"
         first_idx="$(command printf '%s\n' "$sites" | command head -1 | command cut -f1)"
         first_line="$(command printf '%s\n' "$sites" | command head -1 | command cut -f2)"
         case "

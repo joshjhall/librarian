@@ -617,6 +617,21 @@ while IFS= read -r target_enc || [ -n "$target_enc" ]; do
     # in-bundle create was REFUSED. Walking up to the nearest existing ancestor
     # keeps the guard fail-closed (an escaping path still resolves outside the
     # root) while letting a new subdirectory through.
+    # THE FINAL COMPONENT IS CHECKED TOO, not just its directory. The resolution
+    # below expands the DIRECTORY portion and appends the basename literally —
+    # sound for a path that does not exist yet, but an EXISTING file whose own
+    # basename is a symlink resolves in-root while the write lands wherever it
+    # points (plain `cp` follows a destination symlink). Measured: an append to
+    # a symlinked `index.md` wrote to a file outside the bundle at exit 0.
+    #
+    # The python twin was already safe here — its `under_root` realpath()s the
+    # WHOLE edit path — so this was a bash-only gap, and an asymmetry between
+    # the twins is itself a parity defect.
+    if [ -L "$target" ]; then
+        command printf 'ERROR: apply refused: %s is a symlink — refusing to write through it\n' \
+            "$target" >&2
+        exit 2
+    fi
     _tdir="${target%/*}"
     [ "$_tdir" != "$target" ] || _tdir="."
     _probe_t="$_tdir"

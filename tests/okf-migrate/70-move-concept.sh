@@ -466,6 +466,235 @@ Body.'
         "...and did not land in the fenced bucket"
 }
 
+# write_taxonomy_rules DIR RULES... — a config with ARBITRARY rules, so a case
+# can exercise a source other than `index:`.
+test_file_and_dir_taxonomy_sources_route_concepts() {
+    local root cfg
+    root="$(fresh_bundle "$WORKDIR")"
+    command mkdir -p "$root/legacy"
+    write_concept "$root" "MEMORY.md" '# Memory
+
+- [By file](golem-thing.md) — a hook
+- [Untouched](plain.md) — a hook'
+    write_concept "$root" "golem-thing.md" '---
+type: feedback
+---
+
+Body.'
+    write_concept "$root" "plain.md" '---
+type: feedback
+---
+
+Body.'
+    write_concept "$root" "legacy/old.md" '---
+type: feedback
+---
+
+Body.'
+
+    # `file:` and `dir:` are documented in thresholds.yml as equally valid
+    # grammar alongside `index:`, but every other case here configures `index:`
+    # only — so both were live code with no coverage in either runtime.
+    cfg="$WORKDIR/cfg.fd.$$"
+    write_taxonomy "$cfg" "file:golem-*.md = golem" "dir:legacy* = archive"
+    OKF_RC=0
+    OKF_OUT="$(PATTERNS_FORCE_BASH=1 OKF_BUNDLE_ROOT="$root" \
+        OKF_MIGRATE_CONFIG_DIR="$cfg" \
+        OKF_PINNED_VERSION="${OKF_TEST_VERSION:-0.2}" \
+        command bash "$OKF_MIGRATE_SH" apply --transform move-concept \
+        --confirm --allow-dirty 2>&1)" || OKF_RC=$?
+    assert_exit 0 "$OKF_RC" "a file:/dir: taxonomy applies cleanly"
+
+    assert_file_exists "$root/golem/golem-thing.md" \
+        "a $(file:) glob routes a concept by its BASENAME"
+    assert_file_exists "$root/archive/old.md" \
+        "a $(dir:) glob routes a concept by its current DIRECTORY"
+    # Teeth: a concept matching NEITHER rule stays put, so this cannot pass by
+    # the transform having moved everything.
+    assert_file_exists "$root/plain.md" \
+        "a concept matching no rule stays exactly where it is"
+}
+
+test_taxonomy_rules_are_first_match_wins() {
+    local root cfg
+    root="$(fresh_bundle "$WORKDIR")"
+    write_concept "$root" "MEMORY.md" '# Memory
+
+- [Thing](golem-thing.md) — a hook'
+    write_concept "$root" "golem-thing.md" '---
+type: feedback
+---
+
+Body.'
+
+    # TWO rules both match this concept. Order decides — the same determinism
+    # rule infer_type holds, and the property that makes the outcome
+    # reproducible between the two runtimes rather than an accident of
+    # filesystem order.
+    cfg="$WORKDIR/cfg.ord1.$$"
+    write_taxonomy "$cfg" "file:golem-*.md = first" "file:*-thing.md = second"
+    OKF_RC=0
+    OKF_OUT="$(PATTERNS_FORCE_BASH=1 OKF_BUNDLE_ROOT="$root" \
+        OKF_MIGRATE_CONFIG_DIR="$cfg" \
+        OKF_PINNED_VERSION="${OKF_TEST_VERSION:-0.2}" \
+        command bash "$OKF_MIGRATE_SH" apply --transform move-concept \
+        --confirm --allow-dirty 2>&1)" || OKF_RC=$?
+    assert_exit 0 "$OKF_RC" "the two-rule taxonomy applies"
+    assert_file_exists "$root/first/golem-thing.md" \
+        "the FIRST listed matching rule wins"
+
+    # ...and REVERSING the listed order reverses the outcome, which is what
+    # proves order is what decided it rather than a glob coincidence.
+    local root2 cfg2
+    root2="$(fresh_bundle "$WORKDIR")"
+    write_concept "$root2" "MEMORY.md" '# Memory
+
+- [Thing](golem-thing.md) — a hook'
+    write_concept "$root2" "golem-thing.md" '---
+type: feedback
+---
+
+Body.'
+    cfg2="$WORKDIR/cfg.ord2.$$"
+    write_taxonomy "$cfg2" "file:*-thing.md = second" "file:golem-*.md = first"
+    OKF_RC=0
+    OKF_OUT="$(PATTERNS_FORCE_BASH=1 OKF_BUNDLE_ROOT="$root2" \
+        OKF_MIGRATE_CONFIG_DIR="$cfg2" \
+        OKF_PINNED_VERSION="${OKF_TEST_VERSION:-0.2}" \
+        command bash "$OKF_MIGRATE_SH" apply --transform move-concept \
+        --confirm --allow-dirty 2>&1)" || OKF_RC=$?
+    assert_file_exists "$root2/second/golem-thing.md" \
+        "reversing the rule order reverses the destination (order IS the decider)"
+}
+
+test_malformed_taxonomy_rules_are_skipped_not_fatal() {
+    local root cfg
+    root="$(fresh_bundle "$WORKDIR")"
+    write_concept "$root" "MEMORY.md" '# Memory
+
+- [Good](good.md) — a hook'
+    write_concept "$root" "good.md" '---
+type: feedback
+---
+
+Body.'
+
+    # Malformed entries are SKIPPED rather than fatal — a migration engine
+    # reading a consumer repo's hand-edited config must not die on one bad line.
+    # Note which way that fails: a skipped rule means FEWER moves, never a move
+    # somewhere unintended.
+    cfg="$WORKDIR/cfg.bad.$$"
+    write_taxonomy "$cfg" "no-equals-sign-here" "missingcolon = dest" \
+        "file:good.md = good"
+    OKF_RC=0
+    OKF_OUT="$(PATTERNS_FORCE_BASH=1 OKF_BUNDLE_ROOT="$root" \
+        OKF_MIGRATE_CONFIG_DIR="$cfg" \
+        OKF_PINNED_VERSION="${OKF_TEST_VERSION:-0.2}" \
+        command bash "$OKF_MIGRATE_SH" apply --transform move-concept \
+        --confirm --allow-dirty 2>&1)" || OKF_RC=$?
+    assert_exit 0 "$OKF_RC" "a malformed rule is skipped, never fatal"
+    assert_file_exists "$root/good/good.md" \
+        "the WELL-FORMED rule in the same list still applies"
+}
+
+test_two_concepts_moving_together_keep_their_relative_link() {
+    local root cfg body
+    root="$(fresh_bundle "$WORKDIR")"
+    command mkdir -p "$root/sub"
+    write_concept "$root" "MEMORY.md" '# Memory
+
+- [Anchor](anchor.md) — a hook'
+    write_concept "$root" "anchor.md" '---
+type: feedback
+---
+
+Body.'
+    # BOTH of these move, TOGETHER, and one links the other by a RELATIVE path.
+    # The link must be recomputed from where the referring file will LAND, not
+    # from where it sits now — the common case when a whole bucket relocates at
+    # once, and the branch `_rewritten_target` takes only when the referrer is
+    # itself in the move set.
+    write_concept "$root" "sub/alpha.md" '---
+type: feedback
+---
+
+See [Beta](beta.md) for details.'
+    write_concept "$root" "sub/beta.md" '---
+type: feedback
+---
+
+Body.'
+
+    cfg="$WORKDIR/cfg.pair.$$"
+    write_taxonomy "$cfg" "dir:sub* = moved"
+    OKF_RC=0
+    OKF_OUT="$(PATTERNS_FORCE_BASH=1 OKF_BUNDLE_ROOT="$root" \
+        OKF_MIGRATE_CONFIG_DIR="$cfg" \
+        OKF_PINNED_VERSION="${OKF_TEST_VERSION:-0.2}" \
+        command bash "$OKF_MIGRATE_SH" apply --transform move-concept \
+        --confirm --allow-dirty 2>&1)" || OKF_RC=$?
+    assert_exit 0 "$OKF_RC" "both concepts move cleanly"
+
+    assert_file_exists "$root/moved/alpha.md" "the referring concept moved"
+    assert_file_exists "$root/moved/beta.md" "the referenced concept moved too"
+
+    # They landed in the SAME directory, so the sibling link is unchanged — and
+    # that is the assertion: a rewriter computing from the OLD location would
+    # have produced `../moved/beta.md`, which resolves outside the new directory.
+    body="$(command cat "$root/moved/alpha.md")"
+    assert_contains "$body" "(beta.md)" \
+        "the relative link is recomputed from where the referrer LANDS"
+    assert_not_contains "$body" "../" \
+        "...not from where it used to sit (no stale ../ prefix)"
+}
+
+test_symlinked_existing_index_is_never_written_through() {
+    local root outside before after
+    root="$(fresh_bundle "$WORKDIR")"
+    command mkdir -p "$root/golem"
+    outside="$WORKDIR/outside.$$"
+    command mkdir -p "$outside"
+    command printf 'ORIGINAL-OUTSIDE-CONTENT\n' >"$outside/target.md"
+
+    write_concept "$root" "MEMORY.md" '# Memory
+
+- [Golem](golem/index.md) — bucket'
+    # A PRE-EXISTING directory index that is a SYMLINK pointing OUTSIDE the
+    # bundle. The planner used to treat it as "existing" and schedule an append
+    # against it; the apply guard resolved only the DIRECTORY portion and
+    # appended the basename literally, so the path read as in-root while plain
+    # `cp` followed the symlink and wrote through it. Measured: the arriving
+    # concept's index line was appended to the OUTSIDE file, at exit 0, with the
+    # plan displaying only the in-bundle path — the reviewed plan and the actual
+    # write target were different files.
+    command ln -s "$outside/target.md" "$root/golem/index.md"
+    write_concept "$root" "golem/zero.md" '---
+type: feedback
+---
+
+Body.'
+    write_concept "$root" "index-golem.md" '# Golem
+
+- [Arriving](arr.md) — a hook'
+    write_concept "$root" "arr.md" '---
+type: feedback
+---
+
+Body.'
+
+    before="$(command cat "$outside/target.md")"
+    run_moves apply "$root" --transform move-concept --confirm --allow-dirty
+
+    # THE OUTSIDE FILE IS THE ASSERTION, not the exit code: "it refused" and
+    # "it refused BEFORE writing" are different claims, and only the second is
+    # a safety property.
+    after="$(command cat "$outside/target.md")"
+    assert_equals "$before" "$after" \
+        "a symlinked directory index is NEVER written through (AC7)"
+    assert_not_contains "$after" "Arriving" \
+        "...and no in-bundle content leaked into the outside file"
+}
+
 test_destination_collision_leaves_the_file_put() {
     local root before after
     root="$(fresh_bundle "$WORKDIR")"

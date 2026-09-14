@@ -360,7 +360,15 @@ EOF
         command grep -v '^$' | command sort -u)"
     while IFS= read -r dir || [ -n "$dir" ]; do
         [ -n "$dir" ] || continue
-        if [ -e "$root/$dir/index.md" ]; then
+        # A SYMLINKED directory index is NOT "existing". The read path
+        # (bundle-graph.sh) already refuses to trust one; trusting it HERE is
+        # worse, because planning an append against it makes the apply write
+        # THROUGH it to wherever it points. Measured: an `index.md` symlinked
+        # outside the bundle had the arriving concept's line appended to the
+        # OUTSIDE file, at exit 0, with the plan displaying only the in-bundle
+        # path — the reviewed plan and the actual write target were different
+        # files, which is exactly what "the plan is the write allowlist" denies.
+        if [ -e "$root/$dir/index.md" ] && [ ! -L "$root/$dir/index.md" ]; then
             # AN EXISTING DIRECTORY INDEX IS APPENDED TO, NEVER REGENERATED. The
             # file is the operator's and may hold hand-written lines — but it
             # MUST gain a line for each arriving concept or that concept is named
@@ -544,7 +552,7 @@ rewritten_target() {
 rewrite_inbound_links() {
     local root="$1" list="$2" mapping="$3" claimed="${4:-}"
     local path here_rel line n in_fence changed rest label target new_target t
-    local claimed_line sub_dir moved_new
+    local claimed_line sub_dir moved_new _isidx
     [ -s "$mapping" ] || return 0
 
     while IFS= read -r path || [ -n "$path" ]; do
@@ -570,7 +578,14 @@ rewrite_inbound_links() {
             # about which index owns the concept. Repoint it at the SUB-INDEX
             # instead (§8: the root names the bucket, the bucket names its
             # concepts).
-            if [ -n "$claimed" ] && [ -s "$claimed" ]; then
+            # ONLY AN INDEX RELOCATES A LINE — the claimed map is keyed by line
+            # TEXT, so an ordinary body line equal to a claimed index line would
+            # be repointed at the bucket index instead of following the concept.
+            _isidx=0
+            case "${here_rel##*/}" in
+                MEMORY.md | index*) _isidx=1 ;;
+            esac
+            if [ "$_isidx" -eq 1 ] && [ -n "$claimed" ] && [ -s "$claimed" ]; then
                 # ENVIRON, NEVER `awk -v`: a `-v` assignment is
                 # ESCAPE-PROCESSED, so a hook legitimately containing the two
                 # characters `\n` — ordinary in a repo that documents regexes —

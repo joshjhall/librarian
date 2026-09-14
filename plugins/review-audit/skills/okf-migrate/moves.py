@@ -321,7 +321,10 @@ def plan_directory_indexes(
     edits: list[Edit] = []
     for directory in sorted(by_dir):
         index_path = os.path.join(root, directory, "index.md")
-        if os.path.exists(index_path):
+        # A SYMLINKED directory index is NOT "existing" — the read path already
+        # refuses to trust one, and trusting it here would plan an append that
+        # writes THROUGH it to wherever it points.
+        if os.path.exists(index_path) and not os.path.islink(index_path):
             # AN EXISTING DIRECTORY INDEX IS APPENDED TO, NEVER REGENERATED. The
             # file is the operator's and may hold hand-written lines, so it is
             # not rewritten — but it MUST gain a line for each arriving concept
@@ -413,6 +416,13 @@ def _retarget_line(line: str, base: str) -> str:
     return line
 
 
+def _is_index_path(rel: str) -> bool:
+    """True when REL is an index file (MEMORY.md, or a basename starting
+    `index`) — the same membership test index_members applies."""
+    base = os.path.basename(rel)
+    return base == "MEMORY.md" or base.startswith("index")
+
+
 def rewrite_inbound_links(
     root: str,
     every: list[str],
@@ -452,7 +462,18 @@ def rewrite_inbound_links(
                 continue
             if in_fence or "](" not in line:
                 continue
-            if line in moved_lines:
+            # ONLY AN INDEX RELOCATES A LINE. The claimed map is keyed by line
+            # TEXT, so an ordinary body line that happens to equal a claimed
+            # index line would otherwise be repointed at the bucket's
+            # `index.md` instead of following the concept. Measured: two
+            # concepts moving together, one linking the other, had that link
+            # rewritten to `moved/index.md` — a link to the wrong file, from a
+            # transform whose whole purpose is keeping links correct.
+            #
+            # Gating on the FILE rather than tightening the key is the honest
+            # fix: "this line is an index entry" is a property of where it
+            # lives, not of what it says.
+            if line in moved_lines and _is_index_path(here_rel):
                 # This line's concept now lives in a directory index. Repoint it
                 # at that SUB-INDEX (§8's routing: the root names the bucket, the
                 # bucket names its concepts) rather than at the concept itself.
