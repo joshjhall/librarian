@@ -283,10 +283,15 @@ test_symlinked_root_resolves() {
     command rm -rf "$real"
 }
 
-# The copy/install failure branches. Both end in `_refuse 3`, and both are
-# reachable in practice (a full disk, a read-only mount, a clobbered staging
-# dir). Driven by making the staging directory unwritable AFTER it exists, which
-# is the only way to fail the cp rather than the mkdir.
+# An unwritable staging directory. NOTE WHICH BRANCH THIS ACTUALLY REACHES: with
+# the directory at 0500, `mkdir -p` succeeds (it already exists), the mode check
+# sees owner-only and leaves it alone, and the first operation that needs write
+# permission is `mktemp` — so this exercises the TEMP-FILE refusal, not the `cp`
+# one. An earlier version of this comment claimed it was "the only way to fail
+# the cp rather than the mkdir", which was simply false, and a false comment
+# about coverage is worse than no comment: it tells the next reader three
+# branches are tested when none of them are. The cp and mv branches are covered
+# by test_copy_and_install_failures below.
 test_copy_failure_refuses_loudly() {
     local dest
     dest="$(new_tree)"
@@ -309,13 +314,81 @@ test_copy_failure_refuses_loudly() {
 
     run_stager "$STAGER" stage orchestrate --dir "$dest"
     assert_equals "3" "$LAST_RC" "an unwritable staging directory exits 3"
-    assert_not_contains "$LAST_OUT" "path=" "a failed copy emits no path="
+    assert_contains "$LAST_OUT" "temp file" "it is the mktemp branch that refuses"
+    assert_not_contains "$LAST_OUT" "path=" "a failed stage emits no path="
     # No half-written temp file is left behind for the next run to trip over.
     local leftovers
     leftovers="$(command find "$dest/.claude/tmp/harness" -name '.orchestrate.*' 2>/dev/null || true)"
-    assert_equals "" "$leftovers" "a failed copy leaves no temp file behind"
+    assert_equals "" "$leftovers" "a failed stage leaves no temp file behind"
 
     command chmod 700 "$dest/.claude/tmp/harness" 2>/dev/null || true
+    command rm -rf "$dest"
+}
+
+# The cp and mv branches proper — the two the test above does NOT reach. Both
+# end in `_refuse 3` and both are reachable in practice (a full disk, a vanished
+# source, a clobbered destination). The mv branch matters most: it is the atomic
+# rename this file's header calls load-bearing for concurrent-reader safety, so
+# a refactor that stopped treating a failed `mv` as fatal would leave the caller
+# with a `path=` naming a file that was never installed.
+test_copy_and_install_failures() {
+    local dest
+    dest="$(new_tree)"
+    [ -n "$dest" ] || {
+        skip_test "mktemp unavailable"
+        return 0
+    }
+
+    # (a) cp failure — an UNREADABLE source. `-f` stays true so resolution
+    #     succeeds, then the read fails. The source must live OUTSIDE `$dest`:
+    #     a source already under the stage root takes the no-copy branch and
+    #     never reaches `cp` at all (which is how the first draft of this case
+    #     "passed" with exit 0 — the copy it claimed to test never ran).
+    local srcdir
+    srcdir="$(new_tree)"
+    [ -n "$srcdir" ] || {
+        command rm -rf "$dest"
+        skip_test "mktemp unavailable"
+        return 0
+    }
+    local src="$srcdir/unreadable.js"
+    command printf '// source\n' >"$src"
+
+    if [ "$(command id -u)" != "0" ]; then
+        command chmod 000 "$src"
+        local LAST_RC_A
+        LAST_OUT="$(LIBRARIAN_HARNESS_ORCHESTRATE="$src" "$STAGER" stage orchestrate --dir "$dest" 2>&1)" &&
+            LAST_RC=0 || LAST_RC=$?
+        LAST_RC_A="$LAST_RC"
+        command chmod 644 "$src"
+        assert_equals "3" "$LAST_RC_A" "an unreadable source exits 3 at the copy step"
+        assert_contains "$LAST_OUT" "cannot copy" "the refusal names the copy step"
+        assert_not_contains "$LAST_OUT" "path=" "a failed copy emits no path="
+        local strays
+        strays="$(command find "$dest/.claude/tmp/harness" -name '.orchestrate.*' 2>/dev/null || true)"
+        assert_equals "" "$strays" "a failed copy cleans up its temp file"
+    else
+        skip_test "cp-failure branch needs non-root (mode bits)"
+    fi
+    command rm -rf "$srcdir"
+
+    # (b) THE mv BRANCH IS NOT COVERED, deliberately, and this note is the
+    #     honest alternative to a fixture that passes for the wrong reason.
+    #
+    #     Two contrivances were tried and both were wrong: a directory at the
+    #     destination does NOT fail the rename, because `mv file dir` moves the
+    #     file INTO dir and succeeds — verified with both an empty and a
+    #     non-empty directory. Since the temp file and the destination are
+    #     always in the SAME directory by construction (that is the point of the
+    #     atomic-rename design), a same-filesystem rename onto a path the
+    #     process just proved it can write has no straightforward failure mode
+    #     left to inject.
+    #
+    #     Rather than assert something untrue, the gap is recorded: a regression
+    #     that stopped treating a failed `mv` as fatal would not be caught here.
+    #     The invariant that DOES hold — never exit 0 without a usable path — is
+    #     asserted over every id by test_never_exits_zero_without_a_path.
+
     command rm -rf "$dest"
 }
 
@@ -757,7 +830,8 @@ run_test test_unreachable_is_staged_under_cwd "an unreachable harness is staged 
 run_test test_default_dir_is_cwd "stage with no --dir defaults to cwd"
 run_test test_staged_paths_are_not_world_readable "staged dir/file are 0700/0600 regardless of umask"
 run_test test_symlinked_root_resolves "a symlinked stage root resolves to the real directory"
-run_test test_copy_failure_refuses_loudly "a failed copy exits 3 and leaves no temp file"
+run_test test_copy_failure_refuses_loudly "an unwritable staging dir exits 3 at mktemp"
+run_test test_copy_and_install_failures "the cp failure branch exits 3 and cleans up"
 run_test test_staging_is_idempotent "staging is idempotent (re-stages, never bails)"
 run_test test_override_takes_precedence "probe 1: override takes precedence"
 run_test test_override_pointing_nowhere_refuses_loudly "probe 1: a dead override refuses loudly (exit 3)"
