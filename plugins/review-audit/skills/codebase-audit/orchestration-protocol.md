@@ -331,3 +331,53 @@ reason}`.
 
 A **clean audit** (zero confirmed findings) still writes the report summary when
 requested — the "always produce artifacts" objective holds at zero findings.
+
+### Memory-domain redaction
+
+**A memory's body must never reach an issue body**, and the wiring — not a
+convention — is what guarantees it. A memory bundle holds operator-specific
+working notes and, in a consuming repo, material this repo has never seen;
+`issue-writer` posts to a remote, so one leak is public and irreversible.
+
+The harness therefore redacts every memory-bundle finding **on the `issues` path
+only**, in code, before the agent is dispatched: `redactMemoryFindings`
+(`workflow.src/40-injection-utils.js`) rewrites `description`, `evidence` and
+`suggestion` — the content-bearing fields, all of them *required* by
+`finding-schema.md`, hence rewritten rather than dropped — and additionally
+bounds `title`, `category`, `tags` and `related_files`, which no schema
+constraint limits and which the same bundle-reading agent populates.
+
+The **group wrapper is clamped too** (`redactMemoryGroup`), and that is not a
+detail: `aggregate.groups` is built by the aggregate agent from the **raw**
+findings, before redaction runs, and `group.title` becomes the filed issue's
+title — the most visible string in the issue. Redacting only the findings array
+left that one field reachable. A group with no memory finding is returned
+untouched, so this is not a blanket truncator over other domains' titles.
+
+The rule it restores is checkable in one line: **no string reaches
+`issueWriterPrompt` — on a memory finding *or* on the group that wraps it —
+without passing through the clamp.** Only `file`,
+`line_start`, `line_end` and `certainty` pass through untouched — locations are
+safe and are what make a redacted finding actionable.
+
+A finding qualifies three ways, and the **third is the one that matters**: the
+`<domain>:` prefix `stampRefs` stamps on its `ref`, the `okf-*` / `memory-*`
+category slugs, **or its `file` lying under the resolved bundle root**. The path
+key is not redundant with the other two — the Step 2 routing table sends every
+bundle file to **both** `memory` *and* `decomposition`, so `audit-decomposition`
+reads the same bodies and emits `ai-file-bloat` / `decomposition-seam` rows about
+them under a `decomposition:` ref, matching neither of the first two keys. That
+agent carries no redaction rule of its own. Keying on the path covers every
+domain routed over the bundle, present and future, instead of needing an edit
+each time that table grows.
+
+The **`files` path is deliberately not redacted**. It writes to
+`./audit/{timestamp}/` on the operator's own disk, which is where the full
+finding — and any merged body — belongs. That asymmetry is the design: the safe
+path is the only path to a tracker, and the complete data is always available
+locally.
+
+`audit-memory.md` § Redaction states the same rule for the agent. That statement
+is now a courtesy to the agent's own reasoning, not the enforcement mechanism —
+an agent that forgets it cannot leak, because the harness never hands it the
+body.

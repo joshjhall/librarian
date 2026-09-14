@@ -346,9 +346,17 @@ if (output === 'files' || map.platform === 'none') {
 }
 
 // Objective ISSUES — parallel issue-writer fan-out (dedupe-before-create).
+//
+// Memory-bundle findings are REDACTED here and nowhere else (#698). This is the
+// only path that reaches a remote tracker, so it is the only path where a
+// memory's body would become published and irreversible. The artifact path above
+// deliberately keeps full fidelity — it writes local files under ./audit/, which
+// is where a reader who needs the body is sent. Redacting in the harness rather
+// than trusting audit-memory.md's prose rule is the whole point: an agent that
+// forgets cannot leak, because it never receives the body.
 const outcomes = await parallel(
   groups.map((g) => () =>
-    agent(issueWriterPrompt(map.platform, g.group, g.findings), {
+    agent(issueWriterPrompt(map.platform, redactMemoryGroup(g.group, g.findings), redactMemoryFindings(g.findings)), {
       label: `file:${g.group.category}`,
       phase: 'File',
       agentType: 'review-audit:issue-writer',
