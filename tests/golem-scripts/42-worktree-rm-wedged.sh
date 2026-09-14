@@ -923,3 +923,139 @@ STUB
     assert_not_contains "$RUN_OUT" "completing the teardown now" \
         "never announces a cleanup it then refuses to perform"
 }
+
+# The gap the #1017 review caught, reproduced before it was fixed.
+#
+# `cleanup_leftover_dir` runs the residue check BEFORE its own `-e` test, and
+# that check's fingerprint arm is `[ ! -e "$wtdir/.git" ]` — equally true when
+# the whole directory is gone. So a `--force` that DID remove the tree but
+# still exited non-zero (a late or unrelated failure) reached the fall-through
+# with an absent path and got "has no .git entry, so it may never have been a
+# worktree": a hard refusal whose text is affirmatively false about a path that
+# both WAS a worktree and needs no cleanup at all.
+#
+# Deliberately plants NO undeletable fixture — that is the whole point. Every
+# other case in this file leaves something on disk, which is exactly why the
+# suite could not see this branch.
+test_worktree_rm_force_failure_after_complete_removal_is_not_refused() {
+    local sb real_git
+    new_sandbox sb
+    ignore_build_dir "$sb"
+    run_in "$sb" "$WT_NEW" 144
+    assert_exit 0 "$RUN_RC" "worktree-new succeeds"
+
+    real_git="$(command -v git)"
+    command mkdir -p "$sb/bin"
+    command cat >"$sb/bin/git" <<STUB
+#!/usr/bin/env bash
+# Test stub (#1017 review): the --force removes the tree COMPLETELY and still
+# reports failure — the on-disk removal succeeded, the status did not.
+if [ "\${1:-}" = "worktree" ] && [ "\${2:-}" = "remove" ]; then
+    if [ "\${3:-}" = "--force" ]; then
+        command rm -rf "$sb/.git/worktrees/issue-144" "$sb/.worktrees/issue-144"
+        command echo "error: late failure after the on-disk removal completed" >&2
+        exit 128
+    fi
+    command echo "fatal: working trees containing submodules cannot be moved or removed" >&2
+    exit 128
+fi
+exec "$real_git" "\$@"
+STUB
+    command chmod +x "$sb/bin/git"
+
+    RUN_RC=0
+    RUN_OUT="$(cd "$sb" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" -uBASH_ENV \
+            HOME="$sb" TMUX= TMUX_TMPDIR="${SANDBOX_TMUX_DIR:-$sb/.tmux}" \
+            PATH="$sb/bin:$PATH" \
+            GOLEM_WORKTREE_DIR=.worktrees \
+            GOLEM_STATUS_DIR=.worktrees/.status \
+            GOLEM_BASE_REF=HEAD \
+            GOLEM_WORKTREE_LOCAL_FILES="" \
+            "$REAL_BASH" "$WT_RM" 144 2>&1)" || RUN_RC=$?
+
+    assert_exit 0 "$RUN_RC" \
+        "an already-removed tree is a clean no-op, not a refusal"
+    assert_not_contains "$RUN_OUT" "may never have been a worktree" \
+        "never claims a path that WAS a worktree may never have been one"
+    assert_contains "$RUN_OUT" "directory is already gone" \
+        "states what it actually observed, rather than inventing residue"
+    # Teardown must still finish the rest of its job.
+    local branches
+    branches="$(/usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
+        git -C "$sb" branch --list "feature/issue-144")"
+    assert_equals "" "$branches" \
+        "teardown CONTINUES to the branch step after a completed removal"
+}
+
+# The fail-closed half of the post-force re-read (#1017 review).
+#
+# The code comments state the intent — a `git worktree list` that ERRORS leaves
+# `post_list` empty, the match fails, and the still-registered refusal arm runs
+# rather than handing an unexplained path to `rm -rf`. Nothing tested it: the
+# other stubs intercept only `worktree remove`, so every re-read in this file
+# succeeds. A future edit treating a read error as "not listed" would flip the
+# safety property with the suite still green.
+#
+# The stub fails `worktree list` only AFTER the force has run, so the
+# up-front `listed` read still succeeds and execution reaches the force branch
+# — the window the guard actually protects.
+test_worktree_rm_force_reread_failure_fails_closed() {
+    local sb real_git
+    new_sandbox sb
+    ignore_build_dir "$sb"
+    run_in "$sb" "$WT_NEW" 145
+    assert_exit 0 "$RUN_RC" "worktree-new succeeds"
+
+    real_git="$(command -v git)"
+    command mkdir -p "$sb/bin"
+    command cat >"$sb/bin/git" <<STUB
+#!/usr/bin/env bash
+# Test stub (#1017 review): the --force deregisters and fails; every LATER
+# \`worktree list\` then errors, so the post-force re-read cannot be evaluated.
+marker="$sb/.force-ran"
+if [ "\${1:-}" = "worktree" ] && [ "\${2:-}" = "list" ] && [ -e "\$marker" ]; then
+    command echo "fatal: not a git repository" >&2
+    exit 128
+fi
+if [ "\${1:-}" = "worktree" ] && [ "\${2:-}" = "remove" ]; then
+    if [ "\${3:-}" = "--force" ]; then
+        command touch "\$marker"
+        command rm -rf "$sb/.git/worktrees/issue-145"
+        command echo "error: failed to delete: Bad file descriptor" >&2
+        exit 128
+    fi
+    command echo "fatal: working trees containing submodules cannot be moved or removed" >&2
+    exit 128
+fi
+exec "$real_git" "\$@"
+STUB
+    command chmod +x "$sb/bin/git"
+
+    RUN_RC=0
+    RUN_OUT="$(cd "$sb" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" -uBASH_ENV \
+            HOME="$sb" TMUX= TMUX_TMPDIR="${SANDBOX_TMUX_DIR:-$sb/.tmux}" \
+            PATH="$sb/bin:$PATH" \
+            GOLEM_WORKTREE_DIR=.worktrees \
+            GOLEM_STATUS_DIR=.worktrees/.status \
+            GOLEM_BASE_REF=HEAD \
+            GOLEM_WORKTREE_LOCAL_FILES="" \
+            "$REAL_BASH" "$WT_RM" 145 2>&1)" || RUN_RC=$?
+
+    assert_exit 1 "$RUN_RC" \
+        "an unreadable registration state refuses rather than guessing"
+    assert_contains "$RUN_OUT" "whether the" \
+        "an unevaluable re-read takes the refusal arm, never the rm -rf arm"
+    # It must NOT borrow the still-registered wording: that would assert a
+    # registration state this branch could not measure.
+    assert_not_contains "$RUN_OUT" "is still registered and nothing was removed" \
+        "never claims a registration state the failed re-read could not observe"
+    assert_true "[ -e '$sb/.worktrees/issue-145' ]" \
+        "nothing is removed when the state could not be read"
+    local count
+    count="$(command find "$sb/.worktrees" -maxdepth 1 -name '.wedged-*' \
+        2>/dev/null | command wc -l | command tr -d '[:space:]')"
+    assert_equals "0" "$count" \
+        "an unevaluable re-read never quarantines"
+}

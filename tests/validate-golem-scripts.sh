@@ -300,6 +300,8 @@ run_fragment_test test_worktree_rm_registered_force_failure_reaches_quarantine "
 run_fragment_test test_worktree_rm_force_failure_states_the_recovery "worktree-rm: the force failure states the recovery, not just the cause (#1017)"
 run_fragment_test test_worktree_rm_force_failure_without_deregistration_still_refuses "worktree-rm: a force failure that did not deregister still refuses, with a next action (#1017)"
 run_fragment_test test_worktree_rm_force_fallthrough_still_honors_the_residue_guard "worktree-rm: the force fall-through still honors the residue guard (#1017)"
+run_fragment_test test_worktree_rm_force_failure_after_complete_removal_is_not_refused "worktree-rm: a force failure after a COMPLETE removal is a no-op, not a false refusal (#1017 review)"
+run_fragment_test test_worktree_rm_force_reread_failure_fails_closed "worktree-rm: an unreadable post-force registration re-read fails closed (#1017 review)"
 run_fragment_test test_worktree_rm_repairs_stale_core_worktree "worktree-rm: repairs a stale main-repo core.worktree (#258)"
 run_fragment_test test_worktree_rm_preserves_valid_core_worktree "worktree-rm: preserves a valid core.worktree (#258)"
 

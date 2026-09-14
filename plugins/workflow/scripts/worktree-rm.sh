@@ -1012,33 +1012,74 @@ if [ "$listed" -eq 1 ]; then
             # reason: piping into `grep -q` lets a match SIGPIPE the writer, and
             # pipefail then inverts "IS listed" into listed=0.
             #
-            # FAIL CLOSED on a re-read that errors: `post_list` stays empty, the
-            # match fails, and the still-registered arm runs. That keeps a
-            # broken repo on the refusal side rather than handing an
-            # unexplained path to `rm -rf` — and the residue guard inside
-            # cleanup_leftover_dir is the second line of that defense, which
-            # this path does NOT skip merely because git listed the worktree a
-            # moment ago.
-            post_list="$(command git worktree list --porcelain 2>/dev/null)" || post_list=""
-            if command grep -qx "worktree $root/$wt" <<<"$post_list"; then
-                # Still registered: git failed WITHOUT deregistering, so there
-                # is no leftover directory to adopt and the state is genuinely
-                # unresolved. Keep the refusal — but state the next action, so
-                # this exit stops being the one that leaves an operator
-                # guessing.
-                command echo "  The worktree is still registered and nothing was removed." >&2
+            # FAIL CLOSED on a re-read that ERRORS, and note this needs its own
+            # branch rather than falling out of the match (#1017 review). An
+            # errored `git worktree list` yields an EMPTY capture, and an empty
+            # capture does not match — which reads as "not listed" and routes
+            # to the cleanup arm. That is failing OPEN: it hands a path to the
+            # removal on the strength of a read that did not happen. (The
+            # residue guard downstream would still have to pass, so this was
+            # defense-in-depth rather than an exposure — but an earlier version
+            # of this comment claimed the fail-closed property the code did not
+            # have, which is the misreporting class this whole region exists to
+            # avoid. Caught by the test below, written because the review noted
+            # the branch was untested.)
+            #
+            # So keep the STATUS, not just the output, and treat an unreadable
+            # registration state as still-registered: refuse, and let the
+            # operator look.
+            post_rc=0
+            post_list="$(command git worktree list --porcelain 2>/dev/null)" || post_rc=$?
+            if [ "$post_rc" -ne 0 ] ||
+                command grep -qx "worktree $root/$wt" <<<"$post_list"; then
+                # Either git failed WITHOUT deregistering, or the re-read
+                # could not be evaluated at all. Both mean there is no leftover
+                # directory this run may adopt, so keep the refusal — but state
+                # the next action, so this exit stops being the one that leaves
+                # an operator guessing.
+                #
+                # The two are NOT reported with one sentence: claiming "still
+                # registered" about a state that could not be read would assert
+                # something unmeasured, which is the defect this region keeps
+                # being filed about.
+                if [ "$post_rc" -ne 0 ]; then
+                    command echo "  Could not re-read the worktree list afterwards, so whether the" >&2
+                    command echo "  worktree is still registered is unknown — nothing was removed." >&2
+                else
+                    command echo "  The worktree is still registered and nothing was removed." >&2
+                fi
                 command echo "  Next: inspect it, then retry — git -C $wt status; git worktree list" >&2
                 exit 1
             fi
 
-            # Deregistered by the failed removal. Nothing git-tracked is left to
-            # lose, so this is the leftover-directory case and teardown
-            # CONTINUES to the branch and tmux steps. Say so explicitly: the
-            # half-done reading is what sent agents to raw `rm -rf`, which is
-            # what the #662 read-scope guard exists to stop.
-            cleanup_leftover_dir "$root" "$wt" \
-                "  The worktree WAS deregistered by the failed removal, and the remnant
+            # Deregistered by the failed removal. Nothing git-tracked is left
+            # to lose, so teardown CONTINUES to the branch and tmux steps
+            # either way. Which message it prints depends on whether anything
+            # is actually still on disk.
+            #
+            # THE EXISTENCE GUARD MIRRORS THE FIRST CALL SITE, and it is not
+            # redundant (#1017 review). `cleanup_leftover_dir` runs the residue
+            # check BEFORE its own `-e` test, and the fingerprint arm of that
+            # check is `[ ! -e "$wtdir/.git" ]` — which is equally true when
+            # the whole directory is gone. So handing it an absent path exits 1
+            # with "has no .git entry, so it may never have been a worktree"
+            # about a path that both WAS a worktree and needs no cleanup:
+            # a false refusal, and precisely the misreporting class #813/#834
+            # exist to prevent. Reproduced before fixing, with a --force that
+            # removed the tree completely and still exited non-zero.
+            if [ -e "$wt" ] || [ -L "$wt" ]; then
+                cleanup_leftover_dir "$root" "$wt" \
+                    "  The worktree WAS deregistered by the failed removal, and the remnant
   holds nothing git-tracked — completing the teardown now."
+            else
+                # Deregistered AND already gone: the removal actually completed
+                # and the non-zero status was about something else. There is
+                # nothing to clean, so say that rather than inventing residue.
+                command echo "  The worktree WAS deregistered and its directory is already gone," >&2
+                command echo "  so the removal completed despite the error — continuing teardown." >&2
+                command git worktree prune || true
+                removed=1
+            fi
         fi
     fi
 fi
