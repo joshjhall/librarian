@@ -1,5 +1,5 @@
 ---
-description: When to delegate read-only investigation to a subagent instead of reading inline, with the measured break-even. Use when surveying many files, tracing a convention across a tree, or answering "where is X handled".
+description: When to delegate read-only investigation to a subagent instead of reading inline — delegate when you cannot yet name the file and line range the answer lives in. Use when surveying many files, tracing a convention across a tree, or answering "where is X handled".
 ---
 
 # Delegating Investigation
@@ -16,9 +16,40 @@ the larger half — the exploration **never enters the parent context at all**.
 Only the conclusion does.
 
 **But delegation is not free, so it is not always right.** This skill is the
-arithmetic for deciding, and the guard against the failure mode that arithmetic
-prevents: delegating a one-line lookup, which is strictly slower and more
-expensive than just reading the file.
+rule for deciding, and the guard against the failure mode that rule prevents:
+delegating a one-line lookup, which is strictly slower and more expensive than
+just reading the file.
+
+## The rule: can you name the file and the lines?
+
+**Decide this BEFORE you read anything, and decide it on shape, not on size.**
+
+```text
+delegate when:  you cannot yet name the specific file(s) and line range
+                the answer lives in — i.e. you would open this investigation
+                with a broad grep/find/glob rather than a known path
+```
+
+That is the whole test, and it is decidable at the moment you need it. If your
+first move is a search whose job is to *find out where to look*, the reading is
+fan-out and belongs in a subagent. If your first move is `sed -n '40,60p'` on a
+path you can already type, read it inline.
+
+**Do not substitute the arithmetic below for this test.** The break-even is the
+*justification* for the rule and the yardstick the post-hoc instrument
+(`delegation-adoption.sh`) audits with — it is **not** something you can
+evaluate up front, because half its inputs do not exist yet. `turns_resident` is
+literally defined as the records that *follow* the result
+(`plugins/workflow/scripts/delegation-adoption.py:249-252`, computed as
+`len(records) - index`), and the result's own token count is unknown until the
+investigation has already run inline — which is precisely the cost the
+delegation was supposed to avoid. An agent that waits to compute the product
+before delegating will never delegate. That is the measured failure (#978): the
+guidance was loaded in 12 of 13 sessions and fired **zero** times against 49
+qualifying opportunities.
+
+So: decide on shape now; the numbers below explain why the shape is the right
+thing to decide on.
 
 ## The break-even
 
@@ -85,13 +116,17 @@ The multiplier is the part that is easy to forget and is usually decisive. A
 turns, it is the dominant line item in the session. That product, not the raw
 result size, is what clears the prefix.
 
-So the question is never "would a subagent be tidier" — it is whether this
-particular investigation's result, times how long it stays resident, is bigger
-than ~24.6k.
+So the question is never "would a subagent be tidier". But it is not "is this
+result times its residency bigger than ~24.6k" either — you cannot know either
+factor yet. Those numbers are what make the shape test above *correct*; the
+shape test is what you actually apply. The multiplier is the reason a wide
+survey is nearly always worth delegating even when its result looks modest at
+the moment it lands.
 
 ## Delegate — fan-out reading
 
-The win is on **breadth**, where the reading is wide and the answer is narrow:
+This section enumerates the rule. The win is on **breadth**, where the reading
+is wide and the answer is narrow:
 
 - Surveying many files or a whole directory tree
 - Tracing a convention or pattern across the repo ("how do the other skills
@@ -100,13 +135,16 @@ The win is on **breadth**, where the reading is wide and the answer is narrow:
 - Any investigation you would open with a broad `grep -r` over the repo root
 - Anything you expect to take more than a handful of tool calls to answer
 
-These clear the break-even easily and have the best shape for it: a large,
-disposable exploration collapsing to a short conclusion.
+Every one of these is a case where you cannot name the file and lines up front.
+They also clear the break-even easily and have the best shape for it — a large,
+disposable exploration collapsing to a short conclusion — but the naming test is
+what you check, because it is the one you can answer before reading.
 
 ## Do NOT delegate — targeted reading
 
-**A targeted read is cheaper inline, always.** Below the break-even, delegation
-makes the agent slower *and* costs more:
+**A targeted read is cheaper inline, always.** These are the cases where you
+*can* name the file and the lines, so delegation makes the agent slower *and*
+costs more:
 
 - Reading a known file, or a known line range (`sed -n '40,60p' file.sh`)
 - Checking one function whose location you already know
@@ -116,9 +154,16 @@ makes the agent slower *and* costs more:
 
 Over-delegation is a real failure mode, not a theoretical one: a one-line lookup
 routed through a subagent pays ~24.6k to save a few hundred tokens, and adds a
-round-trip of latency. When an investigation is genuinely borderline, read it
-inline — the inline cost is bounded and visible, while a spawn is a fixed
-up-front loss.
+round-trip of latency.
+
+**But "borderline" means borderline in *shape*, not "I am unsure".** The tie-break
+is a narrow one: it applies when you *can* name the file and lines and are only
+wondering whether there are a few more like it. If you cannot name them, the
+case is not borderline — it is fan-out, and it delegates. Treating uncertainty
+itself as the tie-break is what produced 0 delegations against 49 qualifying
+investigations (#978), because at the decision point an agent is *always*
+somewhat uncertain; that is the condition the rule exists to resolve, not a
+reason to default inline.
 
 ## Dispatch it at the sonnet tier
 
