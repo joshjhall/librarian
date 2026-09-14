@@ -112,6 +112,44 @@ LOG_HEADING_RE = re.compile(r"^##[ \t]+(.*?)[ \t]*$")
 ISO_DATE_RE = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")
 
 
+def strip_eol_cr(content: str) -> str:
+    r"""One trailing CR off a line before it becomes evidence (#902, #980).
+
+    Mirrors truncate_chars() in the bash fallback, which has stripped it since
+    #902 -- same strip, same before-the-slice order. read_lines() deliberately
+    KEEPS a CRLF's `\r` in the line so `$`-anchored regexes behave as they do
+    under grep (#980); without this the retained `\r` would reach the TSV and
+    the two runtimes' evidence would differ by one byte on any CRLF match.
+    """
+    return content[:-1] if content.endswith("\r") else content
+
+
+def read_lines(path: str) -> list[str]:
+    r"""PATH's lines under grep's line model: split on `\n` ONLY (#980).
+
+    `newline=""` disables universal-newline translation. Without it a lone `\r`
+    is rewritten to `\n` by read() BEFORE any split can see it, so even
+    `.split("\n")` reports two lines where `grep -n` reports one -- the bash
+    fallback reaches every line through grep, so grep's model is the contract.
+    str.splitlines(), which this replaced, additionally splits on `\x0b`,
+    `\x0c`, `\x1c`-`\x1e` and U+2028/2029, none of which grep treats as a
+    separator.
+
+    The trailing empty left by a final newline is dropped so the count matches
+    `grep -n` at both ends (a file with no trailing newline keeps its last line;
+    a file that is a bare newline still has one, empty, line).
+
+    A CRLF's `\r` STAYS in the line, exactly as it does under grep -- stripping
+    it here would silently change every `$`-anchored regex in every scanner.
+    It comes off at the evidence cap instead, mirroring truncate_chars (#902).
+    """
+    with open(path, "r", encoding="utf-8", errors="replace", newline="") as fh:
+        lines = fh.read().split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()
+    return lines
+
+
 def fail(message: str) -> int:
     """Print an actionable TOOL-side error and return the non-zero code.
 
@@ -180,8 +218,7 @@ def read_pinned_version(path: str) -> str:
     if env:
         return env
     try:
-        with open(path, "r", encoding="utf-8", errors="replace") as fh:
-            lines = fh.read().splitlines()
+        lines = read_lines(path)
     except OSError:
         return ""
     in_okf = False
@@ -226,7 +263,15 @@ def emit(path: str, line_no: int, category: str, evidence: str, certainty: str) 
     working notes, and in a consumer repo material this repo has never seen
     (#664 Notes)."""
     sys.stdout.write(
-        "\t".join((path, str(line_no), category, evidence[:EVIDENCE_CAP], certainty))
+        "\t".join(
+            (
+                path,
+                str(line_no),
+                category,
+                strip_eol_cr(evidence)[:EVIDENCE_CAP],
+                certainty,
+            )
+        )
         + "\n"
     )
 
@@ -581,8 +626,7 @@ def main(argv: list[str]) -> int:
         if seen_dir and seen_dir not in bundle_dirs:
             bundle_dirs.append(seen_dir)
         try:
-            with open(path, "r", encoding="utf-8", errors="replace") as fh:
-                lines = fh.read().splitlines()
+            lines = read_lines(path)
         except OSError:
             continue
         scan_file(path, lines, root, pinned, index_names)

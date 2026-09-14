@@ -133,6 +133,7 @@ run_fragment_test test_symlinked_concept_is_never_written_through "a .md symlink
 run_fragment_test test_hidden_directories_are_not_part_of_the_bundle "a hidden directory under the bundle root is not part of the bundle, in both runtimes"
 run_fragment_test test_plan_only_transform_refuses_apply "a plan-only transform renders in plan and REFUSES apply at exit 2"
 run_fragment_test test_plan_only_transforms_are_visible_in_check "both plan-only transforms are NAMED in check output, never silently omitted"
+run_fragment_test test_migrate_config_readers_survive_unreadable "the config readers keep their OSError fallbacks and do not shadow transforms.read_lines (#980)"
 
 run_fragment_test test_parity_check_mode "bash and python agree byte-for-byte in check mode"
 run_fragment_test test_parity_plan_mode "bash and python agree byte-for-byte in plan mode"

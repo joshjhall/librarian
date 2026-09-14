@@ -148,6 +148,23 @@ PER_LANG_THRESHOLDS = {
 }
 
 
+def read_lines(path: str) -> list[str]:
+    r"""PATH's lines under grep's line model: split on `\n` ONLY (#980).
+
+    `newline=""` disables universal-newline translation. Without it a lone `\r`
+    is rewritten to `\n` by read() BEFORE this split can see it, so the split
+    alone does not match the bash fallback, which reaches every line through
+    `grep -n`. A CRLF's `\r` stays in the line, as it does under grep. The
+    trailing empty from a final newline is dropped so the count matches
+    `grep -n` at both ends.
+    """
+    with open(path, encoding="utf-8", errors="replace", newline="") as fh:
+        lines = fh.read().split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()
+    return lines
+
+
 def thresholds_for(lang: str) -> tuple[int, int]:
     """The (warning, high) production-LOC pair for LANG.
 
@@ -673,12 +690,9 @@ def main(argv: list[str]) -> int:
             ):
                 continue
             try:
-                with open(path, encoding="utf-8", errors="replace") as src:
-                    lines = src.read().split("\n")
+                lines = read_lines(path)
             except OSError:
                 continue
-            if lines and lines[-1] == "":
-                lines.pop()
             if measure_only:
                 sys.stdout.write(measure_record(path, lines) + "\n")
             else:

@@ -95,6 +95,128 @@ test_strip_present() {
 # tracked separately in #980, and there the runtimes already disagree about line
 # numbering, so the slice order is not what would save it.
 
+# --- The PYTHON side of the same helper (#980) -------------------------------
+#
+# #980 gave the python primaries a `read_lines()` that deliberately KEEPS a
+# CRLF's `\r` in the line, because `grep` keeps it too and stripping per-line
+# would silently change every `$`-anchored regex in every scanner. The CR now
+# comes off at the EVIDENCE cap instead, via a `strip_eol_cr()` helper -- the
+# python twin of `truncate_chars`'s `s=${s%$'\r'}`.
+#
+# That helper inherits `truncate_chars`'s copy-spread hazard for the same reason
+# the header records: a new scanner is written by copying a neighbour, so a copy
+# made from a pre-#980 sibling (or one whose strip a refactor dropped) brings the
+# divergence back in a file no fixture reaches. This gate is the structural
+# backstop on the python side, symmetric with the bash one above.
+#
+# WHY A DEFINITION SWEEP AND NOT A CALL-SITE ONE. #980's first review cycle found
+# loop-make-it-tested slicing evidence at a LITERAL 60 rather than at
+# EVIDENCE_CAP, so a sweep keyed on the constant NAME missed the site entirely.
+# A call-site gate would have to know every cap spelling; a definition gate only
+# has to know that a port which reads lines needs the helper. The behavioral
+# complement -- that no port EMITS a CR, whatever its cap width -- is
+# tests/validate-python-ports.sh::test_py_evidence_carries_no_cr.
+PY_MIN_EXPECTED=10
+
+# Every python port whose read_lines() retains the CR, i.e. every file that
+# needs the strip. Found by the DEFINITION of read_lines, mirroring the bash
+# sweep's reasoning: a filename glob would miss a port whose reader lives in a
+# differently-named module (bundle_graph.py, transforms.py, split-verify.py).
+list_read_lines_files() {
+    command grep -rl '^def read_lines(' "$PLUGINS_DIR" \
+        --include='*.py' 2>/dev/null | command sort
+}
+
+# Files that cap a LINE into a TSV evidence field -- the only ones that need the
+# strip. A reader with no evidence path legitimately has none, so requiring one
+# there would be a FALSE claim rather than a stricter gate: check-decomposition
+# emits metrics, sizing/split-verify emit computed summaries, bundle_graph feeds
+# a caller's emit.
+#
+# The predicate is EVIDENCE_CAP specifically, not any `[:N]` slice. A bare
+# numeric-slice test matches ordinary list slicing (`callers[:3]`,
+# `lines[:20]`, `line[:1]`) and flagged four files that have no evidence path at
+# all -- a gate that fires on correct code teaches people to silence it.
+#
+# The cost of the narrower predicate is the literal-cap case: #980's first review
+# cycle found loop-make-it-tested slicing at a literal 60 rather than at
+# EVIDENCE_CAP, and this sweep would not see such a file if a future port were
+# written that way from scratch. That gap is covered BEHAVIORALLY and
+# cap-width-agnostically by
+# tests/validate-python-ports.sh::test_py_evidence_carries_no_cr, which asserts
+# no port emits a CR whatever its cap spelling. Structural here, behavioral
+# there -- neither alone is sufficient, which is the same division of labour the
+# bash half of this gate has with the corpus fixture.
+list_py_evidence_files() {
+    local f
+    while IFS= read -r f; do
+        [ -n "$f" ] || continue
+        if command grep -q 'EVIDENCE_CAP' "$f" 2>/dev/null; then
+            command printf '%s\n' "$f"
+        fi
+    done <<EOF
+$(list_read_lines_files)
+EOF
+}
+
+test_py_strip_helper_present() {
+    local script count=0 missing=""
+    while IFS= read -r script; do
+        [ -n "$script" ] || continue
+        count=$((count + 1))
+        command grep -q '^def strip_eol_cr(' "$script" 2>/dev/null ||
+            missing="$missing ${script#"$PLUGINS_DIR"/}"
+    done <<EOF
+$(list_py_evidence_files)
+EOF
+
+    assert_equals "" "$missing" \
+        "every python port that caps evidence defines strip_eol_cr() (#980)"
+    assert_true "[ $count -ge $PY_MIN_EXPECTED ]" \
+        "python strip sweep covered $count evidence-emitting ports (floor $PY_MIN_EXPECTED)"
+}
+
+# The helper must be CALLED, not merely defined. A defined-but-unused helper is
+# the silent-pass shape this repo keeps filing issues about: the gate above goes
+# green while every emitted row still carries the CR.
+test_py_strip_helper_called() {
+    local script uncalled=""
+    while IFS= read -r script; do
+        [ -n "$script" ] || continue
+        # Two things this line gets right only because mutation testing forced
+        # them, both worth keeping:
+        #
+        #   `grep -v '^def '` FIRST -- the definition line is itself
+        #   `def strip_eol_cr(content: ...)`, so without excluding it the check
+        #   could never fail: a helper whose ONLY occurrence is its own
+        #   definition would report as called, which is precisely the
+        #   defined-but-unused case this exists to catch.
+        #
+        #   A FIXED-STRING match on `strip_eol_cr(`, not `strip_eol_cr([a-z_]`.
+        #   The narrower pattern assumed the argument is a bare identifier, and
+        #   two ports legitimately pass a concatenation starting with a string
+        #   literal (`strip_eol_cr("Link target not found: " + target)`), so it
+        #   reported them uncalled when they call it correctly. A gate that
+        #   fires on correct code gets silenced.
+        #   NO `grep -q` ON THE RIGHT OF A PIPE. `-q` exits on the first match,
+        #   the upstream grep takes SIGPIPE, and under `set -o pipefail` the
+        #   pipeline reports 141 -- so a file that DOES call the helper reads as
+        #   not calling it. That is CLAUDE.md's #932 lesson, and this gate walked
+        #   into it: check-security calls strip_eol_cr() from cap() and was
+        #   reported uncalled. Drop `-q` and redirect instead; a `grep -q` on a
+        #   FILE (no pipe) is fine, which is why the sibling checks above keep it.
+        if ! command grep -v '^def ' "$script" 2>/dev/null |
+            command grep -F 'strip_eol_cr(' >/dev/null 2>&1; then
+            uncalled="$uncalled ${script#"$PLUGINS_DIR"/}"
+        fi
+    done <<EOF
+$(list_py_evidence_files)
+EOF
+
+    assert_equals "" "$uncalled" \
+        "every python port that defines strip_eol_cr() actually calls it (#980)"
+}
+
 test_strip_precedes_the_slice() {
     local script count=0
     while IFS= read -r script; do
@@ -288,5 +410,7 @@ run_test test_strip_present "Every truncate_chars copy strips a trailing CR from
 run_test test_strip_precedes_the_slice "The strip runs before the slice (a CR must not consume one of <maxchars>)"
 run_test test_strip_is_behaviorally_correct "Each copy, executed, yields CR-free evidence identical to its LF twin"
 run_test test_gate_rejects_a_broken_copy "TEETH: each check rejects a deliberately-broken copy (and passes a fixed one)"
+run_test test_py_strip_helper_present "Every python port that caps evidence defines strip_eol_cr() (#980)"
+run_test test_py_strip_helper_called "...and actually calls it — a defined-but-unused helper is a silent pass (#980)"
 
 generate_report

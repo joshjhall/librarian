@@ -56,6 +56,48 @@ PY_ALL_NAME_RE = re.compile(r"\"[a-zA-Z_][a-zA-Z0-9_]*\"|'[a-zA-Z_][a-zA-Z0-9_]*
 PY_MAIN_GUARD_RE = re.compile(r"^if[ \t]+__name__[ \t]*==[ \t]*[\"']__main__[\"']")
 
 
+def strip_eol_cr(content: str) -> str:
+    r"""One trailing CR off a line before it becomes evidence (#902, #980).
+
+    Mirrors truncate_chars() in the bash fallback, which has stripped it since
+    #902 -- same strip, same before-the-slice order. read_lines() deliberately
+    KEEPS a CRLF's `\r` in the line so `$`-anchored regexes behave as they do
+    under grep (#980); without this the retained `\r` would reach the TSV and
+    the two runtimes' evidence would differ by one byte on any CRLF match.
+
+    NOTE the slice here is a literal 60, not EVIDENCE_CAP: this file's
+    untested-public-api arm caps at 60 to match `truncate_chars 60` in the bash
+    twin. The cap width differs; the strip does not.
+    """
+    return content[:-1] if content.endswith("\r") else content
+
+
+def read_lines(path: str) -> list[str]:
+    r"""PATH's lines under grep's line model: split on `\n` ONLY (#980).
+
+    `newline=""` disables universal-newline translation. Without it a lone `\r`
+    is rewritten to `\n` by read() BEFORE any split can see it, so even
+    `.split("\n")` reports two lines where `grep -n` reports one -- the bash
+    fallback reaches every line through grep, so grep's model is the contract.
+    str.splitlines(), which this replaced, additionally splits on `\x0b`,
+    `\x0c`, `\x1c`-`\x1e` and U+2028/2029, none of which grep treats as a
+    separator.
+
+    The trailing empty left by a final newline is dropped so the count matches
+    `grep -n` at both ends (a file with no trailing newline keeps its last line;
+    a file that is a bare newline still has one, empty, line).
+
+    A CRLF's `\r` STAYS in the line, exactly as it does under grep -- stripping
+    it here would silently change every `$`-anchored regex in every scanner.
+    It comes off at the evidence cap instead, mirroring truncate_chars (#902).
+    """
+    with open(path, "r", encoding="utf-8", errors="replace", newline="") as fh:
+        lines = fh.read().split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()
+    return lines
+
+
 def _py_public_symbols_gate(lines: list[str]) -> str:
     """This MODULE's public-API policy — "all:<names>", "none", or "open".
 
@@ -200,7 +242,7 @@ def scan_file(path: str, lines: list[str]) -> None:
                 ],
                 func_name,
             ):
-                ev = content[:60]
+                ev = strip_eol_cr(content)[:60]
                 emit(
                     path,
                     str(idx),
@@ -215,7 +257,7 @@ def scan_file(path: str, lines: list[str]) -> None:
             func_name = m.group(1) if m else ""
             test_file = f"{dirname}/{name_no_ext}_test.go"
             if os.path.isfile(test_file) and not _word_in_file(test_file, func_name):
-                ev = content[:60]
+                ev = strip_eol_cr(content)[:60]
                 emit(
                     path,
                     str(idx),
@@ -314,8 +356,7 @@ def main(argv: list[str]) -> int:
         if any(fnmatch(path, g) for g in SKIP_GLOBS):
             continue
         try:
-            with open(path, "r", encoding="utf-8", errors="replace") as fh:
-                lines = fh.read().splitlines()
+            lines = read_lines(path)
         except OSError:
             continue
         scan_file(path, lines)

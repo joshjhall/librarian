@@ -30,6 +30,44 @@ import sys
 EVIDENCE_CAP = 80
 
 
+def strip_eol_cr(content: str) -> str:
+    r"""One trailing CR off a line before it becomes evidence (#902, #980).
+
+    Mirrors truncate_chars() in the bash fallback, which has stripped it since
+    #902 -- same strip, same before-the-slice order. read_lines() deliberately
+    KEEPS a CRLF's `\r` in the line so `$`-anchored regexes behave as they do
+    under grep (#980); without this the retained `\r` would reach the TSV and
+    the two runtimes' evidence would differ by one byte on any CRLF match.
+    """
+    return content[:-1] if content.endswith("\r") else content
+
+
+def read_lines(path: str) -> list[str]:
+    r"""PATH's lines under grep's line model: split on `\n` ONLY (#980).
+
+    `newline=""` disables universal-newline translation. Without it a lone `\r`
+    is rewritten to `\n` by read() BEFORE any split can see it, so even
+    `.split("\n")` reports two lines where `grep -n` reports one -- the bash
+    fallback reaches every line through grep, so grep's model is the contract.
+    str.splitlines(), which this replaced, additionally splits on `\x0b`,
+    `\x0c`, `\x1c`-`\x1e` and U+2028/2029, none of which grep treats as a
+    separator.
+
+    The trailing empty left by a final newline is dropped so the count matches
+    `grep -n` at both ends (a file with no trailing newline keeps its last line;
+    a file that is a bare newline still has one, empty, line).
+
+    A CRLF's `\r` STAYS in the line, exactly as it does under grep -- stripping
+    it here would silently change every `$`-anchored regex in every scanner.
+    It comes off at the evidence cap instead, mirroring truncate_chars (#902).
+    """
+    with open(path, "r", encoding="utf-8", errors="replace", newline="") as fh:
+        lines = fh.read().split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()
+    return lines
+
+
 def _int_env(name: str, default: int) -> int:
     val = os.environ.get(name, "")
     try:
@@ -155,8 +193,7 @@ def main(argv: list[str]) -> int:
         if not path or not os.path.isfile(path):
             continue
         try:
-            with open(path, "r", encoding="utf-8", errors="replace") as fh:
-                lines = fh.read().splitlines()
+            lines = read_lines(path)
         except OSError:
             continue
 
@@ -177,7 +214,7 @@ def main(argv: list[str]) -> int:
                             idx,
                             "expired-date",
                             f"Date reference older than {staleness_months} months: "
-                            + content[:EVIDENCE_CAP],
+                            + strip_eol_cr(content)[:EVIDENCE_CAP],
                         )
 
             # --- Category: outdated-reference (version references) ---
@@ -187,7 +224,8 @@ def main(argv: list[str]) -> int:
                         path,
                         idx,
                         "outdated-reference",
-                        "Version reference to verify: " + content[:EVIDENCE_CAP],
+                        "Version reference to verify: "
+                        + strip_eol_cr(content)[:EVIDENCE_CAP],
                     )
 
             # --- Category: stale-comment ---
@@ -196,7 +234,7 @@ def main(argv: list[str]) -> int:
                     path,
                     idx,
                     "stale-comment",
-                    "Staleness marker: " + content[:EVIDENCE_CAP],
+                    "Staleness marker: " + strip_eol_cr(content)[:EVIDENCE_CAP],
                 )
 
             # --- Category: outdated-reference (deprecated URLs) ---
@@ -205,7 +243,8 @@ def main(argv: list[str]) -> int:
                     path,
                     idx,
                     "outdated-reference",
-                    "URL with deprecation indicators: " + content[:EVIDENCE_CAP],
+                    "URL with deprecation indicators: "
+                    + strip_eol_cr(content)[:EVIDENCE_CAP],
                 )
 
     return 0

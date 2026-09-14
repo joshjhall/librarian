@@ -78,6 +78,26 @@ DEFAULT_INDEX_NAMES = ("MEMORY.md", "index.md", "index-*.md")
 RESERVED = ("index.md", "log.md")
 
 
+def read_lines(path: str) -> list[str]:
+    r"""PATH's lines under grep's line model: split on `\n` ONLY (#980).
+
+    `newline=""` disables universal-newline translation. Without it a lone `\r`
+    is rewritten to `\n` by read() BEFORE any split can see it, so even
+    `.split("\n")` reports two lines where `grep -n` reports one -- and the bash
+    twin reaches every line through grep. str.splitlines(), which this replaced,
+    additionally splits on `\x0b`, `\x0c`, `\x1c`-`\x1e` and U+2028/2029, none of
+    which grep treats as a separator. The trailing empty from a final newline is
+    dropped so the count matches `grep -n` at both ends.
+
+    Raises OSError on an unreadable path; each caller keeps its own fallback.
+    """
+    with open(path, "r", encoding="utf-8", errors="replace", newline="") as fh:
+        lines = fh.read().split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()
+    return lines
+
+
 def read_index_names(path: str) -> list[str]:
     """Configured index basenames: $OKF_INDEX_NAMES -> thresholds.yml -> default.
 
@@ -132,8 +152,7 @@ def read_config_list(path: str, key: str) -> list[str] | None:
     bash glob is not (the #686 divergence).
     """
     try:
-        with open(path, "r", encoding="utf-8", errors="replace") as fh:
-            lines = fh.read().splitlines()
+        lines = read_lines(path)
     except OSError:
         return None
     in_health = False
@@ -334,10 +353,7 @@ def scan_bundle(root: str, emit, thresholds_path: str) -> None:
 
     def read(name: str) -> list[str]:
         try:
-            with open(
-                os.path.join(root, name), "r", encoding="utf-8", errors="replace"
-            ) as fh:
-                return fh.read().splitlines()
+            return read_lines(os.path.join(root, name))
         except OSError:
             return []
 

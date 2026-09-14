@@ -762,6 +762,53 @@ unset _capi
 command printf 'password = "realsecret123"\r\nquery = f"SELECT * FROM users WHERE id={user_id}"\n' \
     >"$FIXDIR/crlfcontent.py"
 
+# NON-`\n` LINE SEPARATORS (#980) — the line-SPLITTING divergence, distinct from
+# the evidence-field one crlfcontent.py above pins.
+#
+# Python's str.splitlines() splits on a separator set far wider than `\n`: a lone
+# `\r`, a form feed `\x0c`, a vertical tab `\x0b`, `\x1c`-`\x1e`, and U+2028/2029.
+# The bash fallback reaches lines through `grep -n`, which splits on `\n` ONLY.
+# So on a file carrying any of those bytes MID-LINE the two runtimes disagree on
+# how many lines the file HAS -- diverging the `line` field and the `evidence`
+# field together. Measured on check-security before the fix:
+#
+#   py:  lonecr.py  2  hardcoded-secret  ...: password = "realsecret123"
+#   sh:  lonecr.py  1  hardcoded-secret  ...: x = 1^Mpassword = "realsecret123"
+#
+# This corpus had never carried one of these bytes, so the whole-corpus diff
+# passed on an input shape it did not hold: the #836 trap, where absence of a
+# shape reads as parity. Same trap crlfcontent.py's own comment records, one
+# input class over -- a CRLF line still ENDS in `\n`, so both runtimes agree on
+# where it splits, which is why #902's fixture does not exercise this at all.
+#
+# WHY THREE SEPARATORS AND NOT ONE. The obvious fix (`.split("\n")`) is
+# INSUFFICIENT and fails in a way a single fixture would hide: python's
+# universal-newline translation happens at read(), BEFORE any split, so a lone
+# `\r` is already rewritten to `\n` in the buffer and `read().split("\n")` still
+# reports two lines. The same fix works correctly on a form feed, which
+# translation does not touch. So a form-feed-only corpus goes GREEN on a fix that
+# leaves the issue's headline case broken. The real fix needs `newline=""` on the
+# open. verttab.py is the third separator, so a fix keyed to the two bytes named
+# in the issue still fails here.
+#
+# Each file's second segment is a `password =` line, which is the cheapest input
+# that makes the divergence OBSERVABLE as a TSV row rather than as a silent
+# difference in an internal list -- without a matched line, both runtimes emit
+# nothing and "they agree" holds vacuously between two silences.
+command printf 'x = 1\rpassword = "realsecret123"\n' >"$FIXDIR/lonecr.py"
+command printf 'a = 1\fpassword = "realsecret123"\n' >"$FIXDIR/formfeed.py"
+command printf 'b = 1\vpassword = "realsecret123"\n' >"$FIXDIR/verttab.py"
+
+# A file that is a BARE NEWLINE, the degenerate end of the same defect. Python's
+# splitlines() returns [] here while `grep -n ''` returns one empty line, so the
+# two runtimes disagree about whether the file has a line at all. No detector
+# fires on an empty line, so this one cannot show up as a TSV diff -- it is
+# carried because it is the boundary case of the trailing-empty `pop()` the fix
+# introduces, and a fix that pops unconditionally would turn a one-line file into
+# a zero-line one. Asserted directly in test_read_lines_grep_equivalence rather
+# than through the corpus diff, for exactly that reason.
+command printf '\n' >"$FIXDIR/barenewline.py"
+
 FILE_LIST="$WORKDIR/list.txt"
 : >"$FILE_LIST"
 for f in "$FIXDIR/app.py" "$FIXDIR/app.ts" "$FIXDIR/app.go" "$FIXDIR/view.html" \
@@ -771,6 +818,7 @@ for f in "$FIXDIR/app.py" "$FIXDIR/app.ts" "$FIXDIR/app.go" "$FIXDIR/view.html" 
     "$FIXDIR/deploy" "$FIXDIR/provision" "$FIXDIR/migrate" \
     "$FIXDIR/legacyrun" "$FIXDIR/oddball" \
     "$FIXDIR/crlfbang" "$FIXDIR/crlfdirect" "$FIXDIR/crlfcontent.py" "$FIXDIR/pastcap" \
+    "$FIXDIR/lonecr.py" "$FIXDIR/formfeed.py" "$FIXDIR/verttab.py" \
     "$FIXDIR/model.ts" "$FIXDIR/api.d.ts" "$FIXDIR/Model.swift" \
     "$FIXDIR/Upper.PY" "$FIXDIR/Widget.TS" \
     "$FIXDIR/prose/agents/reviewer.md" "$FIXDIR/prose/skills/demo/SKILL.md" \
@@ -1589,6 +1637,356 @@ PY
         "family_prefix: the awk twin produces the same family for every rule (#772)"
 }
 
+# --- read_lines called DIRECTLY against grep (#980) --------------------------
+#
+# The corpus diff above catches the lone-CR/form-feed divergence, but only
+# RELATIVELY: it proves the two impls agree, never that either matches grep's
+# actual line model. That is the #684 blind spot, and it bites hard here,
+# because the two plausible fixes are indistinguishable under parity —
+# normalizing BOTH runtimes onto splitlines() would also make the corpus green,
+# while silently renumbering every scanner's output on any file holding one of
+# these bytes.
+#
+# So this drives each port's read_lines() and compares it to what `grep -n ''`
+# ACTUALLY reports for the same file, byte for byte. grep is the contract (the
+# bash fallbacks reach every line through it), so it is the oracle rather than
+# a second opinion.
+#
+# Three cases here cannot surface through the corpus at all, which is the other
+# reason this is a separate test:
+#
+#   - barenewline: splitlines() -> [], grep -> ['']. No detector fires on an
+#     empty line, so both impls emit nothing and the corpus diff is green on a
+#     real disagreement. It is also the boundary case for the trailing-empty
+#     pop() the fix introduces: a pop that does not check for the empty string
+#     turns this one-line file into a zero-line one.
+#   - notrailing: the other end of the same pop(). A fix that drops the last
+#     element unconditionally loses a real final line here.
+#   - crlf: the \r must SURVIVE in the line (grep keeps it, and GNU grep's
+#     `^---$` correctly does NOT match `---\r`). This is the case that makes
+#     "strip \r per line" wrong: it looks like a tidy-up and is a behavior
+#     change to every anchored regex in every scanner. The \r comes off at the
+#     EVIDENCE cap instead, mirroring truncate_chars (#902).
+test_py_read_lines_grep_equivalence() {
+    local out rc=0
+
+    command cat >"$WORKDIR/readlines_cases.py" <<'PY'
+import importlib.util
+import os
+import subprocess
+import sys
+
+fixdir = sys.argv[1]
+plugins_dir = sys.argv[2]
+ports = sys.argv[3:]
+
+# name -> raw bytes. Each shape is one thing grep and splitlines() can disagree
+# about; the comment block above says why each earns its place.
+CASES = {
+    "lonecr": b'x = 1\rpassword = "s"\n',
+    "formfeed": b'a = 1\x0cpassword = "s"\n',
+    "verttab": b'b = 1\x0bpassword = "s"\n',
+    "filesep": b'c = 1\x1cpassword = "s"\n',
+    "u2028": 'd = 1 password = "s"\n'.encode("utf-8"),
+    "crlf": b'---\r\npassword = "s"\r\nq = 1\n',
+    "barenewline": b"\n",
+    "notrailing": b"a\nb",
+    "trailing": b"a\nb\n",
+    "empty": b"",
+}
+
+
+def grep_lines(path):
+    """What `grep -n ''` reports, as a list of line CONTENTS in order.
+
+    The bash fallbacks reach every line through this, so it is the contract the
+    python primary must match. Split on \\n only, and drop the trailing empty
+    grep's own final newline leaves behind -- the numbering prefix is stripped
+    at the first colon, which is unambiguous because grep writes it itself.
+    """
+    out = subprocess.run(
+        ["grep", "-n", ""], stdin=open(path, "rb"), capture_output=True
+    ).stdout.decode("utf-8", "replace")
+    rows = out.split("\n")
+    if rows and rows[-1] == "":
+        rows.pop()
+    return [r.split(":", 1)[1] for r in rows]
+
+
+# Ports that read only PATH LISTS, never file content (see below).
+NO_CONTENT_READ = {
+    "drift-detect/patterns",
+    "check-docs-organization/patterns",
+    # plan-lens reads a numstat TSV (counts keyed by path), never source.
+    "ship-issue/plan-lens",
+}
+
+# Content readers this gate's port GLOB cannot reach, driven here anyway (#980).
+#
+# list_python_ports() is keyed off PORT_BASENAMES ("patterns sizing plan-lens"),
+# so a reader in a differently-named module is invisible to it -- and #980
+# changed the line model in four such files. Left undriven they would ship a
+# real behavior change with NO assertion behind it: the "absence reads as a
+# pass" trap (#836) this corpus exists to prevent, reached by a new route --
+# not a missing FIXTURE but a missing FILE.
+#
+# split-verify.py is here for a second, independent reason: it is deliberately
+# excluded from the port corpus (its argv shape does not fit this gate's
+# file-list contract -- see the SCOPE note at the top), so its parity lives in
+# tests/validate-split-verify.sh, which carries no separator-byte fixture. Its
+# read_lines() is a plain path-in/lines-out function, so the LINE MODEL is
+# assertable here even though its CLI is not.
+#
+# Paths are relative to PLUGINS_DIR, passed in as argv[2].
+# Each entry is (module path relative to PLUGINS_DIR, attribute name). The
+# attribute is NAMED rather than assumed: migrate.py's config reader is
+# deliberately `_read_config_lines`, not `read_lines`, because migrate.py
+# IMPORTS transforms.read_lines and a same-named local would shadow it for the
+# apply path (measured: the shadow turned an unreadable file from "no edits"
+# into a raise). Naming the attribute here is what lets the test follow that
+# decision instead of silently probing the wrong function.
+EXTRA_READERS = [
+    ("review-audit/skills/okf-migrate/transforms.py", "read_lines"),
+    ("review-audit/skills/okf-migrate/migrate.py", "_read_config_lines"),
+    ("review-audit/skills/check-okf-conformance/bundle_graph.py", "read_lines"),
+    ("workflow/skills/ship-issue/split-verify.py", "read_lines"),
+]
+
+bad = 0
+for port in ports:
+    spec = importlib.util.spec_from_file_location("port_under_test", port)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    # dir/stem, not just the dir: ship-issue holds several ports, and a
+    # dir-only label collides them into one indistinguishable row.
+    rel = "%s/%s" % (
+        os.path.basename(os.path.dirname(port)),
+        os.path.basename(port)[: -len(".py")],
+    )
+
+    fn = getattr(mod, "read_lines", None)
+    if fn is None:
+        # A port with no read_lines() is only correct if it never reads file
+        # CONTENT -- drift-detect and check-docs-organization consume path
+        # LISTS, where no line model is observable because a path cannot
+        # contain a separator byte. The list is EXPLICIT rather than a
+        # try/except, so a content-reading port that loses its read_lines()
+        # fails here instead of being quietly excused (the #538/#571
+        # silence-reads-as-a-pass shape).
+        if rel in NO_CONTENT_READ:
+            continue
+        bad += 1
+        print("FAIL %s: no read_lines() -- still on splitlines()?" % rel)
+        continue
+
+    for name, data in CASES.items():
+        path = os.path.join(fixdir, "rl_" + name)
+        with open(path, "wb") as fh:
+            fh.write(data)
+        want = grep_lines(path)
+        got = fn(path)
+        if got != want:
+            bad += 1
+            print("FAIL %s read_lines(%s) -> %r, grep says %r" % (rel, name, got, want))
+
+# The same CASES and the same grep oracle, for the readers the glob cannot see.
+for rel_path, attr_name in EXTRA_READERS:
+    mod_path = os.path.join(plugins_dir, rel_path)
+    if not os.path.isfile(mod_path):
+        bad += 1
+        print("FAIL extra reader %s: not found at %s" % (rel_path, mod_path))
+        continue
+    spec = importlib.util.spec_from_file_location("extra_reader", mod_path)
+    mod = importlib.util.module_from_spec(spec)
+    try:
+        spec.loader.exec_module(mod)
+    except Exception as exc:  # a reader that cannot import is a failure, not a skip
+        bad += 1
+        print("FAIL extra reader %s: import failed: %r" % (rel_path, exc))
+        continue
+    fn = getattr(mod, attr_name, None)
+    if fn is None:
+        bad += 1
+        print("FAIL extra reader %s: no %s()" % (rel_path, attr_name))
+        continue
+    for name, data in CASES.items():
+        path = os.path.join(fixdir, "rlx_" + name)
+        with open(path, "wb") as fh:
+            fh.write(data)
+        want = grep_lines(path)
+        got = fn(path)
+        if got != want:
+            bad += 1
+            print(
+                "FAIL %s %s(%s) -> %r, grep says %r"
+                % (rel_path, attr_name, name, got, want)
+            )
+
+if bad == 0:
+    print("OK")
+PY
+
+    local ports
+    ports="$(list_python_ports | command tr '\n' ' ')"
+    # Deliberate word-splitting: one argv entry per port path.
+    # shellcheck disable=SC2086
+    out="$(python3 "$WORKDIR/readlines_cases.py" "$FIXDIR" "$PLUGINS_DIR" $ports 2>&1)" || rc=$?
+    assert_equals "0" "$rc" "the direct read_lines probe ran without error"
+    assert_equals "OK" "$out" \
+        "read_lines: every port's line model matches grep -n on every separator shape (#980)"
+}
+
+# --- evidence carries no CR, end-to-end, for EVERY port (#980 cycle 2) -------
+#
+# read_lines() deliberately KEEPS a CRLF's `\r` in the line (grep does too), so
+# every port must strip it again at its evidence cap or the TSV differs from the
+# bash twin's by one byte -- the #902 divergence, re-opened by #980's own fix.
+#
+# Two things make this its own test rather than a corpus fixture:
+#
+#   1. The whole-corpus parity diff is RELATIVE (#684). If BOTH runtimes
+#      retained the `\r` it would compare equal and pass. Only an assertion on
+#      the BYTES can tell "they agree" from "they are right", and the contract
+#      here is the absence of a `\r`, not agreement.
+#   2. test_py_read_lines_grep_equivalence asserts the LINE MODEL, never the
+#      evidence cap -- a different function, reached by a different path. #980's
+#      first review cycle found exactly that gap: loop-make-it-tested slices at
+#      a LITERAL 60 rather than EVIDENCE_CAP, so a sweep keyed on the constant
+#      NAME missed it and the port shipped emitting `def thing():^M`.
+#
+# So this drives every port over a CRLF file and asserts no emitted row carries
+# a CR anywhere -- which is cap-width agnostic by construction, and therefore
+# cannot be defeated by another port using its own literal slice.
+#
+# The fixture is shaped to trip MANY detector families at once (secret, SQL,
+# debug print, weak hash, undocumented def, empty body, TODO, swallowed except,
+# an untested public def) because a port that emits NOTHING asserts nothing --
+# the vacuity trap this corpus records throughout. test_crlf_evidence_is_nonvacuous
+# below pins that at least one port actually emitted, so this can never silently
+# degrade into a test over zero rows.
+CRLF_EV_DIR="$WORKDIR/crlfev"
+CRLF_EV_LIST="$WORKDIR/crlfev.txt"
+
+setup_crlf_evidence_fixture() {
+    command mkdir -p "$CRLF_EV_DIR/tests"
+    {
+        command printf 'password = "realsecret123"\r\n'
+        command printf 'query = f"SELECT * FROM users WHERE id={uid}"\r\n'
+        command printf 'print("debug left in")\r\n'
+        command printf 'digest = md5(payload)\r\n'
+        command printf 'def undocumented_public(a):\r\n'
+        command printf '    pass\r\n'
+        command printf '# TODO: finish this\r\n'
+        command printf 'try:\r\n'
+        command printf '    risky()\r\n'
+        command printf 'except ValueError:\r\n'
+        command printf '    pass\r\n'
+    } >"$CRLF_EV_DIR/mod.py"
+    # A test file that does NOT mention undocumented_public, so the
+    # untested-public-api arm (the literal-60 slice) actually fires.
+    command printf 'def test_unrelated():\n    pass\n' >"$CRLF_EV_DIR/tests/test_mod.py"
+    command printf '%s\n' "$CRLF_EV_DIR/mod.py" >"$CRLF_EV_LIST"
+}
+
+# Rows emitted by PY over the CRLF fixture that contain a CR. Empty is the pass.
+crlf_rows_with_cr() {
+    python3 "$1" "$CRLF_EV_LIST" 2>/dev/null | command grep -c "$(command printf '\r')" || true
+}
+
+test_py_evidence_carries_no_cr() {
+    local py rel offenders=""
+    setup_crlf_evidence_fixture
+
+    while IFS= read -r py; do
+        [ -n "$py" ] || continue
+        rel="$(command basename "$(command dirname "$py")")/$(command basename "$py")"
+        if [ "$(crlf_rows_with_cr "$py")" != "0" ]; then
+            offenders="$offenders $rel"
+        fi
+    done <<<"$(list_python_ports)"
+
+    assert_equals "" "$offenders" \
+        "no port emits a CR in its TSV over a CRLF file (#902 via #980)"
+}
+
+# The guard on the test above, which passes trivially over a port that emits
+# NOTHING -- its offender check fires on a row CONTAINING a CR, so zero rows is
+# indistinguishable from zero CRs.
+#
+# A summed total across the corpus is too weak a guard, because one port can
+# regress to silence while its siblings keep the sum positive. But "every port
+# must emit" is FALSE and would be a broken assertion: most ports have nothing
+# to say about a short .py file (check-docs-deadlinks wants links,
+# check-decomposition wants a file over its LOC threshold), and they are
+# correctly silent here.
+#
+# So the guard NAMES the ports whose detectors this fixture is built to reach,
+# and asserts each one individually. The list is measured, not assumed -- each
+# entry emitted at authoring time, and the fixture line that reaches it is noted
+# so a future edit can tell which line it must not delete:
+#
+#   check-security          the `password =` and md5 lines
+#   check-code-health       the debug print, the TODO, the swallowed except
+#   loop-make-it-work       the `pass` body
+#   loop-make-it-tested     the untested public def -- THE literal-60 site that
+#                           #980's first review cycle found unstripped, so this
+#                           is the entry that must never silently drop out
+#   loop-make-it-documented the undocumented public def
+#   check-docs-missing-api  likewise, via its own arm
+#
+# Naming them means a single port going silent fails BY NAME rather than being
+# masked by the others.
+CRLF_EV_MUST_EMIT="check-security check-code-health loop-make-it-work loop-make-it-tested loop-make-it-documented check-docs-missing-api"
+
+test_crlf_evidence_is_nonvacuous() {
+    local skill py n silent=""
+    setup_crlf_evidence_fixture
+
+    for skill in $CRLF_EV_MUST_EMIT; do
+        # No `| head -1`: under `set -o pipefail` a downstream head that closes
+        # the pipe early can SIGPIPE the upstream grep and surface as rc 141,
+        # turning a found port into a suite failure. Measured reproducible with
+        # a many-match upstream; the real corpus matches once per skill, so it
+        # cannot fire today -- which makes it a latent trap keyed to the DATA
+        # rather than to the code, exactly the `grep -q` shape CLAUDE.md records
+        # from #932. The pattern is anchored and skill names are unique, so the
+        # match is single by construction and `head` bought nothing.
+        py="$(list_python_ports | command grep "/${skill}/patterns\.py$" || true)"
+        if [ -z "$py" ]; then
+            silent="$silent ${skill}(not-found)"
+            continue
+        fi
+        n="$(python3 "$py" "$CRLF_EV_LIST" 2>/dev/null | command wc -l | command tr -d ' ')"
+        [ "$n" -gt 0 ] || silent="$silent $skill"
+    done
+
+    assert_equals "" "$silent" \
+        "every port the CRLF fixture is built to reach still emits (guard against a vacuous pass)"
+}
+
+# And the bash twins must agree on the same fixture -- the other half of the
+# contract. Asserted per-port so a failure names the port rather than the set.
+test_crlf_evidence_parity() {
+    local py sh rel a b mismatches=""
+    setup_crlf_evidence_fixture
+
+    while IFS= read -r py; do
+        [ -n "$py" ] || continue
+        sh="$(sibling_sh "$py")"
+        [ -f "$sh" ] || continue
+        rel="$(command basename "$(command dirname "$py")")"
+        a="$(python3 "$py" "$CRLF_EV_LIST" 2>/dev/null | command sort)"
+        b="$(PATTERNS_FORCE_BASH=1 SIZING_FORCE_BASH=1 PLAN_LENS_FORCE_BASH=1 \
+            bash "$sh" "$CRLF_EV_LIST" 2>/dev/null | command sort)"
+        if [ "$a" != "$b" ]; then
+            mismatches="$mismatches $rel"
+        fi
+    done <<<"$(list_python_ports)"
+
+    assert_equals "" "$mismatches" \
+        "python and bash emit identical TSV over a CRLF file, per port (#980)"
+}
+
 run_test test_corpus_non_empty "Python-port corpus is non-empty (gate is not a no-op)"
 run_test test_every_force_bash_var_is_set "Every port's *_FORCE_BASH var is set by the parity test (#695)"
 run_test test_py_is_test_file_direct "check-code-health/patterns.py: is_test_file called directly, both branches (#605)"
@@ -1596,6 +1994,10 @@ run_test test_py_debug_family_direct "check-code-health/patterns.py: debug famil
 run_test test_py_read_yaml_list_direct "check-code-health/patterns.py: _read_yaml_list quote/whitespace/section rules match the bash twin (#686)"
 run_test test_py_md_slug_direct "md_slug: both Python lenses and the shared awk twin agree (#730)"
 run_test test_py_family_prefix_direct "family_prefix: both Python lenses and the awk twin agree (#772)"
+run_test test_py_read_lines_grep_equivalence "read_lines: every port's line model matches grep -n (#980)"
+run_test test_py_evidence_carries_no_cr "evidence: no port emits a CR over a CRLF file (#902 via #980)"
+run_test test_crlf_evidence_is_nonvacuous "evidence: the CRLF fixture is non-vacuous (reaches a detector)"
+run_test test_crlf_evidence_parity "evidence: python and bash agree per-port over a CRLF file (#980)"
 
 while IFS= read -r py; do
     [ -n "$py" ] || continue
