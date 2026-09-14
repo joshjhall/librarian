@@ -331,8 +331,16 @@ test_unmapped_and_project_rows_dropped() {
 test_evidence_truncated_to_80() {
     # The `[RULE] message` evidence column is capped at 80 codepoints (matches
     # patterns.py str[:80]); parity holds on the boundary.
+    #
+    # Counted with `wc -m`, NOT awk's `length()`. Since #786 a cut value ends in
+    # a multibyte ellipsis, and awk's length() is BYTE-based here -- it reported
+    # 82 for a correctly-capped 80-CHARACTER field, which would read as the
+    # clamp being broken when it is the ruler that is wrong.
     run_bash "$STUB_LONG" "$FILE_LIST"
-    _ev="$(command printf '%s' "$RUN_OUT" | command awk -F'\t' 'NR==1{print length($4)}')"
+    # `$( )` strips the trailing newline cut emits, so wc -m counts the field
+    # itself rather than the field plus its terminator.
+    _ev="$(command printf '%s' "$RUN_OUT" | command sed -n '1p' | command cut -f4)"
+    _ev="$(command printf '%s' "$_ev" | LC_ALL=C.UTF-8 command wc -m | command tr -d ' ')"
     assert_equals "80" "$_ev" "bash: evidence truncated to 80 codepoints"
     if [ "$HAVE_PY" = "1" ]; then
         run_py "$STUB_LONG" "$FILE_LIST"

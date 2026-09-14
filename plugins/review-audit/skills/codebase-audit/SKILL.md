@@ -197,7 +197,9 @@ bounds its review fan-out:
 
 - Invoke the `Workflow` tool as a **background** task and poll `TaskOutput` with
   a finite per-poll timeout, accumulating elapsed wall-time. The tool result
-  carries the run's `transcriptDir`.
+  carries the run's `transcriptDir`. **Read the completion state, not the
+  transcript** — `TaskOutput` averages 7,776 chars, the highest per-call of any
+  tool (#786), and an audit's poll loop is long.
 - Once cumulative wait crosses `LIBRARIAN_WORKFLOW_WALL_TIMEOUT` minutes
   (default 20), do NOT keep waiting blindly. **Interactive**: prompt — **cut
   short** (stop waiting; treat this run as partial) or **extend** (wait another

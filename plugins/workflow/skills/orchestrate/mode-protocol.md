@@ -771,8 +771,8 @@ Sandbox*) — apply it here exactly as ship-issue's `pre-ship-validation.md`
 Step 3.5 b bounds its pre-PR review:
 
 - Invoke the `Workflow` tool as a **background** task and poll `TaskOutput` with
-  a finite per-poll timeout, accumulating elapsed wall-time. The tool result
-  carries the run's `transcriptDir`.
+  a finite per-poll timeout, accumulating wall-time; the result carries the run's
+  `transcriptDir`. Poll the completion state, not the transcript (#786).
 - Once cumulative wait crosses `LIBRARIAN_WORKFLOW_WALL_TIMEOUT` minutes
   (default 20), do NOT keep waiting blindly. **L1–L2**: prompt — **cut short**
   (treat this sweep as partial) or **extend** (another interval). **L3–L4**:

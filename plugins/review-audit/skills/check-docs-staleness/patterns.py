@@ -68,6 +68,22 @@ def read_lines(path: str) -> list[str]:
     return lines
 
 
+def truncate_chars(s: str) -> str:
+    """First EVIDENCE_CAP characters of `s`, with a marker when it actually cut.
+
+    THE MARKER IS THE POINT (#786). A silently trimmed evidence field reads as a
+    complete one, so a reader reasons about a line that does not end where the
+    text stops. The ellipsis REPLACES the last character rather than extending
+    past the cap, so the column stays bounded at exactly EVIDENCE_CAP.
+
+    Byte-for-byte equivalent to `truncate_chars` in the sibling patterns.sh --
+    tests/validate-python-ports.sh pins the two runtimes' TSV output.
+    """
+    if len(s) <= EVIDENCE_CAP:
+        return s
+    return s[: EVIDENCE_CAP - 1] + "\u2026"
+
+
 def _int_env(name: str, default: int) -> int:
     val = os.environ.get(name, "")
     try:
@@ -214,7 +230,7 @@ def main(argv: list[str]) -> int:
                             idx,
                             "expired-date",
                             f"Date reference older than {staleness_months} months: "
-                            + strip_eol_cr(content)[:EVIDENCE_CAP],
+                            + truncate_chars(strip_eol_cr(content)),
                         )
 
             # --- Category: outdated-reference (version references) ---
@@ -225,7 +241,7 @@ def main(argv: list[str]) -> int:
                         idx,
                         "outdated-reference",
                         "Version reference to verify: "
-                        + strip_eol_cr(content)[:EVIDENCE_CAP],
+                        + truncate_chars(strip_eol_cr(content)),
                     )
 
             # --- Category: stale-comment ---
@@ -234,7 +250,7 @@ def main(argv: list[str]) -> int:
                     path,
                     idx,
                     "stale-comment",
-                    "Staleness marker: " + strip_eol_cr(content)[:EVIDENCE_CAP],
+                    "Staleness marker: " + truncate_chars(strip_eol_cr(content)),
                 )
 
             # --- Category: outdated-reference (deprecated URLs) ---
@@ -244,7 +260,7 @@ def main(argv: list[str]) -> int:
                     idx,
                     "outdated-reference",
                     "URL with deprecation indicators: "
-                    + strip_eol_cr(content)[:EVIDENCE_CAP],
+                    + truncate_chars(strip_eol_cr(content)),
                 )
 
     return 0

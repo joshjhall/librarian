@@ -26,6 +26,23 @@ from fnmatch import fnmatch
 
 EVIDENCE_CAP = 80
 
+
+def truncate_chars(s: str) -> str:
+    """First EVIDENCE_CAP characters of `s`, with a marker when it actually cut.
+
+    THE MARKER IS THE POINT (#786). A silently trimmed evidence field reads as a
+    complete one, so a reader reasons about a line that does not end where the
+    text stops. The ellipsis REPLACES the last character rather than extending
+    past the cap, so the column stays bounded at exactly EVIDENCE_CAP.
+
+    Byte-for-byte equivalent to `truncate_chars` in the sibling patterns.sh --
+    tests/validate-python-ports.sh pins the two runtimes' TSV output.
+    """
+    if len(s) <= EVIDENCE_CAP:
+        return s
+    return s[: EVIDENCE_CAP - 1] + "\u2026"
+
+
 STUB_RE = re.compile(
     r"\b(TODO|FIXME|STUB|PLACEHOLDER)\b|NotImplementedError"
     r"|raise NotImplementedError|unimplemented!\(\)|todo!\(\)"
@@ -126,7 +143,7 @@ def scan_file(path: str, lines: list[str]) -> None:
                 path,
                 str(idx),
                 "stub-detected",
-                "Stub/placeholder: " + strip_eol_cr(content)[:EVIDENCE_CAP],
+                "Stub/placeholder: " + truncate_chars(strip_eol_cr(content)),
             )
 
         # --- Category: empty-body (per language) ---
@@ -140,7 +157,7 @@ def scan_file(path: str, lines: list[str]) -> None:
                         path,
                         str(idx),
                         "empty-body",
-                        "Empty function body: " + strip_eol_cr(content)[:EVIDENCE_CAP],
+                        "Empty function body: " + truncate_chars(strip_eol_cr(content)),
                     )
         elif ext in ("ts", "js", "tsx", "jsx"):
             if JS_EMPTY_BODY_RE.search(content):
@@ -148,7 +165,7 @@ def scan_file(path: str, lines: list[str]) -> None:
                     path,
                     str(idx),
                     "empty-body",
-                    "Empty function body: " + strip_eol_cr(content)[:EVIDENCE_CAP],
+                    "Empty function body: " + truncate_chars(strip_eol_cr(content)),
                 )
         elif ext == "go":
             if GO_EMPTY_BODY_RE.search(content):
@@ -156,7 +173,7 @@ def scan_file(path: str, lines: list[str]) -> None:
                     path,
                     str(idx),
                     "empty-body",
-                    "Empty function body: " + strip_eol_cr(content)[:EVIDENCE_CAP],
+                    "Empty function body: " + truncate_chars(strip_eol_cr(content)),
                 )
 
     # --- Category: no-assertions (whole-file, test files only) ---

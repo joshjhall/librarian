@@ -30,6 +30,23 @@ from fnmatch import fnmatch
 
 EVIDENCE_CAP = 80
 
+
+def truncate_chars(s: str) -> str:
+    """First EVIDENCE_CAP characters of `s`, with a marker when it actually cut.
+
+    THE MARKER IS THE POINT (#786). A silently trimmed evidence field reads as a
+    complete one, so a reader reasons about a line that does not end where the
+    text stops. The ellipsis REPLACES the last character rather than extending
+    past the cap, so the column stays bounded at exactly EVIDENCE_CAP.
+
+    Byte-for-byte equivalent to `truncate_chars` in the sibling patterns.sh --
+    tests/validate-python-ports.sh pins the two runtimes' TSV output.
+    """
+    if len(s) <= EVIDENCE_CAP:
+        return s
+    return s[: EVIDENCE_CAP - 1] + "\u2026"
+
+
 # Stdlib + common third-party modules skipped (not "broken" if absent locally).
 KNOWN_MODULES = {
     "os",
@@ -175,9 +192,9 @@ def scan_file(path: str, lines: list[str], project_root: str) -> None:
                 ):
                     if module in KNOWN_MODULES:
                         continue
-                    ev = strip_eol_cr("Import not found in project: " + line)[
-                        :EVIDENCE_CAP
-                    ]
+                    ev = truncate_chars(
+                        strip_eol_cr(("Import not found in project: " + line))
+                    )
                     emit(path, line_num, "broken-example", ev)
 
         if code_lang == "shell":
@@ -185,7 +202,7 @@ def scan_file(path: str, lines: list[str], project_root: str) -> None:
             if sm:
                 script = re.sub(r"^sh ", "", re.sub(r"^bash ", "", sm.group(0)))
                 if not os.path.isfile(f"{project_root}/{script}"):
-                    ev = strip_eol_cr("Script not found: " + script)[:EVIDENCE_CAP]
+                    ev = truncate_chars(strip_eol_cr(("Script not found: " + script)))
                     emit(path, line_num, "broken-example", ev)
 
 

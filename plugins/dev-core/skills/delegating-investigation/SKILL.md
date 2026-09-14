@@ -204,6 +204,13 @@ Say so in the dispatch prompt. An agent asked to "investigate X" will often
 narrate; an agent asked to "return the answer and the file:line anchors, not
 what you read" will not.
 
+**The inline half has its own volume rule.** This skill routes the reading; it
+does not bound the reads you keep. Once you can name the file and lines, ask for
+the narrowest range that could answer the question — `/dev-core:reading-granularity`
+(#786). The two rules point the same direction, and neither is a reason to skip
+the other: delegating a survey does not license a 400-line read of the file it
+pointed you at.
+
 ## The `SCOPE_DISCIPLINE` boundary — do not harmonize these
 
 The review harness (`ship-issue/workflow.js`) tells its reviewers the **opposite

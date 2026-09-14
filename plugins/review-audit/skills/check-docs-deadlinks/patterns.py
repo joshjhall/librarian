@@ -28,6 +28,23 @@ import sys
 
 EVIDENCE_CAP = 80
 
+
+def truncate_chars(s: str) -> str:
+    """First EVIDENCE_CAP characters of `s`, with a marker when it actually cut.
+
+    THE MARKER IS THE POINT (#786). A silently trimmed evidence field reads as a
+    complete one, so a reader reasons about a line that does not end where the
+    text stops. The ellipsis REPLACES the last character rather than extending
+    past the cap, so the column stays bounded at exactly EVIDENCE_CAP.
+
+    Byte-for-byte equivalent to `truncate_chars` in the sibling patterns.sh --
+    tests/validate-python-ports.sh pins the two runtimes' TSV output.
+    """
+    if len(s) <= EVIDENCE_CAP:
+        return s
+    return s[: EVIDENCE_CAP - 1] + "\u2026"
+
+
 LINK_RE = re.compile(r"\[([^\]]*)\]\(([^)]+)\)")
 LINK_TARGET_RE = re.compile(r"\]\([^)]+\)")
 ANCHOR_LINK_RE = re.compile(r"\[([^\]]*)\]\(#([^)]+)\)")
@@ -102,9 +119,9 @@ def scan_file(path: str, lines: list[str]) -> None:
                     if target_file:
                         resolved = file_dir + "/" + target_file
                         if not os.path.exists(resolved):
-                            ev = strip_eol_cr("Link target not found: " + target)[
-                                :EVIDENCE_CAP
-                            ]
+                            ev = truncate_chars(
+                                strip_eol_cr(("Link target not found: " + target))
+                            )
                             emit(path, idx, "broken-relative-link", ev)
 
         # --- Category: broken-anchor ---
@@ -121,9 +138,9 @@ def scan_file(path: str, lines: list[str]) -> None:
                     # the raw string in grep -E, but for our fixture corpus these
                     # anchors are plain words. Search the whole file.
                     if not any(hp_re.search(ln) for ln in lines):
-                        ev = (f"Anchor #{anchor} has no matching heading in file")[
-                            :EVIDENCE_CAP
-                        ]
+                        ev = truncate_chars(
+                            (f"Anchor #{anchor} has no matching heading in file")
+                        )
                         emit(path, idx, "broken-anchor", ev)
 
         # --- Category: suspicious-external-link ---
@@ -133,7 +150,7 @@ def scan_file(path: str, lines: list[str]) -> None:
         for um in URL_RE.finditer(content):
             url = um.group(0)
             if URL_SUSPICIOUS_RE.search(url):
-                ev = strip_eol_cr("Suspicious URL: " + url)[:EVIDENCE_CAP]
+                ev = truncate_chars(strip_eol_cr(("Suspicious URL: " + url)))
                 emit(path, idx, "suspicious-external-link", ev)
 
 
