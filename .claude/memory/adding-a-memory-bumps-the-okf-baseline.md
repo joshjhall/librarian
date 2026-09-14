@@ -30,22 +30,35 @@ missing line in a memory commit (`6c2ad75`) blocked a golem's PR and cost about
 an hour of orchestrator time, most of it spent misdiagnosing the push failures
 it caused rather than the one-line omission.
 
-**How to apply:** after writing a memory file and before committing, run
+**How to apply:** **`bin/check-memory-baselines.sh` now enforces this at
+pre-commit** (#1007) — lefthook runs it on any commit staging a file under
+`.claude/memory/`, it materializes the staged tree with `git checkout-index`,
+runs the real OKF gate against it, and names the category, the `N > M` delta,
+and which of *your* staged files carries the row. It costs ~0.3s and it fails on
+your machine, before the commit lands, rather than at someone else's push.
+
+So the flow is: stage, commit, and read what the guard says. To check without
+committing, run it directly:
 
 ```bash
 git add -A .claude/memory
-bash tests/validate-okf-bundle.sh > /tmp/okf.log 2>&1; echo $?
+bash bin/check-memory-baselines.sh; echo $?
 ```
 
-and **fix whatever it names**. Raising a baseline entry is the last resort, not
-the first move: it is a deliberate, reviewable diff that wants a reason in the
-commit message, and for `memory-missing-why` the fix is two lines of body text.
+**Fix whatever it names.** Raising a baseline entry is the last resort, not the
+first move: it is a deliberate, reviewable diff that wants a reason in the commit
+message, and for `memory-missing-why` the fix is two lines of body text.
 
-Four things that make this easy to get wrong:
+Five things that make this easy to get wrong:
 
 - **The gate scans `git ls-files`, so an UNTRACKED new file is invisible to it.**
   Running it before `git add` exits 0 and tells you nothing — measured. Stage
-  first, then run, or the check silently passes on the very file you added.
+  first, then run, or the check silently passes on the very file you added. (The
+  pre-commit guard sidesteps this by materializing the index itself.)
+- **Forgetting the `MEMORY.md` index line fails too, and is the likelier miss.**
+  An unindexed memory trips `memory-orphan`, a category the baseline does not
+  list at all — implicit 0, so a single one fails. It is easy to hit because the
+  file itself is perfectly conformant; only its pointer is missing.
 - **A second category can hide behind the first.** Fixing `okf-missing-type`
   surfaced `memory-missing-why` on the next run. Re-run until it exits 0; do not
   assume one fix is the whole fix.

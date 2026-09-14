@@ -112,6 +112,20 @@ pre-commit:
       glob: "{.claude-plugin/marketplace.json,plugins/*/.claude-plugin/plugin.json}"
       run: node tests/validate-manifests.mjs
 
+    # --- Memory bundle baseline guard (#1007) ---
+    #
+    # The OKF bundle gate runs at PRE-PUSH (30-scanners), which is ~10 minutes
+    # and one stage removed from the edit that breaks it — and when it breaks,
+    # main stays red and blocks the pre-push hook on EVERY branch, not just the
+    # offender's. Twice in one day on 2026-09-10. This runs the same gate
+    # against the staged tree at commit time, on the author's own machine, for
+    # ~0.3s. No `skip:` — its runtime is git + the in-repo gate, so absence is
+    # a broken checkout rather than an optional tool, and the script fails loud
+    # rather than passing silently.
+    memory-baselines:
+      glob: ".claude/memory/**"
+      run: bash bin/check-memory-baselines.sh
+
     # --- Security ---
 
     gitleaks:

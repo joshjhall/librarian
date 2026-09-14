@@ -222,6 +222,17 @@ test_scanner_agrees_on_companion() {
 # PLUGINS_DIR to the repo root is the plausible regression that would sweep those
 # dated transcripts in and pressure someone to edit a session log to fit a
 # budget. Asserts the shipped default is the plugins dir specifically.
+#
+# THE SAME NARROWNESS PUTS .claude/memory/ OUT OF SCOPE, which #1007 needed
+# established rather than assumed. That issue asked for a guard covering BOTH
+# ratchet baselines, on the evidence that 907395b added a memory, bumped
+# prose-budget, and missed okf-bundle. Measured: a memory addition cannot affect
+# this baseline at all — the bundle is outside the walked root, and that commit's
+# prose bump was for two ship-issue/ files it happened to touch in the same
+# commit. So bin/check-memory-baselines.sh guards the OKF baseline only; a prose
+# arm there could never fire, and an inert gate is the #538/#571 shape. If this
+# root is ever widened, that reasoning expires with it — which is the other thing
+# the assertion below is holding.
 test_verification_docs_out_of_scope() {
     # assert_file_DEFINES, not _contains (#830). This one was a LIVE hole, not a
     # masked one: every behavioural sibling in this suite OVERRIDES
