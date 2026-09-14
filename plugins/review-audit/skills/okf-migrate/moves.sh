@@ -408,8 +408,12 @@ EOF
             [ -n "$new_rel" ] || continue
             case "$new_rel" in "$dir"/*) ;; *) continue ;; esac
             base="${new_rel##*/}"
-            line="$(command awk -F"$(command printf '\t')" -v k="$new_rel" \
-                '$1 == k { sub(/^[^\t]*\t/, ""); print; exit }' "$claimed")"
+            # ENVIRON, NEVER `awk -v`: a `-v` assignment is escape-processed, so
+            # a path legitimately containing a backslash is mangled and the
+            # lookup silently misses. Same rule as the moved_new lookup and as
+            # migrate.sh's apply path.
+            line="$(OKF_K="$new_rel" command awk -F"$(command printf '\t')" \
+                '$1 == ENVIRON["OKF_K"] { sub(/^[^\t]*\t/, ""); print; exit }' "$claimed")"
             if [ -n "$line" ]; then
                 # The ORIGINAL index line, retargeted to the sibling basename —
                 # its hook text is the operator's prose and is what makes the

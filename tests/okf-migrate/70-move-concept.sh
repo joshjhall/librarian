@@ -328,6 +328,48 @@ Body.'
         "BOTH lines point at the sub-index — the escaped one is not left behind"
 }
 
+test_backslash_in_a_path_keeps_the_operator_hook() {
+    local root body
+    root="$(fresh_bundle "$WORKDIR")"
+    command mkdir -p "$root/golem"
+    write_concept "$root" "MEMORY.md" '# Memory
+
+- [Golem](golem/index.md) — bucket'
+    write_concept "$root" "golem/index.md" '# golem
+
+- [Zero](zero.md) — a hook'
+    write_concept "$root" "golem/zero.md" '---
+type: feedback
+---
+
+Body.'
+    # A FILENAME CONTAINING A BACKSLASH — legal on POSIX, and the input that
+    # separates an ENVIRON lookup from an `awk -v` one: a `-v` assignment is
+    # escape-processed, so the key is mangled, the claimed-line lookup MISSES,
+    # and the operator's hook text is silently replaced by a regenerated bare
+    # link. Measured: `- [Odd](od\nd.md) — a hook` became `- [od\nd](od\nd.md)`.
+    write_concept "$root" "index-golem.md" '# Golem
+
+- [Odd](od\nd.md) — a hook'
+    write_concept "$root" "od\nd.md" '---
+type: feedback
+---
+
+Body.'
+
+    run_moves apply "$root" --transform move-concept --confirm --allow-dirty
+    assert_exit 0 "$OKF_RC" "move-concept applies cleanly"
+
+    body="$(command cat "$root/golem/index.md")"
+    # THE HOOK IS THE POINT, not merely the link: the hook is the operator's
+    # prose and is what makes an index entry useful to recall against, so losing
+    # it is a silent content regression rather than a broken link.
+    assert_contains "$body" "— a hook" \
+        "the ORIGINAL index line hook survived a backslash-bearing path"
+    assert_not_contains "$body" "[od" \
+        "...and was not replaced by a regenerated bare link"
+}
+
 test_destination_collision_leaves_the_file_put() {
     local root before after
     root="$(fresh_bundle "$WORKDIR")"
@@ -361,7 +403,7 @@ The arriving one.'
     # A COLLISION MUST NEVER OVERWRITE. Two concepts sharing a basename routed to
     # one directory would otherwise have the second silently destroy the first —
     # an unrecoverable loss of a memory, from a tool whose premise is running
-    # against someone else'"'"'s bundle.
+    # against someone else's bundle.
     after="$(command cat "$root/golem/clash.md")"
     assert_equals "$before" "$after" \
         "the incumbent at the destination is byte-identical — never overwritten"
