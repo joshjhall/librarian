@@ -56,6 +56,22 @@ test_skip_patterns:
   # the python sibling it mirrors.
   - "plugins/review-audit/skills/check-okf-conformance/bundle-graph.sh"
 
+  # okf-migrate's transform bodies (slice D, #671) — the same structural fact as
+  # bundle-graph.sh above, in both runtimes. transforms.sh is `.`-sourced by
+  # migrate.sh (its header says "Sourced by migrate.sh, never executed on its
+  # own") and transforms.py is imported by migrate.py; neither has an entry
+  # point, so a test named after either file could not invoke it. Both are
+  # covered end-to-end through tests/validate-okf-migrate.sh, which drives them
+  # via migrate.{sh,py} in both runtimes and byte-compares the applied trees.
+  #
+  # The .py entry is what the row for bundle_graph.py would need too — verified
+  # by probing the scanner against it on main, where it reports the identical
+  # missing-test-file + untested-public-api pair. Left alone here: that file is
+  # not this PR's business, and silencing it from an unrelated diff would be the
+  # preference-not-structure move rule 2 forbids.
+  - "plugins/review-audit/skills/okf-migrate/transforms.sh"
+  - "plugins/review-audit/skills/okf-migrate/transforms.py"
+
   # DELIBERATELY ABSENT — these still fire, and should:
   #
   #   bin/ruff-version.sh            a standalone executable with no test of its
@@ -103,3 +119,25 @@ stdout_is_output:
   # separately-asserted exit-3 paths — the rows simply moved files.
   - "plugins/workflow/scripts/token_attribute_engine.py"
   - "plugins/workflow/scripts/token_attribute_reports.py"
+
+# --- WHERE THIS REPO'S TESTS ACTUALLY LIVE -----------------------------------
+#
+# `{name}` is the source basename with its extension stripped; a template
+# resolving to an existing file suppresses missing-test-file for that source and
+# joins the candidate list untested-public-api greps (#568).
+#
+# THIS IS A DISCOVERY FIX, NOT A SUPPRESSION, and the distinction is the whole
+# point of the key: the built-in stems look for a test named after the SOURCE
+# (tests/validate-migrate.sh for migrate.sh), while this repo names a suite after
+# the SKILL it covers (tests/validate-okf-migrate.sh). The test exists and drives
+# the file end-to-end in both runtimes — only the name-derivation missed it.
+#
+# Every template carries `{name}`, so each resolves per-source and cannot become
+# the constant path that would silence the detector for a whole run (#601 —
+# filter_test_discovery rejects placeholder-less entries up front anyway).
+# Covers okf-migrate (#671): migrate.sh / migrate.py -> validate-okf-migrate.sh.
+# The comment sits ABOVE the key, not between its items: the list parser reads a
+# `#` line inside the block as an entry, then correctly rejects it for carrying
+# no {name} — a harmless but noisy warning on every scan.
+test_discovery:
+  - "tests/validate-okf-{name}.sh"

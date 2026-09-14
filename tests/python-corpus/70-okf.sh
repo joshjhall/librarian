@@ -177,3 +177,54 @@ cp "$PLUGINS_DIR/review-audit/skills/check-okf-conformance/patterns.py" \
 printf -- 'severity:\n  okf-missing-type:\n    absent_or_empty: medium\n' \
     >"$OKF_NOPIN_DIR/thresholds.yml"
 OKF_NOPIN_PY="$OKF_NOPIN_DIR/patterns.py"
+
+# --- okf-migrate corpus (slice D, #671) --------------------------------------
+#
+# The migration engine WRITES, which makes its corpus shape different from every
+# read-only scanner above: `apply` mutates its bundle, so a driver that reused
+# one fixture would measure the second invocation against an already-migrated
+# tree and silently miss every transform arm. The driver therefore copies this
+# PRISTINE template per apply-invocation; this fragment builds the template and
+# the read-only bundle the check/plan arms share.
+#
+# Covered branches: all three transforms, the nested-metadata.type lift, a
+# resolvable and an unresolvable wikilink, a labelled wikilink, a fenced one, the
+# ambiguity path, and a bundle needing nothing.
+OKF_MIGRATE_SRC="$FIXDIR/okf-migrate/.claude/memory"
+mkdir -p "$OKF_MIGRATE_SRC/feedback"
+
+# A concept whose type is NESTED — the commonest real migration, and the arm
+# where inference is not an inference at all.
+printf -- '---\nname: nested\nmetadata:\n  type: project\n---\n\nBody.\n' \
+    >"$OKF_MIGRATE_SRC/nested.md"
+
+# Resolvable + unresolvable + labelled wikilinks on one line, plus a fenced one
+# that must be skipped. Drives resolve_target's three arms and the fence guard.
+{
+    printf -- '---\ntype: reference\n---\n\n'
+    printf -- 'See [[nested]], [[never-written]] and [[nested|a label]].\n\n'
+    printf -- '```markdown\nThe old form was [[nested]].\n```\n'
+} >"$OKF_MIGRATE_SRC/links.md"
+
+# A directory-rule match — the dir: inference arm.
+printf -- '---\nname: lesson\n---\n\nBody.\n' >"$OKF_MIGRATE_SRC/feedback/lesson.md"
+
+# Already conformant with nothing to convert — the no-edit arm, which is what
+# makes the "bundle needs no mechanized migration" line reachable.
+printf -- '---\ntype: reference\n---\n\nNothing to do.\n' >"$OKF_MIGRATE_SRC/done.md"
+
+# A bundle whose only concept matches NO rule — the ambiguity path (exit 3),
+# kept separate so it cannot block the apply arms above.
+OKF_MIGRATE_AMBIG="$FIXDIR/okf-migrate-ambig/.claude/memory"
+mkdir -p "$OKF_MIGRATE_AMBIG"
+printf -- '---\nname: unmatched\n---\n\nBody.\n' >"$OKF_MIGRATE_AMBIG/unmatched.md"
+
+# An already-adopted bundle — drives adopt_bundle's idempotent early return.
+OKF_MIGRATE_ADOPTED="$FIXDIR/okf-migrate-adopted/.claude/memory"
+mkdir -p "$OKF_MIGRATE_ADOPTED"
+printf -- '---\nokf_version: "0.2"\n---\n\n# Index\n\n- [c](c.md)\n' \
+    >"$OKF_MIGRATE_ADOPTED/index.md"
+printf -- '---\ntype: reference\n---\n\nBody.\n' >"$OKF_MIGRATE_ADOPTED/c.md"
+
+# A bundle root that does not exist — the "nothing to migrate" exit-0 arm.
+OKF_MIGRATE_ABSENT="$FIXDIR/okf-migrate-absent/.claude/memory"

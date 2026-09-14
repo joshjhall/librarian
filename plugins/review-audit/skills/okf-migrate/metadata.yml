@@ -1,0 +1,12 @@
+name: okf-migrate
+version: "1.0"
+labels: []
+required_tools:
+  - name: git
+    purpose: "Dirty-tree detection before apply writes (skipped outside a repo)"
+    install_hint: "Included in base container image"
+  - name: awk
+    purpose: "Line-addressed edits in the bash fallback"
+    install_hint: "Included in base container image"
+required_permissions: []
+required_mcps: []

@@ -202,6 +202,7 @@ OUT_XML="$REPO_ROOT/coverage.xml"
 # parses this declaration out of this file rather than keeping a second copy.
 NON_PATTERNS_TOOLS="\
 plugins/review-audit/skills/check-ai-config/agnix-normalize.py
+plugins/review-audit/skills/okf-migrate/migrate.py
 plugins/workflow/scripts/autonomy-resolve.py
 plugins/workflow/scripts/golem-event-listener.py
 plugins/workflow/scripts/delegation-adoption.py
@@ -238,6 +239,7 @@ IMPORTED_MODULES="\
 plugins/review-audit/skills/check-decomposition/loc_engine.py
 plugins/review-audit/skills/check-decomposition/prose_spec.py
 plugins/review-audit/skills/check-okf-conformance/bundle_graph.py
+plugins/review-audit/skills/okf-migrate/transforms.py
 plugins/workflow/skills/ship-issue/loc_engine.py
 plugins/workflow/skills/ship-issue/prose_spec.py
 plugins/workflow/scripts/token_attribute_engine.py

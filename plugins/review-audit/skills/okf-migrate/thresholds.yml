@@ -1,0 +1,137 @@
+# okf-migrate — Configurable Thresholds
+#
+# Override by placing a modified copy in your project's
+# .claude/skills/okf-migrate/thresholds.yml.
+#
+# THE OKF VERSION PIN IS NOT HERE, DELIBERATELY. It lives in exactly one place
+# for the whole toolset: `okf.pinned_version` in
+# check-okf-conformance/thresholds.yml, overridable by $OKF_PINNED_VERSION.
+# adopt-bundle STAMPS that version into the index.md it creates, so a second
+# copy here would let this engine write a bundle the validator then reports as
+# drifted — the two halves of one toolset disagreeing about the same constant.
+# Same rule CLAUDE.md states for ruff: never hardcode a version in a consumer.
+#
+# THE BUNDLE ROOT IS NOT HERE EITHER, for the same reason: it is an environment
+# variable, so one setting moves every bundle-aware tool at once. Resolution
+# order, identical to the validator's:
+#
+#   $OKF_BUNDLE_ROOT -> $MEMORY_BUNDLE_ROOT -> .claude/memory
+
+# --- WHICH TRANSFORMS MAY WRITE ----------------------------------------------
+#
+# `apply` runs only a transform listed under `applicable`. A transform under
+# `plan_only` renders in `plan` output and is REFUSED by `apply`.
+#
+# THE SPLIT IS STRUCTURAL, NOT A PREFERENCE, and that is why it is stated here
+# rather than buried in code. The three applicable transforms are mechanical:
+# given the bundle, the edit is determined. The two plan-only ones are not —
+# each executes a judgment made somewhere else:
+#
+#   * split-index reuses #663's seam finder, which emits topic-cluster
+#     RECOMMENDATIONS (check-decomposition/prose_spec.py). Which cluster
+#     boundary to take is a choice, and an engine that picked one would be
+#     authoring the judgment rather than executing it.
+#   * confirmed-merge executes slice C's (#670) near-duplicate recommendation.
+#     A bad merge destroys a distinction someone recorded deliberately, and
+#     unlike every other finding in this toolset the damage is not reversible
+#     by ignoring the row — which is why slice C's own thresholds.yml calls
+#     merges human-confirmed and defers the apply path to here.
+#
+# MOVING A NAME FROM plan_only TO applicable IS A REAL DECISION, not config
+# tidying: it grants the engine permission to write a judgment it did not make.
+transforms:
+  applicable:
+    - adopt-bundle
+    - backfill-type
+    - wikilink-convert
+  plan_only:
+    - split-index
+    - confirmed-merge
+
+# --- TYPE INFERENCE (backfill-type) ------------------------------------------
+#
+# `type` is OKF's sole always-required key (§4.1). backfill-type infers one for
+# a concept that has none.
+#
+# CONFIG, NOT CONVENTION. Every rule below is librarian's own habit. A repo with
+# an entirely different vocabulary changes THIS FILE and no code — that
+# portability is an acceptance criterion of the epic (#664), not a nicety.
+#
+# NEVER INVENT A TYPE SILENTLY. §4.1 registers no types centrally and requires
+# consumers to TOLERATE unknown ones, which means a wrong value is not rejected
+# anywhere — it propagates silently through every consumer that routes on it.
+# A missing `type` is one loud finding; a wrong one is a lie the whole ecosystem
+# believes. So when the rules below yield zero matches or more than one,
+# backfill-type emits the candidates and REQUIRES A HUMAN CHOICE rather than
+# guessing (exit 3). An empty `rules` list means every typeless concept is
+# ambiguous, which is the correct answer for an unconfigured repo.
+#
+# Each rule is `<source>:<pattern> = <type>`, first match wins, evaluated in
+# listed order. Sources:
+#
+#   dir       glob against the concept's bundle-relative DIRECTORY
+#   file      glob against its BASENAME
+#   frontmatter  `<key>=<value>` — an existing key already carrying the answer
+#
+# The `frontmatter` source exists because the commonest real migration is a
+# bundle whose type is present but NESTED (`metadata.type`), which the validator
+# correctly reports as missing (§4.1 reads `type` at the TOP LEVEL only). That
+# is not an inference at all — the value is already written down — so it is
+# listed first and is the one rule that is never ambiguous.
+type_inference:
+  rules:
+    - frontmatter:metadata.type = $value
+    - dir:feedback/* = feedback
+    - dir:projects/* = project
+    - dir:reference/* = reference
+    - file:user-*.md = user
+
+  # Emitted as the candidate list when no rule matches, so the human choosing is
+  # choosing from the repo's actual vocabulary rather than inventing one.
+  # An empty list means "offer nothing" — the row still requires a choice.
+  known_types:
+    - user
+    - feedback
+    - project
+    - reference
+
+# --- LINK CONVERSION (wikilink-convert) --------------------------------------
+#
+# `[[name]]` is not an OKF link form. §6.1 specifies ordinary markdown links.
+# This is the main portability cost of adoption and exactly the edit nobody
+# should do by hand across N repos.
+#
+# `form` MIRRORS okf-author/thresholds.yml's `link_form` and must agree with it:
+# that skill teaches an AUTHOR the form, this engine converts EXISTING files to
+# it, and a disagreement would have every session's new memories written in one
+# form while the migration rewrote the rest into another.
+#
+#   bundle_relative   [name](/name.md)   §6.1's recommendation — survives a
+#                                        file moving within its subdirectory
+#   relative          [name](./name.md)
+links:
+  form: bundle_relative # bundle_relative | relative
+
+  # AN UNRESOLVABLE TARGET IS CONVERTED, NEVER DROPPED. §6.1 says a broken link
+  # may simply represent knowledge not yet written, and this repo's own practice
+  # is to link memories before writing them. So `[[not-yet]]` becomes a link to
+  # the path it WOULD occupy — the conversion is lossless, and the information
+  # that someone meant to link there survives.
+  #
+  # Set false ONLY for a repo that treats a dangling wikilink as a typo to be
+  # left alone for a human. It does not make the tool drop the text; it makes
+  # the tool leave that wikilink unconverted.
+  convert_unresolvable: true
+
+# --- ADOPT-BUNDLE ------------------------------------------------------------
+#
+# Creates the bundle-root index.md that makes a directory of memory files a
+# declared OKF bundle. Idempotent: an existing index.md is never rewritten —
+# adopting twice plans nothing the second time.
+#
+# §8 permits frontmatter in a bundle-ROOT index.md only, and `okf_version` is
+# the one key that belongs there. The version itself comes from the toolset pin
+# (see the header), never from this file.
+adopt:
+  # Heading written above the generated index body. Prose, not contract.
+  title: "Memory Bundle"

@@ -10,7 +10,7 @@ GitHub/GitLab issues, or written as structured files under `./audit/{timestamp}/
 — always alongside a report summary. The audit never produces "nothing": every
 run yields durable artifacts.
 
-## Skills (10)
+## Skills (13)
 
 - `codebase-audit` — periodic full-codebase sweep (tech debt, security, test
   gaps, architecture, docs); creates grouped issues. Invoke with
@@ -35,6 +35,23 @@ deterministic `patterns.sh` pre-scan with LLM analysis:
 - `check-docs-organization` — doc structure, missing standard files, duplication
 - `check-docs-staleness` — comments contradicting code, outdated refs, expired
   dates
+- `check-decomposition` — production-LOC file sizing with language-aware
+  test/comment exclusion, plus actionable decomposition seams (which lines move
+  where). Owns the one prose/LOC threshold table the audit, review and plan
+  lenses all read
+- `check-okf-conformance` — memory-bundle Open Knowledge Format validation:
+  the schema floor (`type`, frontmatter, reserved files, version pin) plus
+  whole-bundle graph health (orphans, dangling index lines, staleness)
+
+Migration is a separate skill, because it WRITES where every scanner above only
+reports:
+
+- `okf-migrate` — mechanized OKF bundle migration with `check`/`plan`/`apply`
+  modes. `plan` renders the full change set as a reviewable diff and is also the
+  write allowlist; `apply` needs an explicit subcommand *and* `--confirm`,
+  refuses a dirty tree, and refuses to guess an ambiguous `type`. Not a
+  `check-*` skill and deliberately not discovered as one — it emits transforms,
+  not findings
 
 Which languages each scanner models, and what it does with a file whose language
 it does not model, is governed by
