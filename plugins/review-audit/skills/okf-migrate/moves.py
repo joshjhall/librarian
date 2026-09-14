@@ -99,7 +99,18 @@ def index_members(root: str, every: list[str]) -> dict[str, list[str]]:
             continue
         rel_index = os.path.relpath(path, root)
         here = os.path.dirname(path)
+        in_fence = False
         for line in read_lines(path):
+            # FENCED CODE IS SKIPPED, the same rule this file's other two link
+            # scanners apply. An index documenting link syntax in a ``` block
+            # would otherwise have its EXAMPLE read as a live pointer, routing a
+            # concept by a bucket it was never actually filed under — and the
+            # inconsistency was the kind that only shows up on one repo's data.
+            if FENCE_RE.match(line):
+                in_fence = not in_fence
+                continue
+            if in_fence:
+                continue
             for match in LINK_RE.finditer(line):
                 target = match.group(2).strip()
                 if not target.endswith(".md") or "://" in target:

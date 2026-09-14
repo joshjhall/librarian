@@ -370,6 +370,48 @@ Body.'
         "...and was not replaced by a regenerated bare link"
 }
 
+test_fenced_index_line_does_not_route_a_concept() {
+    local root
+    root="$(fresh_bundle "$WORKDIR")"
+    write_concept "$root" "MEMORY.md" '# Memory
+
+- [Real](real.md) — a hook
+- [Other](other.md) — a hook'
+    # An index that DOCUMENTS the link syntax in a fence. The fenced line is an
+    # EXAMPLE, not a pointer — reading it as one would route a concept by a
+    # bucket it was never filed under. moves.py has FENCE_RE precisely for this,
+    # and its two other link scanners apply it; index_members did not.
+    write_concept "$root" "index-golem.md" '# Golem
+
+Example of the link syntax:
+
+```markdown
+- [Real](real.md) — an EXAMPLE, not a pointer
+```
+
+- [Other](other.md) — a hook'
+    write_concept "$root" "real.md" '---
+type: feedback
+---
+
+Body.'
+    write_concept "$root" "other.md" '---
+type: feedback
+---
+
+Body.'
+
+    run_moves apply "$root" --transform move-concept --confirm --allow-dirty
+    assert_exit 0 "$OKF_RC" "move-concept applies cleanly"
+
+    assert_file_exists "$root/golem/other.md" \
+        "the genuinely-indexed concept moved (guards against a vacuous pass)"
+    assert_file_exists "$root/real.md" \
+        "a concept mentioned only inside a FENCE is not routed by that index"
+    assert_true "[ ! -e '"'"'$root/golem/real.md'"'"' ]" \
+        "...and did not land in the fenced bucket"
+}
+
 test_destination_collision_leaves_the_file_put() {
     local root before after
     root="$(fresh_bundle "$WORKDIR")"

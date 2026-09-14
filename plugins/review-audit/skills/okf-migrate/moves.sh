@@ -94,7 +94,7 @@ scan_links() {
 # lets RULE ORDER arbitrate, which is the first-match-wins semantics the rest of
 # this grammar already has — stated by the operator, not by the filesystem.
 index_members() {
-    local root="$1" list="$2" path base rel_index here line label target resolved
+    local root="$1" list="$2" path base rel_index here line label target resolved _fence _t
     while IFS= read -r path || [ -n "$path" ]; do
         [ -n "$path" ] || continue
         base="${path##*/}"
@@ -104,7 +104,19 @@ index_members() {
         esac
         rel_index="${path#"$root"/}"
         here="${path%/*}"
+        _fence=0
         while IFS= read -r line || [ -n "$line" ]; do
+            # FENCED CODE IS SKIPPED, matching this file's other link scanners:
+            # an index documenting link syntax in a fence would otherwise have
+            # its EXAMPLE read as a live pointer.
+            _t="${line#"${line%%[![:space:]]*}"}"
+            case "$_t" in
+                '```'* | '~~~'*)
+                    _fence=$((1 - _fence))
+                    continue
+                    ;;
+            esac
+            [ "$_fence" -eq 0 ] || continue
             case "$line" in *']('*) ;; *) continue ;; esac
             while IFS="$(command printf '\t')" read -r label target || [ -n "$label" ]; do
                 [ -n "$target" ] || continue

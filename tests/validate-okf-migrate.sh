@@ -142,6 +142,7 @@ run_fragment_test test_move_into_an_existing_directory_index "a move into an EXI
 run_fragment_test test_appending_three_concepts_keeps_their_order "appending 3+ concepts to an existing index preserves sorted order (highest-line-first interleaving)"
 run_fragment_test test_appended_line_keeps_literal_escape_sequences "a literal backslash-n in an appended index line survives, and still repoints"
 run_fragment_test test_backslash_in_a_path_keeps_the_operator_hook "a backslash-bearing path keeps its operator hook (ENVIRON, not awk -v)"
+run_fragment_test test_fenced_index_line_does_not_route_a_concept "a fenced index line is an EXAMPLE and never routes a concept"
 run_fragment_test test_destination_collision_leaves_the_file_put "a destination collision skips the move and never overwrites the incumbent"
 run_fragment_test test_move_is_idempotent "move-concept applied twice equals applied once, byte-compared (AC5)"
 run_fragment_test test_move_reversibility "after the move the real validator emits no dangling/orphan rows (AC6)"
