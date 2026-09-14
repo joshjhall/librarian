@@ -399,6 +399,183 @@ export async function run() {
     eq(deduped[3].filename, "docs--y.md", "dedupeFilenames: distinct name untouched");
   }
 
+  // =============================================================================
+  // codebase-audit — memory-bundle redaction on the issue path (#698)
+  //
+  // This is the structural half of the no-memory-content-in-issues guarantee.
+  // `audit-memory.md` already states the rule in prose; issue #698 rejects prose
+  // as insufficient precisely because `issue-writer` posts to a REMOTE — a single
+  // agent that forgets publishes a developer's private notes irreversibly. So the
+  // rule lives in the harness, and these assertions are what prove it holds.
+  //
+  // The control that matters most is the LAST one: a non-memory finding must pass
+  // through byte-identical. Without it, a redactor that scrubbed everything would
+  // satisfy every other assertion here while destroying the rest of the audit.
+  // =============================================================================
+  {
+    const { redactMemoryFindings, isMemoryFinding, clampFragment } = extractHelpers(CA, [
+      "redactMemoryFindings",
+      "isMemoryFinding",
+      "clampFragment",
+    ]);
+
+    const BODY =
+      "---\ntype: long_term\n---\n\nWhen the review harness exceeds its budget, " +
+      "prefer the partial verdict over a retry: a retry re-derives the manifest and " +
+      "the second judge disagrees with the first.\n\nSee [[budget-floor]].";
+
+    // Domain detection: the `ref` prefix is the PRIMARY key (it comes from the
+    // harness's own map step), the category slug the secondary one.
+    ok(
+      isMemoryFinding({ ref: "memory:.claude/memory/a.md:1:memory-orphan#0", category: "memory-orphan" }),
+      "isMemoryFinding: memory domain ref prefix is detected",
+    );
+    ok(
+      isMemoryFinding({ ref: "", category: "okf-missing-type" }),
+      "isMemoryFinding: okf-* category detected without a ref (secondary key)",
+    );
+    ok(
+      isMemoryFinding({ ref: "", category: "memory-near-duplicate" }),
+      "isMemoryFinding: memory-* semantic category detected",
+    );
+    ok(
+      !isMemoryFinding({ ref: "security:src/a.py:4:hardcoded-secret#0", category: "hardcoded-secret" }),
+      "isMemoryFinding: a security finding is NOT memory",
+    );
+    // `memory-bundle` is not a finding category but a FILE CLASSIFICATION; a
+    // domain named e.g. `memorization` must not be swept in by a prefix match.
+    ok(
+      !isMemoryFinding({ ref: "code-health:src/memory.js:1:dead-code#0", category: "dead-code" }),
+      "isMemoryFinding: a path containing 'memory' does not make a finding memory-domain",
+    );
+    ok(!isMemoryFinding(null), "isMemoryFinding: null is not a finding");
+
+    // clampFragment: the 80-char cap from audit-memory.md § Redaction. Flattening
+    // newlines is part of the defense — a body must not survive as a run of
+    // individually-short lines, and smuggled markdown must not forge issue
+    // structure.
+    ok(clampFragment(BODY).length <= 80, "clampFragment: clamps to the 80-char cap");
+    ok(!clampFragment(BODY).includes("\n"), "clampFragment: newlines flattened (no multi-line body)");
+    eq(clampFragment("short"), "short", "clampFragment: an already-short value round-trips");
+    eq(clampFragment(null), "", "clampFragment: null -> empty string, never 'null'");
+
+    // The leak attempt: a memory finding whose content fields carry the body.
+    const leaky = {
+      ref: "memory:.claude/memory/retries.md:1:memory-near-duplicate#0",
+      id: "memory-001",
+      category: "memory-near-duplicate",
+      severity: "medium",
+      title: "Two retry notes say the same thing",
+      description: BODY,
+      file: ".claude/memory/retries.md",
+      line_start: 1,
+      line_end: 40,
+      evidence: BODY,
+      suggestion: `Merge into one concept. Merged body:\n\n${BODY}`,
+      effort: "small",
+      tags: ["memory"],
+      related_files: [".claude/memory/budget.md"],
+      certainty: { level: "medium", support: "heuristic", confidence: 0.6, method: "llm" },
+    };
+
+    const [red] = redactMemoryFindings([leaky]);
+
+    // THE assertion this slice exists for: no body fragment survives in any
+    // content-bearing field.
+    const leaked = "the second judge disagrees with the first";
+    for (const field of ["description", "evidence", "suggestion"]) {
+      ok(
+        !String(red[field]).includes(leaked),
+        `redactMemoryFindings: the memory body does not survive in \`${field}\``,
+      );
+    }
+    ok(!JSON.stringify(red).includes(leaked), "redactMemoryFindings: no body text anywhere in the finding");
+
+    // `title` is flattened too. The schema allows 120 chars there, so a body
+    // pasted into a title would otherwise reach the tracker in its most visible
+    // field. It keeps the schema's 120 ceiling rather than the 80-char fragment
+    // cap, because a title is legitimately the agent's own prose.
+    const titled = redactMemoryFindings([{ ...leaky, title: BODY }])[0];
+    ok(!titled.title.includes(leaked), "redactMemoryFindings: a body pasted into `title` does not survive");
+    ok(!titled.title.includes("\n"), "redactMemoryFindings: title is flattened to one line");
+    ok(titled.title.length <= 120, "redactMemoryFindings: title clamped to the schema's 120-char ceiling");
+    eq(
+      redactMemoryFindings([leaky])[0].title,
+      "Two retry notes say the same thing",
+      "redactMemoryFindings: an honest short title round-trips unchanged",
+    );
+    ok(!JSON.stringify(red).includes("[[budget-floor]]"), "redactMemoryFindings: wiki-links do not survive either");
+
+    // Rewritten, NOT omitted — all three are required by finding-schema.schema.json,
+    // so dropping them would emit a schema-invalid finding.
+    for (const field of ["description", "evidence", "suggestion"]) {
+      eq(typeof red[field], "string", `redactMemoryFindings: \`${field}\` is still a string (required field)`);
+    }
+    ok(red.description.length > 0, "redactMemoryFindings: description is non-empty (required, so rewritten not dropped)");
+
+    // Locations survive — they are what makes a redacted finding actionable, and
+    // a path is explicitly permitted by § Redaction.
+    eq(red.file, ".claude/memory/retries.md", "redactMemoryFindings: file path preserved");
+    eq(red.line_start, 1, "redactMemoryFindings: line_start preserved");
+    eq(red.line_end, 40, "redactMemoryFindings: line_end preserved");
+    eq(red.category, "memory-near-duplicate", "redactMemoryFindings: category preserved");
+    eq(red.severity, "medium", "redactMemoryFindings: severity preserved");
+    eq(red.certainty.confidence, 0.6, "redactMemoryFindings: certainty object preserved");
+    ok(red.description.includes(".claude/memory/retries.md"), "redactMemoryFindings: description names the file");
+    ok(/audit\//.test(red.description), "redactMemoryFindings: description points the reader at the artifact path");
+
+    // `tags` is clamped per-element as defense-in-depth. Today's ISSUE_TEMPLATE
+    // does not render it, but issue-writer receives the whole object and composes
+    // the body itself — so the guarantee must not rest on a template that a
+    // future edit may change.
+    const tagged = redactMemoryFindings([{ ...leaky, tags: ["memory", BODY] }])[0];
+    ok(!JSON.stringify(tagged.tags).includes(leaked), "redactMemoryFindings: a body smuggled into `tags` does not survive");
+    eq(tagged.tags[0], "memory", "redactMemoryFindings: an honest tag round-trips");
+    ok(Array.isArray(redactMemoryFindings([{ ...leaky, tags: null }])[0].tags), "redactMemoryFindings: a null tags becomes [] (schema requires an array)");
+
+    // Purity: the caller's original array is never mutated (same discipline as
+    // applyVerifyScores), so a later artifact write still has the full fidelity.
+    eq(leaky.evidence, BODY, "redactMemoryFindings: the input finding is NOT mutated");
+
+    // THE CONTROL. A non-memory finding passes through untouched — this is what
+    // separates a targeted redactor from a blanket scrubber that would silently
+    // gut every other domain's findings.
+    const sec = {
+      ref: "security:src/auth.py:45:hardcoded-secret#0",
+      category: "hardcoded-secret",
+      description: "AWS key committed in source",
+      evidence: "<redacted-credential-literal>",
+      suggestion: "Move to an environment variable",
+      file: "src/auth.py",
+      line_start: 45,
+    };
+    const [passed] = redactMemoryFindings([sec]);
+    eq(passed, sec, "redactMemoryFindings: a non-memory finding is returned by identity (untouched)");
+    eq(passed.evidence, "<redacted-credential-literal>", "redactMemoryFindings: non-memory evidence survives verbatim");
+
+    // Mixed batch: redaction is per-finding, not per-batch.
+    const mixed = redactMemoryFindings([leaky, sec]);
+    ok(!JSON.stringify(mixed[0]).includes(leaked), "redactMemoryFindings: memory finding redacted in a mixed batch");
+    eq(mixed[1].evidence, "<redacted-credential-literal>", "redactMemoryFindings: sibling non-memory finding unaffected");
+
+    // Degenerate inputs never throw (the harness calls this on every issues run).
+    eq(redactMemoryFindings([]).length, 0, "redactMemoryFindings: empty array -> empty array");
+    eq(redactMemoryFindings(null).length, 0, "redactMemoryFindings: null -> empty array, never throws");
+
+    // The wiring itself: applied on the ISSUE path and NOT on the artifact path.
+    // Asserted against the generated orchestration body, because no extracted
+    // helper can observe its own call site.
+    const orchSrc = harnessSource(CA);
+    ok(
+      /agent\(issueWriterPrompt\(map\.platform, g\.group, redactMemoryFindings\(g\.findings\)\)/.test(orchSrc),
+      "codebase-audit: the issue-writer fan-out passes findings through redactMemoryFindings (#698)",
+    );
+    ok(
+      !/artifactWriterPrompt\([^)]*redactMemoryFindings/.test(orchSrc),
+      "codebase-audit: the artifact path is NOT redacted — local files keep full fidelity (#698)",
+    );
+  }
+
   // Config-derivation consts resolve per-args: `output` only becomes 'issues' for
   // the exact literal (never coerced from garbled input), timestamp strips
   // path-hostile chars, and reportPath/outDir compose from the sanitized values.

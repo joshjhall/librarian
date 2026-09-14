@@ -25,6 +25,9 @@ labels:
   - name: audit/lifecycle
     color: "5319E7"
     description: Resource-lifecycle finding from codebase audit
+  - name: audit/memory
+    color: "D4C5F9"
+    description: Memory-bundle finding from codebase audit (body redacted)
   - name: severity/critical
     color: "B60205"
     description: Critical severity

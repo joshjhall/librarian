@@ -699,8 +699,212 @@ test_agent_is_documented() {
         "the root README's review-audit row matches the tree"
 }
 
+# ============================================================================
+# THE NO-MEMORY-CONTENT GUARANTEE IS STRUCTURAL, NOT A CONVENTION (#698).
+#
+# test_redaction_contract_is_stated (above) pins that audit-memory.md STATES the
+# rule. Issue #698 is explicit that stating it is not enough: `issue-writer`
+# posts to a REMOTE, so one agent that forgets publishes a developer's private
+# notes to a public repo, irreversibly. A guarantee that depends on an agent
+# remembering is not a guarantee.
+#
+# So the enforcement lives in the harness, and these assertions pin the wiring
+# the agent cannot opt out of. The pairing is the point: the issue path IS
+# redacted and the artifact path is NOT. Asserting only the first would pass just
+# as happily against a blanket scrubber that gutted the local findings too —
+# which would destroy the very artifact the redacted issue points readers to.
+# ============================================================================
+test_memory_redaction_is_enforced_in_the_harness() {
+    local harness fragment
+    harness="$REPO_ROOT/plugins/review-audit/skills/codebase-audit/workflow.js"
+    fragment="$REPO_ROOT/plugins/review-audit/skills/codebase-audit/workflow.src/40-injection-utils.js"
+
+    # The GENERATED artifact is what installs (`claude plugin install` copies
+    # plugins/ as-is, no build hook), so assert it — not only the fragment.
+    assert_file_contains "$harness" "redactMemoryFindings" \
+        "the generated harness carries the redaction helper"
+    assert_file_contains "$fragment" "redactMemoryFindings" \
+        "the helper's source of truth is the fragment (edit here, not the artifact)"
+
+    # Applied ON the issue-writer dispatch. Matching the call site rather than
+    # the mere presence of the identifier: a helper that is defined and never
+    # called is the inert-gate shape this repo keeps filing issues about.
+    assert_file_contains "$harness" "issueWriterPrompt(map.platform, g.group, redactMemoryFindings(g.findings))" \
+        "the issue-writer fan-out passes its findings THROUGH the redactor"
+
+    # And NOT applied on the artifact path — the asymmetry IS the design.
+    local artifact_call
+    artifact_call="$(command grep -c 'artifactWriterPrompt(.*redactMemoryFindings' "$harness" || true)"
+    assert_equals "0" "$artifact_call" \
+        "the artifact path is NOT redacted — local files keep full fidelity"
+
+    # The three content-bearing fields are REWRITTEN, not deleted. All three are
+    # required by finding-schema.schema.json, so a redactor that omitted them
+    # would emit a schema-invalid finding — a different bug wearing this fix's
+    # clothes.
+    local redact_body
+    redact_body="$(command awk '/^const redactMemoryFindings/ { c = 1 } c { print } c && /^  \}\)/ { exit }' "$harness" | flatten)"
+    assert_not_empty "$redact_body" "the redactor body is extractable"
+    local field
+    for field in description evidence suggestion; do
+        assert_contains "$redact_body" "$field:" \
+            "the redactor rewrites \`$field\` (required field — rewritten, never dropped)"
+    done
+
+    # Locations survive. A finding stripped of its path is unactionable, and
+    # paths are explicitly PERMITTED by audit-memory.md § Redaction — so their
+    # absence from the rewrite list is the assertion, not their presence.
+    local f
+    for f in "file:" "line_start:" "line_end:" "certainty:"; do
+        assert_not_contains "$redact_body" "$f" \
+            "the redactor leaves \`${f%:}\` untouched (locations are safe and make the finding actionable)"
+    done
+}
+
+# ============================================================================
+# THE DOMAIN LABEL IS DECLARED WHERE LABELS ARE CREATED.
+#
+# issue-templates.md documents `audit/memory` (pinned above), but metadata.yml is
+# the file that gives a label its color and description for pre-creation — and it
+# had no memory row. A documented label with no declaration is created ad-hoc by
+# whichever issue-writer files first, with whatever color that path defaults to.
+# ============================================================================
+test_memory_label_is_declared() {
+    local meta labels_region
+    meta="$REPO_ROOT/plugins/review-audit/skills/codebase-audit/metadata.yml"
+
+    # Scoped to the labels: block — a bare file-wide grep for "audit/memory"
+    # would also match a comment or a future required_tools note.
+    labels_region="$(command awk '/^labels:/ { c = 1; next } c && /^[a-z_]+:/ { c = 0 } c { print }' "$meta")"
+    assert_not_empty "$labels_region" "metadata.yml has a labels: block"
+    assert_contains "$labels_region" "audit/memory" \
+        "audit/memory is declared in metadata.yml, not only documented in issue-templates.md"
+
+    # ONE label for the whole domain, matching every other scanner. A per-category
+    # scheme would give the memory domain fourteen labels and make it the only
+    # domain whose issue-writer duplicate search (which keys on the label) is
+    # category-grained.
+    assert_not_contains "$labels_region" "audit/memory-near-duplicate" \
+        "labels are per-DOMAIN: no per-category audit/memory-* labels"
+    assert_not_contains "$labels_region" "audit/okf-" \
+        "labels are per-DOMAIN: no per-category audit/okf-* labels"
+
+    # The fourteen categories are enumerated in the finding schema instead, which
+    # is where every other domain's categories live.
+    local schema schema_region
+    schema="$REPO_ROOT/plugins/review-audit/skills/codebase-audit/finding-schema.md"
+    schema_region="$(command awk '/^### memory$/ { c = 1; next } c && /^### / { c = 0 } c && /^---$/ { c = 0 } c { print }' "$schema" | flatten)"
+    assert_not_empty "$schema_region" "finding-schema.md has a memory category section"
+
+    # Assert the category set against the SCANNERS that emit it rather than a
+    # hardcoded list here — a second list would be a copy that drifts. Every
+    # category the scanner and agent define must appear in the schema doc.
+    local cat
+    for cat in okf-missing-type okf-unparseable-frontmatter okf-version-drift \
+        okf-reserved-file-structure memory-orphan memory-dangling-index \
+        memory-multi-index memory-stale memory-missing-why \
+        memory-near-duplicate memory-tier-misplaced memory-derivable \
+        memory-weak-index-line memory-name-not-lesson; do
+        assert_contains "$schema_region" "$cat" \
+            "finding-schema.md enumerates the \`$cat\` category"
+    done
+}
+
+# ============================================================================
+# A DECLINE SURVIVES THE DEFAULT RUN.
+#
+# audit-memory emits a decline as severity `low` (pinned by
+# test_decline_is_a_finding_with_a_reason above). But scans filter
+# `severity >= severityThreshold`, default `medium` — so on a DEFAULT audit every
+# decline was dropped at scan time and the report showed none. The AC "declined
+# findings appear in the report with their recorded reason" would have held only
+# on a non-default run: examined-and-declined reads identically to never-examined,
+# which is the silence-reads-as-a-pass shape this repo keeps filing issues about.
+# ============================================================================
+test_declines_survive_the_severity_threshold() {
+    local harness scan_region aggregate_region
+    harness="$REPO_ROOT/plugins/review-audit/skills/codebase-audit/workflow.js"
+
+    scan_region="$(command awk '/^const scanPrompt/ { c = 1 } c { print } c && /^\}$/ { exit }' "$harness" | flatten)"
+    assert_not_empty "$scan_region" "the scan prompt is extractable"
+    assert_contains "$scan_region" "No action" \
+        "the scan prompt names the decline marker the exemption keys on"
+    assert_contains "$scan_region" "exempt from this filter" \
+        "a decline is exempt from severity-threshold at SCAN time"
+
+    # And it must not become a filed issue: a decline is a recorded judgment to
+    # leave something alone, so filing it asks a human to fix what the auditor
+    # just decided needs no fixing.
+    aggregate_region="$(command awk '/^const aggregatePrompt/ { c = 1 } c { print } c && /READONLY$/ { exit }' "$harness" | flatten)"
+    assert_not_empty "$aggregate_region" "the aggregate prompt is extractable"
+    assert_contains "$aggregate_region" "Do NOT group a deliberate decline" \
+        "a decline is not grouped into an issue"
+    assert_contains "$aggregate_region" "Declined Findings" \
+        "the report carries a Declined Findings table"
+
+    # The report format is specified where the other tables are specified.
+    local templates_region
+    templates_region="$(command awk '/^### Declined Findings/ { c = 1; next } c && /^### / { c = 0 } c { print }' "$TEMPLATES" | flatten)"
+    assert_not_empty "$templates_region" "issue-templates.md specifies the Declined Findings table"
+    assert_contains "$templates_region" "Reason" \
+        "the declined table carries the reason column — the reason IS the deliverable"
+    assert_contains "$templates_region" "never grouped into an issue" \
+        "the table's contract states declines are not filed"
+    # Distinct from an acknowledgment: one is the auditor's judgment this run,
+    # the other a human's prior suppression. Conflating them would put two
+    # different meanings in one table.
+    assert_contains "$templates_region" "distinct from Acknowledged Findings" \
+        "a decline is distinguished from a human acknowledgment"
+}
+
+# ============================================================================
+# A REPO WITH NO MEMORY BUNDLE AUDITS CLEANLY.
+#
+# The domain must contribute zero findings and no error — not a crash, and not a
+# spurious "bundle is broken" row. The mechanism is the classification: an EMPTY
+# resolved bundle root means no file takes the Memory bundle label, so the domain
+# routes nothing. That is a real behavior with a real scanner, so exercise the
+# scanner rather than asserting prose about it.
+# ============================================================================
+test_no_bundle_audits_cleanly() {
+    local box scanner out status
+    box="$WORKDIR/no-bundle"
+    command mkdir -p "$box/src"
+    command printf 'print("hello")\n' >"$box/src/app.py"
+
+    scanner="$REPO_ROOT/plugins/review-audit/skills/check-okf-conformance/patterns.sh"
+
+    # TWO manifests, because they fail differently. An EMPTY manifest is what the
+    # orchestrator actually hands this domain when no file took the Memory bundle
+    # label — the real no-bundle path. A manifest of ordinary source files is the
+    # stronger case: it proves the scanner stays silent on files it was handed but
+    # does not own, rather than merely on being handed nothing.
+    command printf '' >"$box/empty.txt"
+    command printf 'src/app.py\n' >"$box/nonbundle.txt"
+
+    local manifest
+    for manifest in empty nonbundle; do
+        out="$(cd "$box" && OKF_BUNDLE_ROOT="" MEMORY_BUNDLE_ROOT="" \
+            command bash "$scanner" "$manifest.txt" 2>&1)" && status=0 || status=$?
+
+        assert_equals "0" "$status" \
+            "no memory bundle ($manifest manifest) exits 0 — absence of a bundle is not an error"
+        assert_equals "" "$(command printf '%s' "$out" | flatten)" \
+            "no memory bundle ($manifest manifest) produces zero findings — no spurious rows"
+    done
+
+    # The protocol states WHY, so a future reader does not restore a default.
+    assert_contains "$(command cat "$PROTOCOL" | flatten)" \
+        "an **empty** root means no bundle is configured and no file takes this label" \
+        "the protocol states that an empty bundle root routes nothing"
+}
+
 run_test test_agent_is_documented "docs: both READMEs count agents correctly and list audit-memory"
 run_test test_acknowledgment_contract_is_stated "acknowledgment: either-file pair suppression + 12-month expiry"
 run_test test_agent_is_flat_and_named "packaging: flat agents/audit-memory.md with a matching name"
+run_test test_memory_redaction_is_enforced_in_the_harness "redaction: enforced STRUCTURALLY in the harness, issue path only (#698)"
+run_test test_memory_label_is_declared "labels: audit/memory declared per-domain; 14 categories in the schema (#698)"
+run_test test_declines_survive_the_severity_threshold "decline: exempt from severity-threshold, reported not filed (#698)"
+run_test test_no_bundle_audits_cleanly "portability: a repo with no memory bundle audits cleanly (#698)"
 
 generate_report

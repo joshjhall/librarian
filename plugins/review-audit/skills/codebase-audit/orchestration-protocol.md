@@ -331,3 +331,31 @@ reason}`.
 
 A **clean audit** (zero confirmed findings) still writes the report summary when
 requested — the "always produce artifacts" objective holds at zero findings.
+
+### Memory-domain redaction
+
+**A memory's body must never reach an issue body**, and the wiring — not a
+convention — is what guarantees it. A memory bundle holds operator-specific
+working notes and, in a consuming repo, material this repo has never seen;
+`issue-writer` posts to a remote, so one leak is public and irreversible.
+
+The harness therefore redacts every memory-domain finding **on the `issues` path
+only**, in code, before the agent is dispatched: `redactMemoryFindings`
+(`workflow.src/40-injection-utils.js`) rewrites `description`, `evidence` and
+`suggestion` — the three content-bearing fields, all of them *required* by
+`finding-schema.md`, hence rewritten rather than dropped — leaving the path,
+line, category and certainty intact. A finding is identified as memory-domain by
+the `<domain>:` prefix `stampRefs` stamps on its `ref`, with the `okf-*` /
+`memory-*` category slugs as a secondary key; the domain prefix comes from the
+harness's own map step rather than from a scanner's self-reported category.
+
+The **`files` path is deliberately not redacted**. It writes to
+`./audit/{timestamp}/` on the operator's own disk, which is where the full
+finding — and any merged body — belongs. That asymmetry is the design: the safe
+path is the only path to a tracker, and the complete data is always available
+locally.
+
+`audit-memory.md` § Redaction states the same rule for the agent. That statement
+is now a courtesy to the agent's own reasoning, not the enforcement mechanism —
+an agent that forgets it cannot leak, because the harness never hands it the
+body.

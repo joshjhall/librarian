@@ -226,6 +226,29 @@ They replace and expand on the `docs` scanner categories above.
 `skill-quality`, `agent-quality`, `claude-md-drift`, `mcp-misconfiguration`,
 `hook-safety`, `config-inconsistency`, `ai-file-bloat`, `doc-file-bloat`
 
+### memory
+
+The memory-bundle domain, in three groups by producer. All fourteen carry the
+single `audit/memory` label — labels are per-domain, not per-category.
+
+- **check-okf-conformance, per-file (deterministic)**: `okf-missing-type`,
+  `okf-unparseable-frontmatter`, `okf-version-drift`,
+  `okf-reserved-file-structure`
+- **check-okf-conformance, whole-bundle health (deterministic)**:
+  `memory-orphan`, `memory-dangling-index`, `memory-multi-index`,
+  `memory-stale`, `memory-missing-why`
+- **audit-memory, semantic (heuristic)**: `memory-near-duplicate`,
+  `memory-tier-misplaced`, `memory-derivable`, `memory-weak-index-line`,
+  `memory-name-not-lesson`
+
+`memory-index-bloat` is deliberately **not** in this set — index sizing is
+delegated to `check-decomposition` rather than duplicated here.
+
+Two rules apply to this domain and no other — **findings are redacted on the
+issue path** (`orchestration-protocol.md` Step 5 § Memory-domain redaction) and
+**a decline is a finding**, exempt from `severity-threshold` and reported rather
+than filed (`issue-templates.md` § Declined Findings).
+
 ---
 
 ## Validation Rules
