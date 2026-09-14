@@ -172,3 +172,27 @@ test_unresolvable_pin_fails_loud() {
         "a whitespace-only pin override is trimmed and falls through to the single source"
     assert_contains "$out" "adopt-bundle" "the scan proceeded on the resolved pin"
 }
+
+test_removed_format_flag_is_rejected() {
+    local root out rc=0
+    root="$(modes_bundle)"
+
+    # `--format` was once PARSED, documented in the usage text, and never read —
+    # a flag that silently no-ops is worse than an absent one, so it was removed
+    # rather than implemented. Pin the removal: without this, a future edit could
+    # reintroduce a half-handled `--format` case with no regression signal.
+    out="$(PATTERNS_FORCE_BASH=1 OKF_BUNDLE_ROOT="$root" OKF_PINNED_VERSION="0.2" \
+        command bash "$OKF_MIGRATE_SH" check --format tsv 2>&1)" || rc=$?
+    assert_exit 1 "$rc" "--format is now an unknown argument in bash: exit 1"
+    assert_contains "$out" "unknown argument" "the error names the problem"
+
+    if [ "$OKF_HAVE_PY" -ne 1 ]; then
+        skip_test "python3 >= 3.11 unavailable — the python half of this case"
+        return
+    fi
+    rc=0
+    out="$(OKF_BUNDLE_ROOT="$root" OKF_PINNED_VERSION="0.2" \
+        command python3 "$OKF_MIGRATE_PY" check --format tsv 2>&1)" || rc=$?
+    assert_exit 1 "$rc" "and in python — the runtimes agree the flag is gone"
+    assert_contains "$out" "unknown argument" "with the same diagnostic"
+}

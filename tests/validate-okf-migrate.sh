@@ -95,6 +95,7 @@ run_fragment_test test_check_is_the_default_mode "a bare invocation runs check â
 run_fragment_test test_plan_writes_nothing "plan renders the change set and leaves the tree untouched (AC2)"
 run_fragment_test test_apply_requires_confirm "apply without --confirm refuses at exit 2 and writes nothing (AC1)"
 run_fragment_test test_unknown_mode_is_a_usage_error "an unknown mode exits 1 with a usage message"
+run_fragment_test test_removed_format_flag_is_rejected "the removed --format flag is rejected as unknown in both runtimes"
 run_fragment_test test_absent_bundle_is_silent_exit_zero "a repo with no bundle exits 0 with no output, never an error"
 run_fragment_test test_missing_transforms_fragment_fails_loud "a missing transforms sibling fails LOUD in both runtimes, naming the consequence (AC8)"
 run_fragment_test test_unresolvable_pin_fails_loud "an unresolvable version pin fails LOUD and non-zero, not a clean empty report"
