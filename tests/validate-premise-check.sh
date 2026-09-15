@@ -430,6 +430,50 @@ exit 0'
         "a parse that stops matching must never degrade to absent (it would offer the duplicate)"
 }
 
+# A multi-record payload is the NORMAL case, not an edge one: the query passes
+# `--limit 20`, so any real backlog hit arrives alongside neighbours. The
+# record-splitting sed and the open-preferred-over-closed precedence only do
+# anything at all on such a payload, and both were previously exercised only by
+# single-record fixtures.
+#
+# The fixture puts the CLOSED record FIRST so the precedence is doing real work:
+# a scan that simply took the first record would answer `closed` here, which is
+# the opposite caller action (remove the option rather than reference it).
+test_open_wins_over_closed_in_multi_record() {
+    local sb
+    new_sandbox sb
+    stub_cli "$sb" gh 'case "$*" in
+  *"--json number,title,state,url"*)
+    echo "[{\"number\":801,\"title\":\"older attempt\",\"state\":\"CLOSED\",\"url\":\"https://example/801\"},{\"number\":859,\"title\":\"the live one\",\"state\":\"OPEN\",\"url\":\"https://example/859\"},{\"number\":700,\"title\":\"another\",\"state\":\"CLOSED\",\"url\":\"https://example/700\"}]" ;;
+  *) echo "[]" ;;
+esac
+exit 0'
+    run_premise "$sb" exists --title "the live one" --platform github
+    assert_contains "$PC_OUT" "verdict=open" \
+        "an OPEN record wins over a CLOSED one listed before it (precedence, not first-record)"
+    assert_contains "$PC_OUT" "issue=859" "the OPEN issue is the one reported"
+    assert_not_contains "$PC_OUT" "issue=801" "the earlier closed record is not reported"
+}
+
+# All-closed multi-record: the #860 shape as it actually arrives from a real
+# query. The first closed record wins, and `absent` must not appear.
+test_multi_record_all_closed() {
+    local sb
+    new_sandbox sb
+    stub_cli "$sb" gh 'case "$*" in
+  *"--json number,title,state,url"*)
+    echo "[{\"number\":859,\"title\":\"the merged split\",\"state\":\"CLOSED\",\"url\":\"https://example/859\"},{\"number\":700,\"title\":\"another\",\"state\":\"CLOSED\",\"url\":\"https://example/700\"}]" ;;
+  *) echo "[]" ;;
+esac
+exit 0'
+    run_premise "$sb" exists --title "the merged split" --platform github
+    assert_contains "$PC_OUT" "verdict=closed" \
+        "#860 at real payload size: an all-closed multi-record result resolves closed"
+    assert_contains "$PC_OUT" "issue=859" "the first closed record is reported"
+    assert_not_contains "$PC_OUT" "verdict=absent" \
+        "a multi-record closed hit is NEVER absent (the record split must actually split)"
+}
+
 # --- 8. Search-term filtering (review cycle 1) ------------------------------
 
 # `search_terms` drops one-character tokens. A single global sed substitution
@@ -492,6 +536,8 @@ run_test test_no_subcommand_fails_loud "usage: no subcommand → exit 2"
 run_test test_gitlab_open_hit "gitlab: iid/web_url/opened parse to verdict=open"
 run_test test_gitlab_missing_cli_is_unavailable "gitlab: missing glab → unavailable"
 run_test test_record_parse_is_order_independent "parse: reordered keys still resolve (no BRE \\| to lose on BSD)"
+run_test test_open_wins_over_closed_in_multi_record "parse: OPEN wins over a CLOSED record listed first"
+run_test test_multi_record_all_closed "parse: all-closed multi-record → closed, never absent"
 run_test test_single_char_tokens_are_dropped "search terms: adjacent single-char tokens are all dropped"
 run_test test_no_searchable_keywords_is_unavailable "search terms: no keywords → unavailable, never absent"
 
