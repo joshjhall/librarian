@@ -163,13 +163,33 @@ emit_unavailable() {
 # text mention a related issue the operator can dismiss at a glance. So err
 # toward matching.
 #
-# Punctuation becomes spaces, then very short tokens are dropped — they carry no
-# signal and, as `gh --search` terms, would match nearly everything.
+# Punctuation becomes spaces, then single-character tokens are dropped — they
+# carry no signal and, as `gh --search` terms, would match nearly everything.
+#
+# ONE character, not "short": the cut is deliberately the least aggressive one
+# that still removes noise, because dropping a token is the direction that
+# creates FALSE NEGATIVES, and a false negative here is the #860 defect. Real
+# titles carry meaning in two-letter tokens (an issue number's `gh`, a `CI`, a
+# `PR`), so a longer minimum would start discarding signal to save nothing.
+#
+# Tokenized in a `for` loop rather than by a `sed` substitution: a single global
+# pass CANNOT do this correctly, because adjacent single-character tokens share
+# the space the pattern consumes, so `a b c split` would keep `b`. A per-token
+# test has no such adjacency to get wrong.
 search_terms() {
-    command printf '%s' "$1" |
-        "$TR" -c '[:alnum:]' ' ' |
-        "$TR" -s ' ' |
-        "$SED" -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//'
+    _st_out=""
+    for _st_tok in $(command printf '%s' "$1" | "$TR" -c '[:alnum:]' ' '); do
+        # Drop one-character tokens; keep everything else in order.
+        case "$_st_tok" in
+            ?) continue ;;
+        esac
+        if [ -z "$_st_out" ]; then
+            _st_out="$_st_tok"
+        else
+            _st_out="$_st_out $_st_tok"
+        fi
+    done
+    command printf '%s' "$_st_out"
 }
 
 # --- exists -----------------------------------------------------------------
@@ -258,7 +278,7 @@ parse_and_emit_match() {
         [ -z "$_pm_line" ] && continue
 
         _pm_num="$(command printf '%s' "$_pm_line" |
-            "$SED" -n -e 's/.*"\(number\|iid\)"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\2/p' |
+            "$SED" -n -E -e 's/.*"(number|iid)"[[:space:]]*:[[:space:]]*([0-9]+).*/\2/p' |
             "$HEAD" -1)"
         [ -z "$_pm_num" ] && continue
 
@@ -267,7 +287,7 @@ parse_and_emit_match() {
             "$HEAD" -1 | "$TR" '[:upper:]' '[:lower:]')"
 
         _pm_url="$(command printf '%s' "$_pm_line" |
-            "$SED" -n -e 's/.*"\(url\|web_url\)"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\2/p' |
+            "$SED" -n -E -e 's/.*"(url|web_url)"[[:space:]]*:[[:space:]]*"([^"]*)".*/\2/p' |
             "$HEAD" -1)"
 
         case "$_pm_state" in

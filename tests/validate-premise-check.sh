@@ -397,6 +397,82 @@ test_gitlab_missing_cli_is_unavailable() {
     assert_not_contains "$PC_OUT" "verdict=absent" "gitlab: outage is not an all-clear"
 }
 
+# --- 7. Record parsing is BSD-clean (review cycle 1) ------------------------
+
+# The number/state/url extraction originally used BRE alternation (`\(number\|iid\)`),
+# which is a GNU sed extension: BSD sed reads `\|` as a LITERAL pipe, so the
+# substitution never fires, `_pm_num` stays empty, every record is skipped, and
+# the verdict falls through to `absent` — on macOS, silently, at exit 0. That is
+# the #860 defect reached through the parser instead of through the query, and it
+# is invisible to a GNU-sed CI runner.
+#
+# This case pins the parse against a record whose keys appear in a DIFFERENT
+# order from the fixtures above (url before number, state last) and whose title
+# itself contains the substrings `number` and `state`. A pattern that anchors
+# loosely, or one that has stopped matching and is being rescued by some other
+# code path, does not survive it.
+test_record_parse_is_order_independent() {
+    local sb
+    new_sandbox sb
+    stub_cli "$sb" gh 'case "$*" in
+  *"--json number,title,state,url"*)
+    echo "[{\"url\":\"https://example/861\",\"title\":\"renumber the state machine\",\"number\":861,\"state\":\"OPEN\"}]" ;;
+  *) echo "[]" ;;
+esac
+exit 0'
+    run_premise "$sb" exists --title "renumber the state machine" --platform github
+    assert_contains "$PC_OUT" "verdict=open" \
+        "a record with reordered keys still parses (no BRE alternation to lose on BSD)"
+    assert_contains "$PC_OUT" "issue=861" \
+        "the issue number is extracted, not a digit from the title or url"
+    assert_contains "$PC_OUT" "url=https://example/861" "the url is extracted"
+    assert_not_contains "$PC_OUT" "verdict=absent" \
+        "a parse that stops matching must never degrade to absent (it would offer the duplicate)"
+}
+
+# --- 8. Search-term filtering (review cycle 1) ------------------------------
+
+# `search_terms` drops one-character tokens. A single global sed substitution
+# cannot do this — adjacent singles share the space the pattern consumes, so
+# `a b c split` keeps `b` — hence the per-token loop. This asserts the adjacency
+# case specifically, since that is the spelling that silently half-works.
+test_single_char_tokens_are_dropped() {
+    local sb
+    new_sandbox sb
+    # The stub RECORDS the --search terms it was handed to a side file, so the
+    # assertion reads the ACTUAL query rather than trusting the function in
+    # isolation. A side file, not stdout: stdout is the JSON payload the script
+    # parses, so anything echoed there would be consumed as a record instead.
+    stub_cli "$sb" gh 'prev=""
+for a in "$@"; do
+  case "$prev" in --search) printf "%s" "$a" >"$HOME/terms.txt" ;; esac
+  prev="$a"
+done
+echo "[]"
+exit 0'
+    run_premise "$sb" exists --title "a b c split detectors" --platform github
+    local terms=""
+    [ -f "$sb/terms.txt" ] && terms="$(command cat "$sb/terms.txt")"
+    assert_equals "split detectors" "$terms" \
+        "adjacent single-character tokens are ALL dropped (a global sed pass would keep 'b')"
+}
+
+# The empty-keyword branch: a title with no multi-character token yields no
+# searchable terms, which must resolve `unavailable` — never a search on an empty
+# string, and never `absent`.
+test_no_searchable_keywords_is_unavailable() {
+    local sb
+    new_sandbox sb
+    stub_cli "$sb" gh "$STUB_EMPTY"
+    run_premise "$sb" exists --title "?! x y ?!" --platform github
+    assert_exit 0 "$PC_RC" "no searchable keywords exits 0"
+    assert_contains "$PC_OUT" "verdict=unavailable" \
+        "a title yielding no keywords resolves unavailable (the check did not run)"
+    assert_contains "$PC_OUT" "searchable keywords" "the reason names the cause"
+    assert_not_contains "$PC_OUT" "verdict=absent" \
+        "an unsearchable title is NEVER reported as absent"
+}
+
 # --- Dispatch ---------------------------------------------------------------
 
 run_test test_closed_issue_is_flagged "#860 repro: already-filed-and-closed work → verdict=closed"
@@ -415,5 +491,8 @@ run_test test_unknown_subcommand_fails_loud "usage: unknown subcommand → exit 
 run_test test_no_subcommand_fails_loud "usage: no subcommand → exit 2"
 run_test test_gitlab_open_hit "gitlab: iid/web_url/opened parse to verdict=open"
 run_test test_gitlab_missing_cli_is_unavailable "gitlab: missing glab → unavailable"
+run_test test_record_parse_is_order_independent "parse: reordered keys still resolve (no BRE \\| to lose on BSD)"
+run_test test_single_char_tokens_are_dropped "search terms: adjacent single-char tokens are all dropped"
+run_test test_no_searchable_keywords_is_unavailable "search terms: no keywords → unavailable, never absent"
 
 generate_report

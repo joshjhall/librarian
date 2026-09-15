@@ -316,7 +316,23 @@ scan_file_paths() {
 # Before changing anything here, read the probe's rows from a macOS run — not
 # from a local one, where every `\b` row reads SUPPORTED and proves nothing about
 # BSD.
-GNURE_TOOL_RE='(^|[^A-Za-z0-9_-])(grep|egrep|fgrep|sed|awk)([^A-Za-z0-9_-]|$)'
+#
+# THE TOOL MAY BE SPELLED AS A VARIABLE, and for a long time this pattern could
+# not see that (#911). The `_bin` resolution convention these scripts follow
+# (golem-inbox.sh, premise-check.sh, …) assigns `SED="$(_bin sed)"` once and then
+# invokes `"$SED" -n -e …` — so the literal `sed` never appears on the line
+# carrying the regex, the scope test failed, and a GNU-only construct beside it
+# was never examined. A BRE `\|` shipped through this gap in #911 and would have
+# resolved every backlog query to `absent` on macOS, silently, at exit 0.
+#
+# The variable arm matches the CONVENTIONAL UPPERCASE names for these four tools
+# specifically, not any `"$VAR"`: widening it to every variable would scope in
+# lines that merely interpolate a string near a backslash, and a gate that fires
+# on non-regex lines is one people learn to route around. A tool resolved into a
+# differently-named variable is still invisible — that is a known, narrower gap,
+# preferred over the false positives, and the reason the names below are the
+# documented spelling to use.
+GNURE_TOOL_RE='(^|[^A-Za-z0-9_-])(grep|egrep|fgrep|sed|awk)([^A-Za-z0-9_-]|$)|\$\{?(GREP|EGREP|FGREP|SED|AWK)(\}|[^A-Za-z0-9_]|$)'
 GNURE_BAD_RE='\\[sSwW]|\\\|'
 # `grep -P` (PCRE) is banned outright and needs no regex-bearing scoping: it is a
 # GNU BUILD OPTION, absent from BSD grep entirely and from some Linux builds,
@@ -885,6 +901,13 @@ okmarked="$(grep -E '^\s*x' f)"  # lint-allow-gnu-regex: GNU-only helper
 bareMarker_hit="$(grep -E '^\s*y' f)"  # lint-allow-gnu-regex:
 okpayload="a python string r\"^\s*console\." handed to another language"
 # a prose comment naming \s and \w and \| is commentgnu_ok
+varsed_hit="$("$SED" -n -e 's/.*\(a\|b\).*/x/p' f)"
+varsedbrace_hit="$("${SED}" -E 's/\s//' f)"
+vargrep_hit="$("$GREP" -E '\w+' f)"
+varawk_hit="$("$AWK" '/^\s*x/ {print}' f)"
+okvarsed="$("$SED" -n -E -e 's/.*(a|b).*/x/p' f)"
+okseduce="$(printf '%s' "$SEDUCE_ME \s")"
+okgrepper="$(printf '%s' "$GREPPER \w")"
 EOF
 
     # The whitespace-only-reason fixture is appended with printf, NOT written in
@@ -913,6 +936,22 @@ EOF
     assert_not_contains "$CUR_GNURE_VIOLATIONS" "okspace" '[[:space:]] is NOT flagged'
     assert_not_contains "$CUR_GNURE_VIOLATIONS" "okword" '[[:alnum:]_] is NOT flagged'
     assert_not_contains "$CUR_GNURE_VIOLATIONS" "okalt" 'sed -E (a|b) alternation is NOT flagged'
+    # The tool spelled as a VARIABLE (#911). The `_bin` convention assigns
+    # SED="$(_bin sed)" once and invokes "$SED", so the literal tool name never
+    # appears beside the regex — and until #911 that put every such line out of
+    # scope entirely. A BRE `\|` shipped through this gap.
+    assert_contains "$CUR_GNURE_VIOLATIONS" "varsed_hit" \
+        '\| BRE alternation under "$SED" is flagged (#911 — the gap that shipped one)'
+    assert_contains "$CUR_GNURE_VIOLATIONS" "varsedbrace_hit" '\s under "${SED}" (braced) is flagged'
+    assert_contains "$CUR_GNURE_VIOLATIONS" "vargrep_hit" '\w under "$GREP" is flagged'
+    assert_contains "$CUR_GNURE_VIOLATIONS" "varawk_hit" '\s under "$AWK" is flagged'
+    assert_not_contains "$CUR_GNURE_VIOLATIONS" "okvarsed" '"$SED" -E with a portable ERE is NOT flagged'
+    # The variable arm is bounded to the exact tool names: a longer identifier
+    # that merely STARTS with one must not scope its line in. Both fixtures carry
+    # a GNU construct, so a boundary regression fires them rather than passing
+    # vacuously.
+    assert_not_contains "$CUR_GNURE_VIOLATIONS" "okseduce" '$SEDUCE_ME is NOT treated as $SED'
+    assert_not_contains "$CUR_GNURE_VIOLATIONS" "okgrepper" '$GREPPER is NOT treated as $GREP'
     assert_not_contains "$CUR_GNURE_VIOLATIONS" "okmarked" 'a lint-allow-gnu-regex line is NOT flagged'
     # The reason is enforced, not just documented: a marker with an empty tail
     # must NOT buy an exemption, or the escape hatch becomes a silent one.
