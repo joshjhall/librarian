@@ -137,8 +137,13 @@ propose filing new work, so both are subject to the existence check in
 untrusted-text rule — and act on the
 verdict: rewrite the option to reference an `open` hit, **remove** it on a
 `closed` hit, and on `unavailable` say in the option text that the check did not
-run. Also run the constraint sweep, so an option cannot contradict something this
-issue or a repo file already decided.
+run.
+
+The **constraint sweep is separate, and it covers all four options** — including
+1 ("fold it in") and 4 ("proceed unchanged"), which propose no filing and so are
+out of scope for the existence check above. Scoping the sweep to 2 and 3 would
+leave exactly the #550 hole open on the other two: an option quietly
+contradicting something this issue or a repo file already decided.
 
 This gate is where #911 was actually observed, and the cost is asymmetric. Option
 2 filed against a duplicate wastes an issue; **option 3 filed against a CLOSED

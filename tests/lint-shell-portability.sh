@@ -905,9 +905,12 @@ varsed_hit="$("$SED" -n -e 's/.*\(a\|b\).*/x/p' f)"
 varsedbrace_hit="$("${SED}" -E 's/\s//' f)"
 vargrep_hit="$("$GREP" -E '\w+' f)"
 varawk_hit="$("$AWK" '/^\s*x/ {print}' f)"
+varegrep_hit="$("$EGREP" '\w+' f)"
+varfgrep_hit="$("$FGREP" '\s' f)"
 okvarsed="$("$SED" -n -E -e 's/.*(a|b).*/x/p' f)"
 okseduce="$(printf '%s' "$SEDUCE_ME \s")"
 okgrepper="$(printf '%s' "$GREPPER \w")"
+okegrepper="$(printf '%s' "$EGREPPER \s")"
 EOF
 
     # The whitespace-only-reason fixture is appended with printf, NOT written in
@@ -945,6 +948,11 @@ EOF
     assert_contains "$CUR_GNURE_VIOLATIONS" "varsedbrace_hit" '\s under "${SED}" (braced) is flagged'
     assert_contains "$CUR_GNURE_VIOLATIONS" "vargrep_hit" '\w under "$GREP" is flagged'
     assert_contains "$CUR_GNURE_VIOLATIONS" "varawk_hit" '\s under "$AWK" is flagged'
+    # EGREP/FGREP are named in the variable arm too. Without fixtures, an edit
+    # that dropped or mis-anchored one of those two alternatives would leave the
+    # suite green — the same blind spot #911 exists to close, one level in.
+    assert_contains "$CUR_GNURE_VIOLATIONS" "varegrep_hit" '\w under "$EGREP" is flagged'
+    assert_contains "$CUR_GNURE_VIOLATIONS" "varfgrep_hit" '\s under "$FGREP" is flagged'
     assert_not_contains "$CUR_GNURE_VIOLATIONS" "okvarsed" '"$SED" -E with a portable ERE is NOT flagged'
     # The variable arm is bounded to the exact tool names: a longer identifier
     # that merely STARTS with one must not scope its line in. Both fixtures carry
@@ -952,6 +960,7 @@ EOF
     # vacuously.
     assert_not_contains "$CUR_GNURE_VIOLATIONS" "okseduce" '$SEDUCE_ME is NOT treated as $SED'
     assert_not_contains "$CUR_GNURE_VIOLATIONS" "okgrepper" '$GREPPER is NOT treated as $GREP'
+    assert_not_contains "$CUR_GNURE_VIOLATIONS" "okegrepper" '$EGREPPER is NOT treated as $EGREP'
     assert_not_contains "$CUR_GNURE_VIOLATIONS" "okmarked" 'a lint-allow-gnu-regex line is NOT flagged'
     # The reason is enforced, not just documented: a marker with an empty tail
     # must NOT buy an exemption, or the escape hatch becomes a silent one.

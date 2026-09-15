@@ -501,6 +501,28 @@ exit 0'
         "adjacent single-character tokens are ALL dropped (a global sed pass would keep 'b')"
 }
 
+# The cut is ONE character, and the script's own comment argues for that boundary
+# by name: real titles carry signal in two-letter tokens (`gh`, `CI`, `PR`), so a
+# widened cut would silently discard search terms. The `case ... in ?)` glob is
+# one character away from `??`, and nothing above would notice the change — this
+# pins the claim the comment makes.
+test_two_char_tokens_are_kept() {
+    local sb
+    new_sandbox sb
+    stub_cli "$sb" gh 'prev=""
+for a in "$@"; do
+  case "$prev" in --search) printf "%s" "$a" >"$HOME/terms.txt" ;; esac
+  prev="$a"
+done
+echo "[]"
+exit 0'
+    run_premise "$sb" exists --title "a gh CI b PR fix" --platform github
+    local terms=""
+    [ -f "$sb/terms.txt" ] && terms="$(command cat "$sb/terms.txt")"
+    assert_equals "gh CI PR fix" "$terms" \
+        "TWO-character tokens are KEPT (the cut is one char; 'gh'/'CI'/'PR' carry signal)"
+}
+
 # The empty-keyword branch: a title with no multi-character token yields no
 # searchable terms, which must resolve `unavailable` — never a search on an empty
 # string, and never `absent`.
@@ -539,6 +561,7 @@ run_test test_record_parse_is_order_independent "parse: reordered keys still res
 run_test test_open_wins_over_closed_in_multi_record "parse: OPEN wins over a CLOSED record listed first"
 run_test test_multi_record_all_closed "parse: all-closed multi-record → closed, never absent"
 run_test test_single_char_tokens_are_dropped "search terms: adjacent single-char tokens are all dropped"
+run_test test_two_char_tokens_are_kept "search terms: two-char tokens are kept (the cut is one char)"
 run_test test_no_searchable_keywords_is_unavailable "search terms: no keywords → unavailable, never absent"
 
 generate_report
