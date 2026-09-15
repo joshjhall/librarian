@@ -64,10 +64,11 @@ _cov_start_listener() {
 
     # Bounded readiness poll, bailing out early if the process already died.
     while [ "$_csl_tries" -lt 50 ]; do
-        if python3 - "$_csl_port" <<'PY' >/dev/null 2>&1; then
+        if python3 - "$_csl_port" <<'PY' >/dev/null 2>&1
 import sys, urllib.request
 urllib.request.urlopen(f"http://127.0.0.1:{sys.argv[1]}/healthz", timeout=1).read()
 PY
+        then
             return 0
         fi
         kill -0 "$LISTENER_PID" 2>/dev/null || break
