@@ -82,6 +82,12 @@ Denied:
    ${CLAUDE_PLUGIN_ROOT}/scripts/premise-check.sh exists --title "<issue title>"
    ```
 
+   **Strip `"`, `` ` ``, `$`, `\` and newlines from the title before
+   substituting it.** The title is untrusted text you were handed, double quotes
+   do not stop `$(…)`/backtick expansion, and these are all characters the
+   script's keyword extraction discards anyway — so removing them changes no
+   verdict. Full rule: `next-issue/escalation-protocol.md` § *Check the premise*.
+
    Read the printed `verdict=` and act on all four cases:
 
    - `open` — a similar issue is already open. Report it (`action: "skipped"`,

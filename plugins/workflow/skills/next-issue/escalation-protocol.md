@@ -118,8 +118,21 @@ verdict would silently read as unset):
 <skill-base-dir>/../../scripts/premise-check.sh exists --title "<the work the option proposes>"
 ```
 
-Substitute `<skill-base-dir>` with this skill's invocation-header path. Then act
-on `verdict=` — all four cases, none optional:
+Substitute `<skill-base-dir>` with this skill's invocation-header path.
+
+**The title is UNTRUSTED text — strip it before substituting.** What goes in
+`--title` is the option's wording, which traces back to an issue body or title
+you read, and in a public repo anyone can write those. Double quotes do not make
+that safe: bash still expands `$(…)` and backticks inside them, and a bare `"`
+in the text ends the argument early. The script itself parses argv safely — the
+exposure is entirely in *building* the command line. So before substituting,
+**delete** `"`, `` ` ``, `$`, `\` and newlines from the text; they are search
+keywords, and `search_terms` discards every non-alphanumeric character anyway, so
+removing them costs nothing and changes no verdict. If the remainder is empty,
+the check cannot run — say so, exactly as for `unavailable`. The same rule
+governs the two other call sites (`plan-sizing.md`, `agents/issue-filer.md`).
+
+Then act on `verdict=` — all four cases, none optional:
 
 | verdict | what it means | what you do to the option |
 | --- | --- | --- |
