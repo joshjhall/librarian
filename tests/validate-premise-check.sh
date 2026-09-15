@@ -474,6 +474,157 @@ exit 0'
         "a multi-record closed hit is NEVER absent (the record split must actually split)"
 }
 
+# --- 7a. Textual parsing survives hostile field CONTENT (review cycle 4) ----
+
+# The record split is textual, so it must key on STRUCTURE rather than
+# punctuation. A title may legitimately contain `}, {` — `config: {a}, {b}
+# refactor` suffices — and a bare `},{` split fires inside it, cutting one record
+# into two fragments. The per-line extraction then reads a number from one
+# fragment and a state from another.
+#
+# MEASURED before the fix: this exact payload reported `verdict=closed issue=2`
+# for a record that is OPEN. That is not a cosmetic mis-parse — it inverts the
+# caller's action from "reference the open issue" to "remove the option", which
+# is the open/closed distinction #911 turns on, lost in the parser.
+test_split_survives_braces_in_title() {
+    local sb
+    new_sandbox sb
+    stub_cli "$sb" gh 'case "$*" in
+  *"--json number,title,state,url"*)
+    echo "[{\"number\":1,\"title\":\"config: {a}, {b} refactor\",\"state\":\"OPEN\",\"url\":\"u1\"},{\"number\":2,\"title\":\"unrelated\",\"state\":\"CLOSED\",\"url\":\"u2\"}]" ;;
+  *) echo "[]" ;;
+esac
+exit 0'
+    run_premise "$sb" exists --title "config refactor" --platform github
+    assert_contains "$PC_OUT" "verdict=open" \
+        "a title containing '}, {' does not mis-split the record (OPEN stays OPEN)"
+    assert_contains "$PC_OUT" "issue=1" "the number comes from the record it belongs to"
+    assert_not_contains "$PC_OUT" "issue=2" \
+        "fields are never read across a mis-split boundary (this reported issue=2 before the fix)"
+}
+
+# JSON writes a literal backslash as `\\`, so a body containing `C:\next`
+# arrives as the three characters `\`, `\`, `n`. Resolving `\n` BEFORE `\\`
+# reads the second backslash plus the `n` as a newline escape: the line breaks
+# mid-token and the literal `n` is eaten.
+#
+# The constraint marker sits AFTER the backslash sequence on the same line, so a
+# regression truncates the line before the marker and the constraint is lost
+# entirely — a #550 (silently dropped constraint) reached through the unescaper.
+test_unescape_handles_escaped_backslash_before_n() {
+    local sb
+    new_sandbox sb
+    stub_cli "$sb" gh 'case "$*" in
+  *"--json body"*)
+    printf "%s" "{\"body\":\"C:\\\\\\\\next must not be hardcoded\"}" ;;
+  *) echo "{}" ;;
+esac
+exit 0'
+    run_premise "$sb" constraints --issue 1 --platform github
+    assert_contains "$PC_OUT" "verdict=found" "the constraint survives the escaped backslash"
+    assert_contains "$PC_OUT" "must not be hardcoded" \
+        "text AFTER the \\\\ sequence is not truncated (a \\n-first pass cuts the line here)"
+    assert_contains "$PC_OUT" "next" \
+        "the literal 'n' after the escaped backslash is not eaten"
+}
+
+# --- 7c. Platform auto-detection (review cycle 4) ---------------------------
+
+# Every other case passes --platform explicitly, which keeps the fixtures
+# independent of the sandbox's remote — but it also means detect_platform(), the
+# function that actually runs whenever a caller omits the flag, had no coverage
+# at all. Both documented invocations (escalation-protocol.md, issue-filer.md)
+# omit it, so this is the DEFAULT path in production.
+#
+# Asserted through which CLI gets invoked rather than by reading the function:
+# each stub writes a marker, so the test observes the routing decision itself.
+run_premise_no_platform() {
+    local dir="$1"
+    shift
+    PC_OUT="$(
+        cd "$dir" &&
+            /usr/bin/env "${GIT_SCRUB[@]/#/-u}" -uBASH_ENV \
+                PATH="$dir/stub-bin:$PATH" HOME="$dir" \
+                "$REAL_BASH" "$PREMISE" "$@" 2>&1
+    )" || true
+}
+
+test_detect_platform_routes_by_remote() {
+    local sb
+    new_sandbox sb
+    stub_cli "$sb" gh 'echo "GH_RAN" >>"$HOME/who.txt"
+echo "[]"
+exit 0'
+    stub_cli "$sb" glab 'echo "GLAB_RAN" >>"$HOME/who.txt"
+echo "[]"
+exit 0'
+
+    # GitHub remote -> gh
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" git -C "$sb" remote add origin \
+        "https://github.com/example/repo.git" 2>/dev/null
+    run_premise_no_platform "$sb" exists --title "some tracked thing"
+    local who=""
+    [ -f "$sb/who.txt" ] && who="$(command cat "$sb/who.txt")"
+    assert_contains "$who" "GH_RAN" "a github.com remote routes to gh with no --platform"
+    assert_not_contains "$who" "GLAB_RAN" "a github.com remote does NOT reach glab"
+
+    # GitLab remote -> glab
+    command rm -f "$sb/who.txt"
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" git -C "$sb" remote set-url origin \
+        "https://gitlab.com/example/repo.git" 2>/dev/null
+    run_premise_no_platform "$sb" exists --title "some tracked thing"
+    who=""
+    [ -f "$sb/who.txt" ] && who="$(command cat "$sb/who.txt")"
+    assert_contains "$who" "GLAB_RAN" "a gitlab.com remote routes to glab with no --platform"
+    assert_not_contains "$who" "GH_RAN" "a gitlab.com remote does NOT reach gh"
+}
+
+# No remote at all must still resolve — to the documented github default, not to
+# an error. A crash here would break the no---platform path on a fresh clone.
+test_detect_platform_defaults_without_remote() {
+    local sb
+    new_sandbox sb
+    stub_cli "$sb" gh 'echo "GH_RAN" >>"$HOME/who.txt"
+echo "[]"
+exit 0'
+    run_premise_no_platform "$sb" exists --title "some tracked thing"
+    local who=""
+    [ -f "$sb/who.txt" ] && who="$(command cat "$sb/who.txt")"
+    assert_contains "$who" "GH_RAN" "an unreadable remote defaults to github, not an error"
+    assert_contains "$PC_OUT" "verdict=" "the default path still produces a verdict"
+}
+
+# --- 7d. GitLab parity for `constraints` (review cycle 4) -------------------
+
+# `exists` has GitLab coverage; `constraints` had none, so its glab branch —
+# a different CLI invocation feeding the same emit_constraints — was unexercised.
+test_gitlab_constraints_sweep() {
+    local sb
+    new_sandbox sb
+    stub_cli "$sb" glab 'case "$*" in
+  *"issue view"*)
+    printf "%s" "{\"description\":\"intro line\nconsider keeping the inline path\"}" ;;
+  *) echo "{}" ;;
+esac
+exit 0'
+    run_premise "$sb" constraints --issue 77 --platform gitlab
+    assert_exit 0 "$PC_RC" "gitlab constraint sweep exits 0"
+    assert_contains "$PC_OUT" "consider keeping" \
+        "gitlab: a body constraint is surfaced by the same sweep"
+}
+
+test_gitlab_constraints_unavailable() {
+    local sb
+    new_sandbox sb
+    stub_cli "$sb" glab 'echo "boom" >&2
+exit 1'
+    run_premise "$sb" constraints --issue 77 --platform gitlab
+    assert_contains "$PC_OUT" "verdict=unavailable" \
+        "gitlab: a failing constraints query resolves unavailable"
+    assert_not_contains "$PC_OUT" "verdict=none" \
+        "gitlab: an unrun sweep is never 'no constraints found'"
+}
+
 # --- 7b. The documented strip neutralizes injection (review cycle 3) --------
 
 # The call sites interpolate an UNTRUSTED title into a shell command line, and
@@ -621,6 +772,12 @@ run_test test_no_subcommand_fails_loud "usage: no subcommand → exit 2"
 run_test test_gitlab_open_hit "gitlab: iid/web_url/opened parse to verdict=open"
 run_test test_gitlab_missing_cli_is_unavailable "gitlab: missing glab → unavailable"
 run_test test_record_parse_is_order_independent "parse: reordered keys still resolve (no BRE \\| to lose on BSD)"
+run_test test_split_survives_braces_in_title "parse: a '}, {' in a title does not mis-split the record"
+run_test test_unescape_handles_escaped_backslash_before_n "parse: an escaped backslash before 'n' does not truncate the line"
+run_test test_detect_platform_routes_by_remote "platform: the remote decides gh vs glab with no --platform"
+run_test test_detect_platform_defaults_without_remote "platform: no remote defaults to github, not an error"
+run_test test_gitlab_constraints_sweep "gitlab: the constraints sweep surfaces a body constraint"
+run_test test_gitlab_constraints_unavailable "gitlab: a failing constraints query is unavailable, never none"
 run_test test_documented_strip_neutralizes_injection "security: the documented strip neutralizes injection without eating keywords"
 run_test test_open_wins_over_closed_in_multi_record "parse: OPEN wins over a CLOSED record listed first"
 run_test test_multi_record_all_closed "parse: all-closed multi-record → closed, never absent"

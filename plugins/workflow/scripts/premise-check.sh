@@ -266,8 +266,24 @@ parse_and_emit_match() {
     # One record per line, then pick the first open match, else the first closed
     # one. Both CLIs emit lowercase-ish state strings ("OPEN"/"opened"/"closed"),
     # so normalize before comparing.
-    _pm_records="$(command printf '%s' "$_pm_json" | "$SED" -e 's/},[[:space:]]*{/}\
-{/g')"
+    #
+    # ANCHORED ON THE RECORD-START KEY, not a bare `},{`. A textual split has no
+    # idea what is inside a JSON string, and an issue TITLE may legitimately
+    # contain `}, {` — `config: {a}, {b} refactor` is enough. A bare split fires
+    # mid-title, cutting one record into two fragments, and the per-line field
+    # extraction then reads a number from one fragment and a state from another.
+    # Measured on exactly that title: an OPEN record reported `verdict=closed`
+    # from the NEXT record's fields, which inverts the caller's action (remove
+    # the option instead of referencing the open issue) — the open/closed
+    # distinction #911 turns on, lost in the parser.
+    #
+    # Every record from either CLI begins with "number" (gh) or "iid" (glab), so
+    # requiring one of those immediately after the brace makes the split match
+    # structure rather than punctuation. A title would have to contain the full
+    # `}, {"number":` to collide, which is no longer a plausible accident.
+    _pm_records="$(command printf '%s' "$_pm_json" |
+        "$SED" -E -e 's/\},[[:space:]]*\{"(number|iid)"/}\
+{"\1"/g')"
 
     _pm_open_num=""
     _pm_open_url=""
@@ -408,9 +424,28 @@ cmd_constraints() {
 emit_constraints() {
     # Unwrap the JSON string field into lines: \n escapes become real newlines,
     # then escaped quotes and backslashes are restored.
+    #
+    # THE ESCAPED BACKSLASH IS CONSUMED FIRST, via a placeholder, and the order
+    # is the whole point. JSON writes a literal backslash as `\\`, so a body
+    # containing `C:\next` arrives as `C:\\next` — three characters `\`, `\`,
+    # `n`. A pass that interprets `\n` before resolving `\\` reads the SECOND
+    # backslash plus the `n` as a newline escape: it breaks the line mid-token,
+    # eats the literal `n`, and strands the first backslash for a later pass that
+    # no longer matches. Measured on exactly that body: the emitted constraint
+    # was a fragment still carrying its raw JSON prefix.
+    #
+    # So `\\` becomes a placeholder no JSON escape can produce, the remaining
+    # escapes are resolved against text that now holds no ambiguous backslash,
+    # and the placeholder becomes a single literal backslash last.
+    #
+    # The placeholder is spelled LITERALLY in each sed program rather than
+    # interpolated from a variable: a sed program computed at runtime is refused
+    # outright by the Bash tool in a worktree-isolated session (the #815 class),
+    # so a variable here would make this line unrunnable in exactly the context
+    # golem uses. `@@PCBS@@` is not producible by any JSON escape sequence.
     _ec_text="$(command printf '%s' "$1" |
-        "$SED" -e 's/\\r//g' -e 's/\\n/\
-/g' -e 's/\\"/"/g' -e 's/\\\\/\\/g')"
+        "$SED" -e 's/\\\\/@@PCBS@@/g' -e 's/\\r//g' -e 's/\\n/\
+/g' -e 's/\\"/"/g' -e 's/@@PCBS@@/\\/g')"
 
     # NOTE the redirect rather than `grep -q` in a pipeline: under `pipefail`,
     # -q exits on the first match, the upstream writer takes SIGPIPE, and the

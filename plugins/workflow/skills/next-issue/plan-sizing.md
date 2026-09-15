@@ -132,7 +132,8 @@ The four options:
 **Check the premise of options 2 and 3 BEFORE rendering them** (#911). Both
 propose filing new work, so both are subject to the existence check in
 `escalation-protocol.md` § *Check the premise* — run
-`premise-check.sh exists --title "<the split you would file>"` — stripping `"`,
+`<skill-base-dir>/../../scripts/premise-check.sh exists --title "<the split you
+would file>"` — stripping `"`,
 `` ` ``, `$`, `\` and newlines from the title first, per that section's
 untrusted-text rule — and act on the
 verdict: rewrite the option to reference an `open` hit, **remove** it on a
