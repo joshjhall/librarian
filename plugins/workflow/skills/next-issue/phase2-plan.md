@@ -199,7 +199,10 @@ call (see SKILL.md `## Autonomy Levels` and `autonomy.md`).
    directional choice the plan left open, or a wall with more than one viable
    escape — this is an **escalation gate**, not something to silently decide.
    Load `escalation-protocol.md` and follow it: assemble the payload (decision,
-   options + tradeoffs, recommendation), then dispatch by level — **L1–L3 block
+   options + tradeoffs, recommendation, **existence check, constraint sweep** —
+   the last two are required, see § *Check the premise*; an option proposing work
+   that is already filed or already closed must never reach the operator as
+   offered), then dispatch by level — **L1–L3 block
    and wait indefinitely** for a human (surfaced as an `escalation` on the feed +
    an issue comment; inline for a lone `/workflow:next-issue`), **L4 auto-selects the
    recommendation** and continues, **unless it is a dead-end** (no safe option /

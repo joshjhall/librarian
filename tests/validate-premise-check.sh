@@ -528,6 +528,31 @@ exit 0'
         "the literal 'n' after the escaped backslash is not eaten"
 }
 
+# The unescaper's placeholder must not collide with the INPUT. An earlier fix
+# used the literal `@@PCBS@@` and defended it as "not producible by any JSON
+# escape sequence" — a true claim about the escaper that says nothing about the
+# body being rewritten, which is arbitrary contributor text and can simply
+# contain that string (an issue quoting the function would). Measured then: it
+# came back as a stray backslash.
+#
+# The body here also carries a constraint marker, so a regression shows up as
+# corrupted constraint TEXT rather than a silent pass.
+test_placeholder_does_not_collide_with_body_text() {
+    local sb
+    new_sandbox sb
+    stub_cli "$sb" gh 'case "$*" in
+  *"--json body"*)
+    printf "%s" "{\"body\":\"do not use @@PCBS@@ as a literal token\"}" ;;
+  *) echo "{}" ;;
+esac
+exit 0'
+    run_premise "$sb" constraints --issue 1 --platform github
+    assert_contains "$PC_OUT" "@@PCBS@@" \
+        "a body containing the old placeholder string round-trips UNCHANGED"
+    assert_not_contains "$PC_OUT" "use \\ as" \
+        "the placeholder pass does not rewrite literal body text into a backslash"
+}
+
 # --- 7c. Platform auto-detection (review cycle 4) ---------------------------
 
 # Every other case passes --platform explicitly, which keeps the fixtures
@@ -774,6 +799,7 @@ run_test test_gitlab_missing_cli_is_unavailable "gitlab: missing glab → unavai
 run_test test_record_parse_is_order_independent "parse: reordered keys still resolve (no BRE \\| to lose on BSD)"
 run_test test_split_survives_braces_in_title "parse: a '}, {' in a title does not mis-split the record"
 run_test test_unescape_handles_escaped_backslash_before_n "parse: an escaped backslash before 'n' does not truncate the line"
+run_test test_placeholder_does_not_collide_with_body_text "parse: the unescape placeholder cannot collide with body text"
 run_test test_detect_platform_routes_by_remote "platform: the remote decides gh vs glab with no --platform"
 run_test test_detect_platform_defaults_without_remote "platform: no remote defaults to github, not an error"
 run_test test_gitlab_constraints_sweep "gitlab: the constraints sweep surfaces a body constraint"

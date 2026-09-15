@@ -434,18 +434,24 @@ emit_constraints() {
     # no longer matches. Measured on exactly that body: the emitted constraint
     # was a fragment still carrying its raw JSON prefix.
     #
-    # So `\\` becomes a placeholder no JSON escape can produce, the remaining
-    # escapes are resolved against text that now holds no ambiguous backslash,
-    # and the placeholder becomes a single literal backslash last.
+    # So `\\` becomes a placeholder, the remaining escapes are resolved against
+    # text that now holds no ambiguous backslash, and the placeholder becomes a
+    # single literal backslash last.
     #
-    # The placeholder is spelled LITERALLY in each sed program rather than
-    # interpolated from a variable: a sed program computed at runtime is refused
-    # outright by the Bash tool in a worktree-isolated session (the #815 class),
-    # so a variable here would make this line unrunnable in exactly the context
-    # golem uses. `@@PCBS@@` is not producible by any JSON escape sequence.
+    # THE PLACEHOLDER IS A CONTROL CHARACTER (U+0001), and the reason is a
+    # property of the INPUT, not of the escaper. An earlier spelling used the
+    # literal `@@PCBS@@` and justified it as "not producible by any JSON escape
+    # sequence" — true, and beside the point: the text being rewritten is an
+    # arbitrary contributor-supplied issue body, which can simply CONTAIN that
+    # string (an issue quoting this very function would). Measured on such a
+    # body, the final pass rewrote it into a stray backslash. A placeholder is
+    # only safe if it cannot appear in the input at all, so the question to ask
+    # is what the input can hold — U+0001 is a control character no issue body
+    # carries, and both CLIs would escape it as `` rather than emit it raw.
+    _ec_ph="$(command printf '\001')"
     _ec_text="$(command printf '%s' "$1" |
-        "$SED" -e 's/\\\\/@@PCBS@@/g' -e 's/\\r//g' -e 's/\\n/\
-/g' -e 's/\\"/"/g' -e 's/@@PCBS@@/\\/g')"
+        "$SED" -e "s/\\\\\\\\/${_ec_ph}/g" -e 's/\\r//g' -e 's/\\n/\
+/g' -e 's/\\"/"/g' -e "s/${_ec_ph}/\\\\/g")"
 
     # NOTE the redirect rather than `grep -q` in a pipeline: under `pipefail`,
     # -q exits on the first match, the upstream writer takes SIGPIPE, and the
