@@ -474,6 +474,69 @@ exit 0'
         "a multi-record closed hit is NEVER absent (the record split must actually split)"
 }
 
+# --- 7b. The documented strip neutralizes injection (review cycle 3) --------
+
+# The call sites interpolate an UNTRUSTED title into a shell command line, and
+# the mitigation is an instruction in prose: strip `"`, backtick, `$`, `\` and
+# newlines before substituting. Prose is what an agent has to re-derive every
+# time, so the claim it rests on is pinned here instead of assumed.
+#
+# TWO claims, and they are different:
+#   (a) the documented strip is SUFFICIENT — a title carrying a command
+#       substitution, a quote-break and a backtick survives it as inert text.
+#       The payload is executed through the same double-quoted template the docs
+#       show, so a strip that missed a character would run it and write the
+#       marker file the assertion checks for.
+#   (b) the strip is NOT LOSSY for real titles — it is applied to a title whose
+#       meaningful words sit around the metacharacters, and those words still
+#       reach `--search`. A "mitigation" that ate the keywords would resolve
+#       every query to `absent`, which is the #860 failure wearing a safety
+#       label.
+test_documented_strip_neutralizes_injection() {
+    local sb
+    new_sandbox sb
+    stub_cli "$sb" gh 'prev=""
+for a in "$@"; do
+  case "$prev" in --search) printf "%s" "$a" >"$HOME/terms.txt" ;; esac
+  prev="$a"
+done
+echo "[]"
+exit 0'
+
+    # A hostile title of the shape an external contributor can file.
+    local hostile='split $(touch '"$sb"'/PWNED) detectors "; touch '"$sb"'/PWNED2; #`touch '"$sb"'/PWNED3`'
+
+    # Apply the DOCUMENTED strip, spelled exactly as escalation-protocol.md
+    # states it: remove " ` $ \ and newlines.
+    local stripped
+    stripped="$(command printf '%s' "$hostile" | command tr -d '"`$\\\n')"
+
+    # Build the command line the way the docs show a caller building it, and run
+    # it through a shell so any surviving metacharacter would actually fire.
+    command printf '%s\n' \
+        "PATH=\"$sb/stub-bin:\$PATH\" HOME=\"$sb\" \"$REAL_BASH\" \"$PREMISE\" exists --title \"$stripped\" --platform github" \
+        >"$sb/callsite.sh"
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" -uBASH_ENV \
+        "$REAL_BASH" "$sb/callsite.sh" >/dev/null 2>&1 || true
+
+    # The harness has no negative file assertion, so the presence of each marker
+    # is reduced to a string and asserted with assert_equals — which keeps the
+    # failure output naming WHICH payload fired.
+    local fired=""
+    [ -f "$sb/PWNED" ] && fired="$fired dollar-paren"
+    [ -f "$sb/PWNED2" ] && fired="$fired quote-break"
+    [ -f "$sb/PWNED3" ] && fired="$fired backtick"
+    assert_equals "" "$fired" \
+        "no injection payload executes after the documented strip (a fired payload is named here)"
+
+    # …and the real keywords still survive, so the strip is a mitigation rather
+    # than a silent query-killer.
+    local terms=""
+    [ -f "$sb/terms.txt" ] && terms="$(command cat "$sb/terms.txt")"
+    assert_contains "$terms" "split" "the strip preserves the title's real keywords (1/2)"
+    assert_contains "$terms" "detectors" "the strip preserves the title's real keywords (2/2)"
+}
+
 # --- 8. Search-term filtering (review cycle 1) ------------------------------
 
 # `search_terms` drops one-character tokens. A single global sed substitution
@@ -558,6 +621,7 @@ run_test test_no_subcommand_fails_loud "usage: no subcommand → exit 2"
 run_test test_gitlab_open_hit "gitlab: iid/web_url/opened parse to verdict=open"
 run_test test_gitlab_missing_cli_is_unavailable "gitlab: missing glab → unavailable"
 run_test test_record_parse_is_order_independent "parse: reordered keys still resolve (no BRE \\| to lose on BSD)"
+run_test test_documented_strip_neutralizes_injection "security: the documented strip neutralizes injection without eating keywords"
 run_test test_open_wins_over_closed_in_multi_record "parse: OPEN wins over a CLOSED record listed first"
 run_test test_multi_record_all_closed "parse: all-closed multi-record → closed, never absent"
 run_test test_single_char_tokens_are_dropped "search terms: adjacent single-char tokens are all dropped"

@@ -128,9 +128,21 @@ in the text ends the argument early. The script itself parses argv safely — th
 exposure is entirely in *building* the command line. So before substituting,
 **delete** `"`, `` ` ``, `$`, `\` and newlines from the text; they are search
 keywords, and `search_terms` discards every non-alphanumeric character anyway, so
-removing them costs nothing and changes no verdict. If the remainder is empty,
-the check cannot run — say so, exactly as for `unavailable`. The same rule
-governs the two other call sites (`plan-sizing.md`, `agents/issue-filer.md`).
+removing them costs nothing and changes no verdict.
+
+**If the remainder is empty, do NOT call the script at all** — report the option
+as "existence check did not run (the title held no usable text)", in the same
+wording you would use for `unavailable`. Passing the empty string through as
+`--title ""` is a *usage error*: the script exits **2** with a usage message and
+prints no verdict, because an empty `--title` is a malformed call rather than an
+answer. That is deliberate — a caller must not be able to mistake a broken
+invocation for "nothing found" — but it means the empty case is yours to handle,
+not the script's. (The script's own `unavailable` for "no searchable keywords"
+fires on a *non-empty* title that reduces to zero usable tokens, which is a
+different branch.)
+
+The same rule governs the two other call sites (`plan-sizing.md`,
+`agents/issue-filer.md`).
 
 Then act on `verdict=` — all four cases, none optional:
 

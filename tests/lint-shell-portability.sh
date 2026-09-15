@@ -911,6 +911,7 @@ okvarsed="$("$SED" -n -E -e 's/.*(a|b).*/x/p' f)"
 okseduce="$(printf '%s' "$SEDUCE_ME \s")"
 okgrepper="$(printf '%s' "$GREPPER \w")"
 okegrepper="$(printf '%s' "$EGREPPER \s")"
+okfgrepper="$(printf '%s' "$FGREPPER \s")"
 EOF
 
     # The whitespace-only-reason fixture is appended with printf, NOT written in
@@ -961,6 +962,10 @@ EOF
     assert_not_contains "$CUR_GNURE_VIOLATIONS" "okseduce" '$SEDUCE_ME is NOT treated as $SED'
     assert_not_contains "$CUR_GNURE_VIOLATIONS" "okgrepper" '$GREPPER is NOT treated as $GREP'
     assert_not_contains "$CUR_GNURE_VIOLATIONS" "okegrepper" '$EGREPPER is NOT treated as $EGREP'
+    # FGREP is the LAST alternative in the group, which is the one an anchoring
+    # typo strands most quietly — so it gets the same boundary fixture as its
+    # siblings rather than being trusted by symmetry.
+    assert_not_contains "$CUR_GNURE_VIOLATIONS" "okfgrepper" '$FGREPPER is NOT treated as $FGREP'
     assert_not_contains "$CUR_GNURE_VIOLATIONS" "okmarked" 'a lint-allow-gnu-regex line is NOT flagged'
     # The reason is enforced, not just documented: a marker with an empty tail
     # must NOT buy an exemption, or the escape hatch becomes a silent one.
