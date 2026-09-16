@@ -1176,7 +1176,9 @@ type: feedback
 
 See [see [1]](golem-thing.md) for detail.
 And an ordinary [Thing](golem-thing.md) link.
-A bad run then a real one: [x [1]](golem-thing.md) and [Real](golem-thing.md).'
+A bad run then a real one: [x [1]](golem-thing.md) and [Real](golem-thing.md).
+Twice: [T](golem-thing.md) and again [T](golem-thing.md).
+Glob label: [a*b](golem-thing.md) must stay a LITERAL needle.'
 
     run_moves apply "$root" --transform move-concept --confirm --allow-dirty
     assert_exit 0 "$OKF_RC" "bash applies cleanly"
@@ -1193,6 +1195,25 @@ A bad run then a real one: [x [1]](golem-thing.md) and [Real](golem-thing.md).'
     # next `](` instead of restarting from the next `[` would swallow `[Real]`.
     assert_contains "$sh_body" "[Real](golem/golem-thing.md)" \
         "a real link AFTER a malformed one on the same line is still rewritten"
+    # TWO IDENTICAL LINKS ON ONE LINE MUST BOTH BE REWRITTEN. scan_links emits
+    # one row per occurrence and each row replaces the first REMAINING one, so
+    # they fall left to right — matching python's per-match
+    # `changed.replace(group(0), …, 1)`.
+    #
+    # MEASURED, so the next reader does not redo it: swapping the single
+    # replacement for a replace-all leaves this suite green, and that is
+    # CORRECT rather than a coverage gap — with one row emitted per occurrence
+    # the two formulations produce the same string. It is an equivalent mutant,
+    # not a missing assertion. What the single replacement genuinely buys is
+    # termination: a naive replace-all loop that rescans its own output hangs
+    # forever whenever the new target contains the old one (measured — it wedged
+    # this suite past its timeout).
+    assert_not_contains "$sh_body" "and again [T](golem-thing.md)" \
+        "the SECOND of two identical links is rewritten too, not just the first"
+    # The needle is built from the label, so an unquoted expansion would read
+    # `[a*b]` as a PATTERN. Quoted, it stays the literal text.
+    assert_contains "$sh_body" "[a*b](golem/golem-thing.md)" \
+        "a label containing a glob metacharacter is matched literally"
 
     root="$(fresh_bundle "$WORKDIR")"
     write_concept "$root" "MEMORY.md" '# Memory
@@ -1212,7 +1233,9 @@ type: feedback
 
 See [see [1]](golem-thing.md) for detail.
 And an ordinary [Thing](golem-thing.md) link.
-A bad run then a real one: [x [1]](golem-thing.md) and [Real](golem-thing.md).'
+A bad run then a real one: [x [1]](golem-thing.md) and [Real](golem-thing.md).
+Twice: [T](golem-thing.md) and again [T](golem-thing.md).
+Glob label: [a*b](golem-thing.md) must stay a LITERAL needle.'
 
     run_moves_py apply "$root" --transform move-concept --confirm --allow-dirty
     assert_exit 0 "$OKF_RC" "python applies cleanly"
