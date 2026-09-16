@@ -5,6 +5,11 @@ guidance change ([#786](https://github.com/joshjhall/librarian/issues/786)) as
 the instrument for its AC5 (before/after tool-result share). AC1–AC4 and AC6
 are discharged in the PR itself; this tally exists because AC5 cannot be.
 
+Tracked to closure by
+[#1050](https://github.com/joshjhall/librarian/issues/1050), so the open row is
+not silently treated as closed by #786's merge — the same pairing
+[#771](https://github.com/joshjhall/librarian/issues/771) gave #768's tally.
+
 **Figures here are NORMALIZED — percentages and ratios only.** See
 [`token-baseline-tally-781.md`](token-baseline-tally-781.md) § Why no absolute
 figures: this repo is public and committing fleet-wide request counts or dollar
