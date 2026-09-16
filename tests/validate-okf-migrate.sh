@@ -140,6 +140,8 @@ run_fragment_test test_move_rewrites_every_inbound_link "every inbound link to a
 run_fragment_test test_index_pointer_follows_the_move "the index pointer follows the move — a stale one is a silent un-recall (AC4)"
 run_fragment_test test_move_into_an_existing_directory_index "a move into an EXISTING directory index appends to it — no regeneration, no orphan"
 run_fragment_test test_prose_mentioning_a_filename_does_not_suppress_the_append "prose naming a file in parens is not a link, so it never suppresses the append"
+run_fragment_test test_a_body_file_never_claims_the_sub_index_entry "a BODY file's prose never becomes the sub-index entry, whatever it sorts as"
+run_fragment_test test_a_stationary_first_link_does_not_veto_the_repoint "a stationary FIRST link does not veto repointing the mover later on the line"
 run_fragment_test test_two_indexes_with_different_hooks_both_reach_the_sub_index "two indexes naming one concept with DIFFERENT hooks both reach the sub-index"
 run_fragment_test test_fenced_example_in_the_target_index_does_not_suppress_the_append "a fenced sample in the target index is an EXAMPLE, so it never suppresses the append"
 run_fragment_test test_existing_index_without_a_trailing_newline_appends_after_it "an unterminated last line does not shift the insert position (parity)"

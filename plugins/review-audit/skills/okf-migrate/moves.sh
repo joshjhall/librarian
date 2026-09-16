@@ -338,8 +338,16 @@ plan_moves() {
 
 # --- plan_directory_indexes --------------------------------------------------
 
-# retarget_line LINE BASE — LINE with its first bundle-internal `.md` link
+# retarget_line LINE BASE [ONLY_TARGET] — LINE with a bundle-internal `.md` link
 # target replaced by BASE.
+#
+# ONLY_TARGET names WHICH link to retarget; empty means the first
+# bundle-internal `.md` link, the original behavior. Naming it matters on a
+# multi-link line: the sub-index repoint decides its directory from the link that
+# RESOLVES into a relocated directory, which need not be the first — retargeting
+# the first anyway rewrote a STATIONARY file's link to the moved concept's
+# sub-index and left the real mover dangling. Measured on
+# `- see [Stay](stays-put.md) then [Thing](golem-thing.md)`.
 retarget_line() {
     # SCANS PAST non-`.md` and URL links to the first genuinely relinkable one,
     # matching the python twin. Inspecting only the FIRST link and bailing when
@@ -353,6 +361,7 @@ retarget_line() {
     # to drift.
     _rt_line="$1"
     _rt_base="$2"
+    _rt_only="${3:-}"
     _rt_target=""
     _rt_label=""
     while IFS="$(command printf '\t')" read -r _rt_lbl _rt_tgt || [ -n "$_rt_lbl" ]; do
@@ -371,6 +380,11 @@ retarget_line() {
             esac
         done
         case "$_rt_trim" in *://*) continue ;; esac
+        # Compared against the TRIMMED target, matching python's
+        # `target != only_target` over `group(2).strip()`.
+        if [ -n "$_rt_only" ] && [ "$_rt_trim" != "$_rt_only" ]; then
+            continue
+        fi
         case "$_rt_trim" in
             *.md)
                 _rt_target="$_rt_tgt"
@@ -431,6 +445,17 @@ plan_directory_indexes() {
     # Which line named each moved concept, keyed by its NEW path.
     while IFS= read -r path || [ -n "$path" ]; do
         [ -n "$path" ] || continue
+        # ONLY AN INDEX CAN CLAIM A CONCEPT. This loop used to read EVERY file,
+        # so a BODY file's prose that happened to link the moved concept — "See
+        # [Thing](golem-thing.md) for background.", ordinary cross-referencing —
+        # won the claim whenever its path sorted first, and that sentence was
+        # written into the new directory index as the concept's entry while the
+        # real index hook was discarded. Measured on `aaa-body.md` vs
+        # `index-golem.md`: 'a' < 'i', so the body won.
+        #
+        # The same `is_index_name` gate index_members and rewrite_inbound_links
+        # already apply; this was the one link scanner in the file without it.
+        is_index_name "${path##*/}" || continue
         here="${path#"$root"/}"
         case "$here" in
             */*) here="${here%/*}" ;;
@@ -745,7 +770,8 @@ rewritten_target() {
 rewrite_inbound_links() {
     local root="$1" list="$2" mapping="$3" claimed="${4:-}"
     local path here_rel line n in_fence changed label target new_target t
-    local claimed_line sub_dir moved_new old_rel _isidx _rw_trim _rw_old _rw_new
+    local claimed_line sub_dir moved_new moved_target _cand old_rel _isidx
+    local _rw_trim _rw_old _rw_new
     [ -s "$mapping" ] || return 0
 
     while IFS= read -r path || [ -n "$path" ]; do
@@ -787,9 +813,23 @@ rewrite_inbound_links() {
             _isidx=0
             is_index_name "${here_rel##*/}" && _isidx=1
             if [ "$_isidx" -eq 1 ]; then
-                # The FIRST bundle-internal `.md` link decides, matching python's
-                # `break` after the first resolvable match.
+                # EVERY LINK ON THE LINE, not just the first, and the winner is
+                # the first one that RESOLVES INTO A RELOCATED DIRECTORY. This
+                # used to inspect the first bundle-internal `.md` link and break
+                # unconditionally, so an index line whose first link names a
+                # STATIONARY file aborted the decision: the line fell through to
+                # the generic rewrite and the concept that DID move was
+                # repointed straight at its new path, which the real validator
+                # reports as memory-dangling-index. Measured on
+                # `- see [Stay](stays-put.md) then [Thing](golem-thing.md)`.
+                #
+                # A directory only owns a sub-index when a concept was actually
+                # RELOCATED into it — `claimed`'s first field carries those new
+                # paths, the same set python builds as sub_index_of. Testing
+                # that INSIDE the loop is what makes a non-resolving link a
+                # non-candidate rather than a veto over the rest of the line.
                 sub_dir=""
+                moved_target=""
                 while IFS="$(command printf '\t')" read -r label target || [ -n "$label" ]; do
                     [ -n "$target" ] || continue
                     case "$target" in *://*) continue ;; esac
@@ -808,21 +848,24 @@ rewrite_inbound_links() {
                     fi
                     moved_new="$(lookup_mapping "$old_rel" "$mapping")"
                     case "$moved_new" in
-                        */*) sub_dir="${moved_new%/*}" ;;
+                        */*) ;;
+                        *) continue ;;
                     esac
-                    break
-                done <<EOF
-$(scan_links "$line")
-EOF
-                # A directory only owns a sub-index when a concept was actually
-                # RELOCATED into it — `claimed`'s first field carries those new
-                # paths, the same set python builds as sub_index_of.
-                if [ -n "$sub_dir" ] && [ -n "$claimed" ] && [ -s "$claimed" ] &&
-                    OKF_D="$sub_dir" command awk -F"$(command printf '\t')" \
+                    _cand="${moved_new%/*}"
+                    [ -n "$claimed" ] && [ -s "$claimed" ] || continue
+                    if OKF_D="$_cand" command awk -F"$(command printf '\t')" \
                         '{ d = $1; sub(/\/[^\/]*$/, "", d)
                            if (d == ENVIRON["OKF_D"]) { found = 1; exit } }
                          END { exit !found }' "$claimed" 2>/dev/null; then
-                    claimed_line="$(retarget_line "$line" "$sub_dir/index.md")"
+                        sub_dir="$_cand"
+                        moved_target="$target"
+                        break
+                    fi
+                done <<EOF
+$(scan_links "$line")
+EOF
+                if [ -n "$sub_dir" ]; then
+                    claimed_line="$(retarget_line "$line" "$sub_dir/index.md" "$moved_target")"
                     if [ "$claimed_line" != "$line" ]; then
                         emit_edit "move-concept" "$path" "replace-line" "$n" \
                             "$line" "$claimed_line" \

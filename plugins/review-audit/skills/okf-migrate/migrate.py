@@ -423,7 +423,9 @@ def build_plan(
         # index lines that named the moved concepts. The inbound rewriter then
         # repoints those claimed lines at the sub-index rather than at the
         # concept — naming the concept in both places would be memory-multi-index.
-        index_edits, relocated = plan_directory_indexes(root, every, mapping)
+        index_edits, relocated = plan_directory_indexes(
+            root, every, mapping, index_names
+        )
         edits.extend(index_edits)
         edits.extend(
             rewrite_inbound_links(root, every, mapping, relocated, index_names)

@@ -292,7 +292,10 @@ def _rewritten_target(target: str, here_rel: str, mapping: dict[str, str]) -> st
 
 
 def plan_directory_indexes(
-    root: str, every: list[str], mapping: dict[str, str]
+    root: str,
+    every: list[str],
+    mapping: dict[str, str],
+    index_names: list[str] | None = None,
 ) -> tuple[list[Edit], dict[str, str]]:
     """(index-creating edits, moved_index_line_by_concept) for each new directory.
 
@@ -333,6 +336,18 @@ def plan_directory_indexes(
 
     claimed: dict[str, str] = {}
     for path in sorted(every):
+        # ONLY AN INDEX CAN CLAIM A CONCEPT. This loop used to read EVERY file,
+        # so a BODY file's prose that happened to link the moved concept — "See
+        # [Thing](golem-thing.md) for background.", ordinary cross-referencing —
+        # won the claim whenever its path sorted first, and that sentence was
+        # written into the new directory index as the concept's entry while the
+        # real index hook was discarded. Measured on `aaa-body.md` vs
+        # `index-golem.md`: 'a' < 'i', so the body won.
+        #
+        # The same `is_index_name` gate index_members and rewrite_inbound_links
+        # already apply; this was the one link scanner in the file without it.
+        if not is_index_name(os.path.basename(path), index_names or []):
+            continue
         here = os.path.dirname(os.path.relpath(path, root))
         in_fence = False
         for line in read_lines(path):
@@ -471,11 +486,22 @@ def plan_directory_indexes(
     return (edits, claimed)
 
 
-def _retarget_line(line: str, base: str) -> str:
-    """LINE with its first bundle-internal `.md` link target replaced by BASE."""
+def _retarget_line(line: str, base: str, only_target: str = "") -> str:
+    """LINE with a bundle-internal `.md` link target replaced by BASE.
+
+    ONLY_TARGET names WHICH link to retarget; empty means the first
+    bundle-internal `.md` link, the original behavior. Naming it matters on a
+    multi-link line: the sub-index repoint decides its directory from the link
+    that RESOLVES into a relocated directory, which need not be the first —
+    retargeting the first anyway rewrote a STATIONARY file's link to the moved
+    concept's sub-index and left the real mover dangling. Measured on
+    `- see [Stay](stays-put.md) then [Thing](golem-thing.md)`.
+    """
     for match in LINK_RE.finditer(line):
         target = match.group(2).strip()
         if "://" in target or not target.endswith(".md"):
+            continue
+        if only_target and target != only_target:
             continue
         return line.replace(match.group(0), "[" + match.group(1) + "](" + base + ")", 1)
     return line
@@ -571,7 +597,20 @@ def rewrite_inbound_links(
                 # This line's concept now lives in a directory index. Repoint it
                 # at that SUB-INDEX (§8's routing: the root names the bucket, the
                 # bucket names its concepts) rather than at the concept itself.
+                # EVERY LINK ON THE LINE, not just the first. This used to
+                # inspect the first bundle-internal `.md` link and `break`
+                # unconditionally, so an index line whose first link names a
+                # STATIONARY file aborted the decision: the line fell through to
+                # the generic rewrite and the concept that DID move was
+                # repointed straight at its new path, which the real validator
+                # reports as memory-dangling-index. Measured on
+                # `- see [Stay](stays-put.md) then [Thing](golem-thing.md)`.
+                #
+                # The first link that RESOLVES INTO A RELOCATED DIRECTORY wins;
+                # a link that maps nowhere is simply not a candidate, rather
+                # than a veto over the rest of the line.
                 directory = ""
+                moved_target = ""
                 for match in LINK_RE.finditer(line):
                     target = match.group(2).strip()
                     if "://" in target or not target.endswith(".md"):
@@ -582,10 +621,15 @@ def rewrite_inbound_links(
                         old_rel = os.path.normpath(
                             os.path.join(os.path.dirname(here_rel), target)
                         )
-                    directory = os.path.dirname(mapping.get(old_rel, ""))
-                    break
-                if directory and directory in sub_index_of:
-                    changed = _retarget_line(line, directory + "/index.md")
+                    candidate = os.path.dirname(mapping.get(old_rel, ""))
+                    if candidate and candidate in sub_index_of:
+                        directory = candidate
+                        moved_target = target
+                        break
+                if directory:
+                    changed = _retarget_line(
+                        line, directory + "/index.md", moved_target
+                    )
                     if changed != line:
                         edits.append(
                             Edit(

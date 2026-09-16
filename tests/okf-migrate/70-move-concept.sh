@@ -305,6 +305,165 @@ Naming note: the concept file is called (golem-thing.md) by convention.'
         "both runtimes append identically (the defect was shared, not a skew)"
 }
 
+test_a_body_file_never_claims_the_sub_index_entry() {
+    local root sh_index py_index
+    if [ "$OKF_HAVE_PY" -ne 1 ]; then
+        skip_test "python3 >= 3.11 unavailable"
+        return 0
+    fi
+    # ONLY AN INDEX CAN CLAIM A CONCEPT. The claim loop read EVERY file, keeping
+    # the FIRST line naming each moved concept in alphabetical path order — so a
+    # BODY file's ordinary cross-reference ("See [Thing](golem-thing.md) for
+    # background.") won the claim whenever its path sorted first, and that
+    # sentence became the concept's entry in the new directory index while the
+    # real index hook was discarded.
+    #
+    # `aaa-body.md` vs `index-golem.md` is the minimal shape: 'a' < 'i'. Every
+    # existing fixture was blind to it because MEMORY.md's uppercase 'M' sorts
+    # before any lowercase body file, so the real index always happened to win.
+    root="$(fresh_bundle "$WORKDIR")"
+    write_concept "$root" "MEMORY.md" '# Memory
+
+- [Golem](index-golem.md) — bucket'
+    write_concept "$root" "index-golem.md" '# Golem
+
+- [Thing](golem-thing.md) — THE REAL INDEX HOOK'
+    write_concept "$root" "golem-thing.md" '---
+type: feedback
+---
+
+MOVING-CONCEPT'
+    write_concept "$root" "aaa-body.md" '---
+type: reference
+---
+
+See [Thing](golem-thing.md) for background — BODY PROSE, NOT AN INDEX.'
+
+    run_moves apply "$root" --transform move-concept --confirm --allow-dirty
+    assert_exit 0 "$OKF_RC" "bash applies cleanly"
+    sh_index="$(command cat "$root/golem/index.md")"
+
+    assert_contains "$sh_index" "THE REAL INDEX HOOK" \
+        "the sub-index entry comes from the INDEX, not from body prose"
+    assert_not_contains "$sh_index" "BODY PROSE" \
+        "...and the body file's sentence never becomes an index entry"
+    # The body's own link must still FOLLOW the move — it is an inbound link
+    # like any other, just not a claim.
+    assert_file_contains "$root/aaa-body.md" "](golem/golem-thing.md)" \
+        "the body file's link still follows the moved concept"
+
+    root="$(fresh_bundle "$WORKDIR")"
+    write_concept "$root" "MEMORY.md" '# Memory
+
+- [Golem](index-golem.md) — bucket'
+    write_concept "$root" "index-golem.md" '# Golem
+
+- [Thing](golem-thing.md) — THE REAL INDEX HOOK'
+    write_concept "$root" "golem-thing.md" '---
+type: feedback
+---
+
+MOVING-CONCEPT'
+    write_concept "$root" "aaa-body.md" '---
+type: reference
+---
+
+See [Thing](golem-thing.md) for background — BODY PROSE, NOT AN INDEX.'
+
+    run_moves_py apply "$root" --transform move-concept --confirm --allow-dirty
+    assert_exit 0 "$OKF_RC" "python applies cleanly"
+    py_index="$(command cat "$root/golem/index.md")"
+
+    assert_equals "$py_index" "$sh_index" \
+        "both runtimes agree (the defect was shared, not a skew)"
+}
+
+test_a_stationary_first_link_does_not_veto_the_repoint() {
+    local root cfg sh_root py_root
+    if [ "$OKF_HAVE_PY" -ne 1 ]; then
+        skip_test "python3 >= 3.11 unavailable"
+        return 0
+    fi
+    # AN INDEX LINE WITH TWO LINKS, WHERE THE MOVER IS NOT FIRST. The sub-index
+    # repoint inspected the first bundle-internal `.md` link and stopped there,
+    # so a first link naming a STATIONARY file aborted the whole decision: the
+    # line fell through to the generic rewrite and the concept that DID move was
+    # repointed straight at its new path — memory-dangling-index, confirmed by
+    # the real validator.
+    #
+    # Retargeting the first link instead would be the opposite error, rewriting
+    # the stationary file's link to the mover's sub-index. Both halves are
+    # asserted: [Stay] untouched AND [Thing] repointed.
+    #
+    # A `file:` rule, so only golem-*.md moves — an `index:` rule would route
+    # every concept the index names and both links would move, which is how a
+    # first draft of this fixture failed to isolate the bug.
+    cfg="$WORKDIR/cfg.two.$$"
+    write_taxonomy "$cfg" "file:golem-*.md = golem"
+
+    root="$(fresh_bundle "$WORKDIR")"
+    write_concept "$root" "MEMORY.md" '# Memory
+
+- see [Stay](stays-put.md) then [Thing](golem-thing.md) — the hook'
+    write_concept "$root" "golem-thing.md" '---
+type: feedback
+---
+
+MOVING-CONCEPT'
+    write_concept "$root" "stays-put.md" '---
+type: feedback
+---
+
+STATIONARY'
+
+    OKF_RC=0
+    OKF_OUT="$(PATTERNS_FORCE_BASH=1 OKF_BUNDLE_ROOT="$root" \
+        OKF_MIGRATE_CONFIG_DIR="$cfg" \
+        OKF_PINNED_VERSION="${OKF_TEST_VERSION:-0.2}" \
+        command bash "$OKF_MIGRATE_SH" apply --transform move-concept \
+        --confirm --allow-dirty 2>&1)" || OKF_RC=$?
+    assert_exit 0 "$OKF_RC" "bash applies cleanly"
+    sh_root="$(command cat "$root/MEMORY.md")"
+
+    assert_contains "$sh_root" "[Thing](golem/index.md)" \
+        "the MOVED link is repointed at the sub-index, though it is not first"
+    assert_contains "$sh_root" "[Stay](stays-put.md)" \
+        "the STATIONARY link is left exactly as it was"
+    assert_not_contains "$sh_root" "[Stay](golem/index.md)" \
+        "...and is never retargeted in the mover's place"
+    validator_rows "$root"
+    assert_true "[ '$OKF_LISTED' -gt 0 ]" "the validator actually scanned files"
+    assert_not_contains "$OKF_ROWS" "memory-dangling-index" \
+        "no memory-dangling-index row — the pointer resolves"
+
+    root="$(fresh_bundle "$WORKDIR")"
+    write_concept "$root" "MEMORY.md" '# Memory
+
+- see [Stay](stays-put.md) then [Thing](golem-thing.md) — the hook'
+    write_concept "$root" "golem-thing.md" '---
+type: feedback
+---
+
+MOVING-CONCEPT'
+    write_concept "$root" "stays-put.md" '---
+type: feedback
+---
+
+STATIONARY'
+
+    OKF_RC=0
+    OKF_OUT="$(OKF_BUNDLE_ROOT="$root" \
+        OKF_MIGRATE_CONFIG_DIR="$cfg" \
+        OKF_PINNED_VERSION="${OKF_TEST_VERSION:-0.2}" \
+        command python3 "$OKF_MIGRATE_PY" apply --transform move-concept \
+        --confirm --allow-dirty 2>&1)" || OKF_RC=$?
+    assert_exit 0 "$OKF_RC" "python applies cleanly"
+    py_root="$(command cat "$root/MEMORY.md")"
+
+    assert_equals "$py_root" "$sh_root" \
+        "both runtimes agree (the defect was shared, not a skew)"
+}
+
 test_two_indexes_with_different_hooks_both_reach_the_sub_index() {
     local root cfg sh_root sh_topic py_root py_topic
     if [ "$OKF_HAVE_PY" -ne 1 ]; then
