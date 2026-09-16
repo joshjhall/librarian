@@ -239,6 +239,7 @@ IMPORTED_MODULES="\
 plugins/review-audit/skills/check-decomposition/loc_engine.py
 plugins/review-audit/skills/check-decomposition/prose_spec.py
 plugins/review-audit/skills/check-okf-conformance/bundle_graph.py
+plugins/review-audit/skills/okf-migrate/moves.py
 plugins/review-audit/skills/okf-migrate/transforms.py
 plugins/workflow/skills/ship-issue/loc_engine.py
 plugins/workflow/skills/ship-issue/prose_spec.py

@@ -45,6 +45,38 @@ that merely rehearses can still diverge from the run that matters; a plan that
 *constrains* the apply cannot. A transform discovering a new file between the
 two is a bug, not a permitted widening, so the mismatch is a hard error.
 
+## `move-concept` needs a taxonomy, and ships without one
+
+OKF concept IDs **are** the bundle path minus `.md` (§3), so nesting is native
+to the format and a flat bundle throws away the one addressing mechanism OKF
+provides. `move-concept` relocates concepts into a directory tree and carries
+every reference with them: each inbound link, each index pointer, and the git
+history (`git mv`, never delete+create).
+
+`taxonomy.rules` ships **empty**, so an unconfigured repo gets
+`bundle needs no mechanized migration` and exit 0. That is the correct default
+rather than a stub: a move engine that invented a taxonomy would be authoring
+the judgment instead of executing it, and a wrongly-placed file changes its
+concept ID — which every link in the bundle is expressed in terms of.
+
+The `index:` rule source routes a concept by **which index already names it**,
+so mirroring an existing bucket structure is one rule per bucket rather than one
+glob per file:
+
+```yaml
+taxonomy:
+  rules:
+    - index:index-golem.md = golem
+    - index:index-runtime.md = runtime
+```
+
+**Moves follow §8's index structure, not the intuitive one.** A concept landing
+in `golem/` is routed by a generated `golem/index.md`; the line that used to
+name it is *relocated* there, and the old index keeps one line naming the
+sub-index. Repointing the root index straight at `golem/thing.md` is the
+obvious-looking answer and produces a bundle the validator faults as
+`memory-dangling-index` — the root index is not what routes a nested file.
+
 ## The transforms
 
 | Transform | What it does | `apply` |
@@ -52,12 +84,14 @@ two is a bug, not a permitted widening, so the mismatch is a hard error.
 | `adopt-bundle` | Create the bundle-root `index.md` carrying `okf_version` | ✓ |
 | `backfill-type` | Add the sole always-required key (§4.1) | ✓ |
 | `wikilink-convert` | `[[x]]` → `[x](/x.md)` (§6.1) | ✓ |
+| `move-concept` | Relocate concepts into a directory tree (§3, §8) | ✓ |
 | `split-index` | Split an oversized index | refused |
 | `confirmed-merge` | Execute a confirmed near-duplicate merge | refused |
 
 **The split is structural, not a preference**, which is why it lives in
-`thresholds.yml` where it can be inspected. The top three are mechanical: given
-the bundle, the edit is determined. The bottom two each execute a judgment made
+`thresholds.yml` where it can be inspected. The top four are mechanical: given
+the bundle — and, for `move-concept`, the taxonomy rules — the edit is
+determined. The bottom two each execute a judgment made
 somewhere else — `split-index` needs a seam chosen from `check-decomposition`'s
 topic-cluster *recommendations*, `confirmed-merge` needs slice C's (#670) human
 confirmation. Both render in `plan`; `apply` refuses each with a pointer to the

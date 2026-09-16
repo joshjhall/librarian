@@ -1,0 +1,934 @@
+# shellcheck shell=bash
+# okf-migrate — the move-concept transform, bash fallback (issue #934, slice J).
+#
+# Sourced by migrate.sh, never executed. The bash twin of moves.py: the two must
+# agree on output BYTE FOR BYTE, which is the language boundary CLAUDE.md
+# § Runtime policy defines and tests/okf-migrate/60-parity.sh pins.
+#
+# Split into its own file for the same reason moves.py is: transforms.sh is the
+# bash twin of transforms.py, and a transform that lives in one file on the
+# python side and a different one on the bash side makes the parity contract
+# harder to check by eye than it needs to be.
+#
+# WHAT THIS TRANSFORM IS FOR. OKF concept IDs are the bundle path minus `.md`
+# (§3), so nesting is native to the format and a flat bundle throws away the one
+# addressing mechanism OKF provides. Moving a file is trivial; rewriting every
+# INBOUND link and every INDEX POINTER to follow it is not, and is what nobody
+# does correctly by hand across 225 files.
+#
+# THE INDEX POINTER IS THE WHOLE RISK. A memory's index line is the only thing
+# that makes it recallable, so a move that leaves the pointer behind breaks
+# nothing visibly — the file still exists, the bundle still passes a file-level
+# check, and the memory is simply never found again (#632's recorded shape).
+#
+# bash-3.2 clean and BSD-regex safe: no declare -A / mapfile / namerefs /
+# ${v,,} / ;;&, and no \s \w \b or grep -P. Association is done with sorted
+# TAB-delimited temp files, which is what bash 3.2 has instead of a hash.
+
+# --- link scanning -----------------------------------------------------------
+
+# normalize_rel PATH — collapse `a/../b` and `./` to a plain relative path.
+#
+# The python twin gets this from os.path.normpath. Written out here because BSD
+# has no portable equivalent (`realpath` is GNU-only for the `-m` form this would
+# need, and a non-existent path must still normalize — the whole point is
+# resolving a link target that may not exist yet).
+normalize_rel() {
+    local p="$1" out="" seg rest
+    case "$p" in /*) out="" ;; esac
+    rest="$p"
+    while [ -n "$rest" ]; do
+        seg="${rest%%/*}"
+        if [ "$seg" = "$rest" ]; then
+            rest=""
+        else
+            rest="${rest#*/}"
+        fi
+        case "$seg" in
+            "" | ".") continue ;;
+            "..")
+                case "$out" in
+                    "" | "..") out="${out:+$out/}.." ;;
+                    */*) out="${out%/*}" ;;
+                    *) out="" ;;
+                esac
+                ;;
+            *) out="${out:+$out/}$seg" ;;
+        esac
+    done
+    command printf '%s' "$out"
+}
+
+# scan_links LINE — print one `label<TAB>target` row per markdown link on LINE.
+#
+# The shared link parser for both passes below, so the two cannot disagree about
+# what a link IS. Pure parameter expansion rather than sed: BSD sed has no
+# non-greedy quantifier, and a greedy `\(.*\)` swallows every link on a line but
+# the last — silently dropping the first of two, which is precisely the
+# two-inbound-links case AC3 exists to pin.
+#
+# THE `]` MUST IMMEDIATELY FOLLOW THE LABEL, and a failed start RESTARTS from the
+# next `[` rather than skipping ahead to the next `](`. Python's `\[([^\]]*)\]\(`
+# cannot let a label span a `]`, so on `- [see [1]](thing.md) — hook` it finds NO
+# link at all (it fails from the outer `[` because `]]` is not `](`, and from the
+# inner `[1` for the same reason). Committing to the outer `[` and then hunting
+# forward for the next `](` instead produced label `see [1` AND a target — not
+# merely a parity gap but corruption: bash moved the concept and wrote a mangled,
+# duplicated line into both indexes while python planned nothing.
+scan_links() {
+    local rest="$1" label target after
+    while :; do
+        case "$rest" in *'['*) ;; *) break ;; esac
+        # Each pass consumes at least this `[`, so the loop always terminates.
+        rest="${rest#*[}"
+        case "$rest" in *']'*) ;; *) break ;; esac
+        label="${rest%%]*}"
+        after="${rest#*]}"
+        # `](` only — a `]` followed by anything else is not a link here, so
+        # retry from the next `[` (python's next match attempt), never from a
+        # later `](` that belongs to a different construct.
+        case "$after" in '('*) ;; *) continue ;; esac
+        after="${after#(}"
+        case "$after" in *')'*) ;; *) continue ;; esac
+        target="${after%%)*}"
+        # `([^)]+)` requires at least one character; `[a]()` is not a link.
+        [ -n "$target" ] || continue
+        command printf '%s\t%s\n' "$label" "$target"
+        rest="${after#*)}"
+    done
+}
+
+# --- index membership --------------------------------------------------------
+
+# is_index_name BASE — true when BASE names an index, per $OKF_MIGRATE_INDEX_NAMES
+# (space-separated, set by migrate.sh from the toolset's single source).
+#
+# CONFIG, NOT CONVENTION, and this is portability rather than polish: the epic's
+# premise is running against SOMEONE ELSE'S bundle, and check-okf-conformance
+# already reads `index_names` from thresholds.yml. A hardcoded `MEMORY.md`/
+# `index*` test meant a repo whose index is called `catalog.md` got "nothing to
+# move" from the `index:` rule source — measured, silently, at exit 0.
+#
+# LITERAL EQUALITY FIRST, then glob — the same ordering (and reason) the
+# validator's is_index documents: a configured name is operator input, not a
+# pattern language they opted into, so `notes[1].md` must match the file
+# literally called that rather than being read as a character class.
+is_index_name() {
+    local base="$1" name
+    for name in ${OKF_MIGRATE_INDEX_NAMES:-MEMORY.md index.md index-*.md}; do
+        [ "$base" = "$name" ] && return 0
+    done
+    for name in ${OKF_MIGRATE_INDEX_NAMES:-MEMORY.md index.md index-*.md}; do
+        # shellcheck disable=SC2254  # pattern is config, glob intended
+        case "$base" in $name) return 0 ;; esac
+    done
+    return 1
+}
+
+# index_members ROOT FILE_LIST — print `concept_rel<TAB>index_rel` rows.
+#
+# ALL NAMING INDEXES, NOT THE FIRST. A concept listed in both a root MEMORY.md
+# and a topic index is ordinary, and picking one by path sort would decide the
+# destination by an alphabetical accident: measured on this transform's first
+# fixture, `MEMORY.md` sorted ahead of `index-golem.md` and an
+# `index:index-golem.md` rule silently matched nothing. Emitting every index
+# lets RULE ORDER arbitrate, which is the first-match-wins semantics the rest of
+# this grammar already has — stated by the operator, not by the filesystem.
+index_members() {
+    local root="$1" list="$2" path base rel_index here line label target resolved _fence _t
+    while IFS= read -r path || [ -n "$path" ]; do
+        [ -n "$path" ] || continue
+        base="${path##*/}"
+        is_index_name "$base" || continue
+        rel_index="${path#"$root"/}"
+        here="${path%/*}"
+        _fence=0
+        while IFS= read -r line || [ -n "$line" ]; do
+            # FENCED CODE IS SKIPPED, matching this file's other link scanners:
+            # an index documenting link syntax in a fence would otherwise have
+            # its EXAMPLE read as a live pointer.
+            _t="${line#"${line%%[![:space:]]*}"}"
+            case "$_t" in
+                '```'* | '~~~'*)
+                    _fence=$((1 - _fence))
+                    continue
+                    ;;
+            esac
+            [ "$_fence" -eq 0 ] || continue
+            case "$line" in *']('*) ;; *) continue ;; esac
+            while IFS="$(command printf '\t')" read -r label target || [ -n "$label" ]; do
+                [ -n "$target" ] || continue
+                case "$target" in
+                    *.md) ;;
+                    *) continue ;;
+                esac
+                case "$target" in *://*) continue ;; esac
+                if [ "${target#/}" != "$target" ]; then
+                    resolved="$(normalize_rel "${target#/}")"
+                elif [ "$here" = "$root" ]; then
+                    resolved="$(normalize_rel "$target")"
+                else
+                    resolved="$(normalize_rel "${here#"$root"/}/$target")"
+                fi
+                command printf '%s\t%s\n' "$resolved" "$rel_index"
+            done <<EOF
+$(scan_links "$line")
+EOF
+        done <"$path"
+    done <"$list" | command sort -u
+}
+
+# --- destination resolution --------------------------------------------------
+
+# resolve_destination REL RULES_FILE MEMBERS_FILE — the target directory, or
+# empty when no rule matches.
+#
+# Ordered, first-match-wins — the same determinism rule infer_type holds, for the
+# same reason: two runtimes must reach the same answer.
+#
+# A file matching NO rule STAYS PUT, which is why this transform needs no
+# ambiguity channel: not matching is a complete answer ("not part of the
+# taxonomy"), unlike backfill-type where it leaves a required key unfilled.
+resolve_destination() {
+    local rel="$1" rules="$2" members="$3"
+    local base dir rule source pattern target idx_rel idx_base
+    base="${rel##*/}"
+    case "$rel" in
+        */*) dir="${rel%/*}" ;;
+        *) dir="" ;;
+    esac
+
+    while IFS= read -r rule || [ -n "$rule" ]; do
+        [ -n "$rule" ] || continue
+        case "$rule" in *=*) ;; *) continue ;; esac
+        source="${rule%%=*}"
+        target="${rule#*=}"
+        source="${source%"${source##*[![:space:]]}"}"
+        target="${target#"${target%%[![:space:]]*}"}"
+        target="${target%"${target##*[![:space:]]}"}"
+        target="${target%/}"
+        [ -n "$target" ] || continue
+        case "$source" in *:*) ;; *) continue ;; esac
+        pattern="${source#*:}"
+        source="${source%%:*}"
+
+        case "$source" in
+            index)
+                while IFS="$(command printf '\t')" read -r _c idx_rel || [ -n "$_c" ]; do
+                    [ "$_c" = "$rel" ] || continue
+                    idx_base="${idx_rel##*/}"
+                    # shellcheck disable=SC2254  # pattern is config, glob intended
+                    case "$idx_base" in $pattern)
+                        command printf '%s' "$target"
+                        return 0
+                        ;;
+                    esac
+                done <"$members"
+                ;;
+            file)
+                # shellcheck disable=SC2254
+                case "$base" in $pattern)
+                    command printf '%s' "$target"
+                    return 0
+                    ;;
+                esac
+                ;;
+            dir)
+                [ -n "$dir" ] || continue
+                # shellcheck disable=SC2254
+                case "$dir/" in $pattern)
+                    command printf '%s' "$target"
+                    return 0
+                    ;;
+                esac
+                # shellcheck disable=SC2254
+                case "$dir" in $pattern)
+                    command printf '%s' "$target"
+                    return 0
+                    ;;
+                esac
+                ;;
+        esac
+    done <"$rules"
+    return 0
+}
+
+# --- plan_moves --------------------------------------------------------------
+
+# plan_moves ROOT CONCEPT_LIST FILE_LIST RULES_FILE MAPPING_OUT
+#
+# Emits move edit records on stdout AND writes `old_rel<TAB>new_rel` rows to
+# MAPPING_OUT, which rewrite_inbound_links consumes. One mapping, two consumers:
+# recomputing it in the rewriter would be a second chance to disagree with this.
+#
+# NO RULES MEANS NO MOVES, silently. An unconfigured repo — every repo on the day
+# it installs this — must get "nothing to move" rather than a taxonomy the engine
+# invented (AC10).
+#
+# IDEMPOTENT BY CONSTRUCTION: a file already at its destination emits no edit, so
+# a second run against the tool's own output plans nothing (AC5).
+plan_moves() {
+    local root="$1" concepts="$2" every="$3" rules="$4" mapping="$5"
+    local members taken path rel target_dir new_rel
+    : >"$mapping"
+    [ -s "$rules" ] || return 0
+
+    members="$(command mktemp)"
+    taken="$(command mktemp)"
+    index_members "$root" "$every" >"$members"
+    # Every existing concept occupies its own path; a move into one would
+    # overwrite it. Seeded here so the collision check below is one lookup.
+    while IFS= read -r path || [ -n "$path" ]; do
+        [ -n "$path" ] || continue
+        command printf '%s\n' "${path#"$root"/}" >>"$taken"
+    done <"$concepts"
+
+    while IFS= read -r path || [ -n "$path" ]; do
+        [ -n "$path" ] || continue
+        rel="${path#"$root"/}"
+        # AN INDEX IS NEVER RELOCATED AS A CONCEPT. The bundle collector excludes
+        # only §3.1's reserved names (`index.md`, `log.md`); the CONFIGURED index
+        # names — `MEMORY.md`, `index-*.md` — arrive here as ordinary concepts.
+        # So one index merely LINKING to another made the target a "member" of it
+        # and moved it: measured on this repo's own bundle, a sentence in
+        # index-runtime.md reading "live in the root [MEMORY.md](MEMORY.md)"
+        # relocated MEMORY.md into runtime/ and all five index-*.md into core/.
+        # The validator then read each one as a malformed concept, because an
+        # index is only an index at the bundle ROOT.
+        #
+        # Routing files are the bundle's structure, not its contents.
+        is_index_name "${rel##*/}" && continue
+        target_dir="$(resolve_destination "$rel" "$rules" "$members")"
+        [ -n "$target_dir" ] || continue
+        new_rel="$target_dir/${rel##*/}"
+        [ "$new_rel" != "$rel" ] || continue
+        # A DESTINATION COLLISION IS SKIPPED, NEVER OVERWRITTEN. Two concepts
+        # with the same basename routed to one directory would otherwise have
+        # the second silently destroy the first — an unrecoverable loss of a
+        # memory, from a tool whose premise is running against someone else's
+        # bundle. Leaving it put is visible in the next check run.
+        #
+        # `-e` ALONE MISSES A DANGLING SYMLINK, and the `taken` list cannot see
+        # a symlink at all: it is seeded from the concept walk, whose
+        # `find -type f` excludes type `l` by construction. So a destination
+        # symlink planned as an ordinary move, and this runtime's rename falls
+        # back to plain `mv` whenever the VCS rename fails — which an existing
+        # destination is exactly what causes. POSIX `mv` resolves its
+        # destination with stat(2) and DEREFERENCES, so a destination linked to
+        # an external directory carried the concept out of the bundle at exit 0
+        # while the plan displayed the in-bundle path.
+        #
+        # Planned away here rather than refused at apply time, so the answer is
+        # the established collision policy (skip this move, exit 0) and so both
+        # runtimes still agree on the exit code.
+        if command grep -Fx "$new_rel" "$taken" >/dev/null 2>&1; then
+            continue
+        fi
+        if [ -e "$root/$new_rel" ] || [ -L "$root/$new_rel" ]; then
+            continue
+        fi
+        command printf '%s\n' "$new_rel" >>"$taken"
+        command printf '%s\t%s\n' "$rel" "$new_rel" >>"$mapping"
+        emit_edit "move-concept" "$path" "move" "0" "$rel" "$new_rel" \
+            "relocate into $target_dir/ per the taxonomy"
+    done <"$concepts"
+
+    command rm -f "$members" "$taken"
+}
+
+# --- plan_directory_indexes --------------------------------------------------
+
+# retarget_line LINE BASE [ONLY_TARGET] — LINE with a bundle-internal `.md` link
+# target replaced by BASE.
+#
+# ONLY_TARGET names WHICH link to retarget; empty means the first
+# bundle-internal `.md` link, the original behavior. Naming it matters on a
+# multi-link line: the sub-index repoint decides its directory from the link that
+# RESOLVES into a relocated directory, which need not be the first — retargeting
+# the first anyway rewrote a STATIONARY file's link to the moved concept's
+# sub-index and left the real mover dangling. Measured on
+# `- see [Stay](stays-put.md) then [Thing](golem-thing.md)`.
+retarget_line() {
+    # SCANS PAST non-`.md` and URL links to the first genuinely relinkable one,
+    # matching the python twin. Inspecting only the FIRST link and bailing when
+    # it is not `.md` diverged on an ordinary shape: for
+    # `- [source](https://example.com) [Thing](thing.md) — hook` python
+    # retargeted the `.md` link while bash left the line untouched — a live
+    # byte-parity break in both directory-index builders.
+    #
+    # Built on scan_links, the shared parser the rest of this file uses, rather
+    # than a second hand-rolled walk: two parsers over one format is two things
+    # to drift.
+    _rt_line="$1"
+    _rt_base="$2"
+    _rt_only="${3:-}"
+    _rt_target=""
+    _rt_label=""
+    while IFS="$(command printf '\t')" read -r _rt_lbl _rt_tgt || [ -n "$_rt_lbl" ]; do
+        [ -n "$_rt_tgt" ] || continue
+        # TESTED TRIMMED, REPLACED RAW — python tests `group(2).strip()` while
+        # substituting the untrimmed `group(0)`. Testing the raw target here
+        # made `[Thing]( thing.md )` fail the `*.md` case and pass through
+        # unchanged, while python retargeted it: measured, and pre-existing
+        # rather than introduced by the URL-scanning rewrite.
+        _rt_trim="$_rt_tgt"
+        while :; do
+            case "$_rt_trim" in
+                ' '*) _rt_trim="${_rt_trim# }" ;;
+                *' ') _rt_trim="${_rt_trim% }" ;;
+                *) break ;;
+            esac
+        done
+        case "$_rt_trim" in *://*) continue ;; esac
+        # Compared against the TRIMMED target, matching python's
+        # `target != only_target` over `group(2).strip()`.
+        if [ -n "$_rt_only" ] && [ "$_rt_trim" != "$_rt_only" ]; then
+            continue
+        fi
+        case "$_rt_trim" in
+            *.md)
+                _rt_target="$_rt_tgt"
+                _rt_label="$_rt_lbl"
+                break
+                ;;
+        esac
+    done <<EOF
+$(scan_links "$_rt_line")
+EOF
+    if [ -z "$_rt_target" ]; then
+        command printf '%s' "$_rt_line"
+        return 0
+    fi
+    # REPLACE THE WHOLE `[label](target)` CONSTRUCT, not the bare `(target)`
+    # spelling — the python twin replaces `match.group(0)`, the full link. On
+    # `- see (thing.md) then [Thing](thing.md) — hook` a bare-`(target)` search
+    # hits the leading PARENTHETICAL and rewrites that instead of the link,
+    # while python rewrites the link: measured, a byte-parity break in both
+    # directory-index builders. The whole-repo parity fixtures cannot catch it
+    # — they are bounded by the shapes this repo's own bundle happens to
+    # contain, and no index line here is spelled that way.
+    _rt_whole="[$_rt_label]($_rt_target)"
+    _rt_pre="${_rt_line%%"$_rt_whole"*}"
+    _rt_post="${_rt_line#*"$_rt_whole"}"
+    command printf '%s[%s](%s)%s' "$_rt_pre" "$_rt_label" "$_rt_base" "$_rt_post"
+}
+
+# plan_directory_indexes ROOT FILE_LIST MAPPING_FILE CLAIMED_OUT
+#
+# Emits `create` edits for each new directory's index.md AND writes
+# `new_rel<TAB>original_index_line` rows to CLAIMED_OUT.
+#
+# OKF §8 GIVES EACH DIRECTORY ITS OWN index.md, and that is what makes a nested
+# concept reachable: `golem/thing.md` is routed by `golem/index.md`, never by
+# the bundle root's index. Repointing the ROOT line at `golem/thing.md` instead
+# — the obvious-looking move — produces a bundle the validator faults as
+# memory-dangling-index, because the root index is not what routes a nested file.
+#
+# So a move RELOCATES an index line rather than repointing it: the line leaves
+# the root index and lands in the new directory's index, and the root keeps one
+# line naming the sub-index. The claimed lines are published so the caller knows
+# not to also repoint them — a concept named in both places is
+# memory-multi-index, itself a HIGH finding.
+#
+# An EXISTING directory index is APPENDED TO, never regenerated — both halves
+# required. Not regenerating follows adopt_bundle's rule for the bundle root
+# (the file is the operator's); appending matters because the arriving concept's
+# old index line is being repointed at this very index, so skipping it leaves the
+# concept named by NO index. Measured: a memory-orphan on a clean apply.
+plan_directory_indexes() {
+    local root="$1" list="$2" mapping="$3" claimed="$4"
+    local dirs path here line old_rel new_rel dir base body count target label
+    local _pdi_fence _pdi_t _named _nf _nl _nt _nlbl _ntgt
+    : >"$claimed"
+    [ -s "$mapping" ] || return 0
+
+    # Which line named each moved concept, keyed by its NEW path.
+    while IFS= read -r path || [ -n "$path" ]; do
+        [ -n "$path" ] || continue
+        # ONLY AN INDEX CAN CLAIM A CONCEPT. This loop used to read EVERY file,
+        # so a BODY file's prose that happened to link the moved concept — "See
+        # [Thing](golem-thing.md) for background.", ordinary cross-referencing —
+        # won the claim whenever its path sorted first, and that sentence was
+        # written into the new directory index as the concept's entry while the
+        # real index hook was discarded. Measured on `aaa-body.md` vs
+        # `index-golem.md`: 'a' < 'i', so the body won.
+        #
+        # The same `is_index_name` gate index_members and rewrite_inbound_links
+        # already apply; this was the one link scanner in the file without it.
+        is_index_name "${path##*/}" || continue
+        here="${path#"$root"/}"
+        case "$here" in
+            */*) here="${here%/*}" ;;
+            *) here="" ;;
+        esac
+        _pdi_fence=0
+        while IFS= read -r line || [ -n "$line" ]; do
+            # FENCED CODE IS SKIPPED — the guard `index_members` and
+            # `rewrite_inbound_links` already apply, and the python twin applies
+            # at this third site too. Without it a fenced EXAMPLE of an index
+            # line is read as the concept's real claiming line.
+            #
+            # It bites here because only the FIRST claim per new_rel is kept and
+            # the walk is alphabetical, so a documentation file sorting ahead of
+            # the real index displaces it. Measured on a fixture: bash seeded
+            # `golem/index.md` with the fenced example text where python used the
+            # real line.
+            #
+            # And it is not only cosmetic. `rewrite_inbound_links` keys off this
+            # same claimed text to decide whether the genuine index line is being
+            # RELOCATED; seeded wrong, that line is instead rewritten to point
+            # straight at the moved concept, so the concept ends up named by two
+            # indexes — the memory-multi-index state the validator flags.
+            _pdi_t="${line#"${line%%[![:space:]]*}"}"
+            case "$_pdi_t" in
+                '```'* | '~~~'*)
+                    _pdi_fence=$((1 - _pdi_fence))
+                    continue
+                    ;;
+            esac
+            [ "$_pdi_fence" -eq 0 ] || continue
+            case "$line" in *']('*) ;; *) continue ;; esac
+            while IFS="$(command printf '\t')" read -r label target || [ -n "$label" ]; do
+                [ -n "$target" ] || continue
+                case "$target" in
+                    *.md) ;;
+                    *) continue ;;
+                esac
+                case "$target" in *://*) continue ;; esac
+                if [ "${target#/}" != "$target" ]; then
+                    old_rel="$(normalize_rel "${target#/}")"
+                else
+                    old_rel="$(normalize_rel "${here:+$here/}$target")"
+                fi
+                new_rel="$(lookup_mapping "$old_rel" "$mapping")"
+                [ -n "$new_rel" ] || continue
+                # EXACT FIELD EQUALITY, not a regex. Python's twin is a dict —
+                # `claimed.setdefault(mapping[old_rel], line)` — so the key is
+                # compared literally. A BRE `^$new_rel\t` reads every `.` in a
+                # path as "any character", so two concepts whose new paths differ
+                # only at a dot (`a.b/x.md` vs `axb/x.md`) collide and the second
+                # claim is silently dropped. Same ENVIRON-fed awk the two readers
+                # below use, so writer and readers agree on what a key IS.
+                if OKF_K="$new_rel" command awk -F"$(command printf '\t')" \
+                    '$1 == ENVIRON["OKF_K"] { found = 1; exit } END { exit !found }' \
+                    "$claimed" 2>/dev/null; then
+                    continue
+                fi
+                command printf '%s\t%s\n' "$new_rel" "$line" >>"$claimed"
+            done <<EOF
+$(scan_links "$line")
+EOF
+        done <"$path"
+    done <"$list"
+
+    # One index per NEW directory.
+    dirs="$(command cut -f2 "$mapping" | command sed -e 's|/[^/]*$||' |
+        command grep -v '^$' | command sort -u)"
+    while IFS= read -r dir || [ -n "$dir" ]; do
+        [ -n "$dir" ] || continue
+        # A SYMLINKED directory index is NOT "existing". The read path
+        # (bundle-graph.sh) already refuses to trust one; trusting it HERE is
+        # worse, because planning an append against it makes the apply write
+        # THROUGH it to wherever it points. Measured: an `index.md` symlinked
+        # outside the bundle had the arriving concept's line appended to the
+        # OUTSIDE file, at exit 0, with the plan displaying only the in-bundle
+        # path — the reviewed plan and the actual write target were different
+        # files, which is exactly what "the plan is the write allowlist" denies.
+        if [ -e "$root/$dir/index.md" ] && [ ! -L "$root/$dir/index.md" ]; then
+            # AN EXISTING DIRECTORY INDEX IS APPENDED TO, NEVER REGENERATED. The
+            # file is the operator's and may hold hand-written lines — but it
+            # MUST gain a line for each arriving concept or that concept is named
+            # by no index at all. Measured: moving into a directory that already
+            # had an index left the moved file a memory-orphan, because the line
+            # naming it was repointed at the sub-index while the sub-index never
+            # learned about it.
+            # ONE EDIT FOR THE WHOLE BLOCK, not one per arriving concept, and
+            # that is correctness rather than tidiness: edits to a file apply
+            # HIGHEST LINE FIRST and each insert clamps against the GROWING
+            # buffer, so N separate appends at len+1, len+2, len+3 land OUT OF
+            # ORDER — measured with three concepts, `c1, c2, c3` was written as
+            # `c1, c3, c2`. Both runtimes did it identically, so a byte-parity
+            # check could not catch it.
+            # `awk END{print NR}`, NEVER `wc -l`. The insert lands after line
+            # $_at, and python computes that position as `len(read_lines())` —
+            # `splitlines()`, which counts a final line with NO trailing newline.
+            # `wc -l` counts NEWLINES, so on an index whose last line is
+            # unterminated (POSIX permits it; hand-edited files have it) it
+            # returned one less and the block was inserted BEFORE that last
+            # line. Measured: bash wrote the arriving concept above the
+            # incumbent while python wrote it below — a live parity break.
+            # awk agrees with splitlines on all three cases: unterminated,
+            # terminated, and empty.
+            _at="$(command awk 'END { print NR }' "$root/$dir/index.md")"
+            # THE ALREADY-NAMED SET, built ONCE and FENCE-AWARE, through
+            # scan_links — the same parser every other pass in this file uses.
+            # A grep over the raw file cannot skip a fence, so an index that
+            # DOCUMENTS the index-line format ("```markdown / - [Thing](t.md)")
+            # read its own EXAMPLE as a live pointer and suppressed the append,
+            # leaving the concept named by nothing outside a code block. That is
+            # the same fenced-example-as-a-live-claim defect index_members,
+            # plan_directory_indexes and rewrite_inbound_links each already
+            # guard against — measured here identically in both runtimes, so
+            # byte-parity was blind to it.
+            _named="$(command mktemp)"
+            _nf=0
+            while IFS= read -r _nl || [ -n "$_nl" ]; do
+                _nt="${_nl#"${_nl%%[![:space:]]*}"}"
+                case "$_nt" in
+                    '```'* | '~~~'*)
+                        _nf=$((1 - _nf))
+                        continue
+                        ;;
+                esac
+                [ "$_nf" -eq 0 ] || continue
+                case "$_nl" in *']('*) ;; *) continue ;; esac
+                while IFS="$(command printf '\t')" read -r _nlbl _ntgt || [ -n "$_nlbl" ]; do
+                    [ -n "$_ntgt" ] || continue
+                    command printf '%s\n' "$_ntgt" >>"$_named"
+                done <<EOF
+$(scan_links "$_nl")
+EOF
+            done <"$root/$dir/index.md"
+            _block=""
+            _n=0
+            while IFS="$(command printf '\t')" read -r _o new_rel || [ -n "$_o" ]; do
+                [ -n "$new_rel" ] || continue
+                case "$new_rel" in "$dir"/*) ;; *) continue ;; esac
+                base="${new_rel##*/}"
+                # ALREADY-NAMED MEANS A REAL LINK, not a substring. This tested
+                # `($base)` anywhere in the file, so an index whose PROSE
+                # mentions a filename in parentheses — "the concept file is
+                # called (golem-thing.md) by convention", ordinary in a bundle
+                # that documents its own naming — read as already present and
+                # the arriving concept was appended nowhere. It is then named by
+                # no index at all: the memory-orphan this file's header calls
+                # THE WHOLE RISK, reached by the code meant to prevent it.
+                # Measured, and IDENTICALLY in both runtimes, so byte-parity was
+                # blind to it — same shape as the append-ordering bug above.
+                # An exact match against a PARSED target settles it: prose is
+                # not a link, and neither is a fenced example.
+                command grep -Fx "$base" "$_named" >/dev/null 2>&1 && continue
+                line="$(OKF_K="$new_rel" command awk -F"$(command printf '\t')" \
+                    '$1 == ENVIRON["OKF_K"] { sub(/^[^\t]*\t/, ""); print; exit }' "$claimed")"
+                if [ -n "$line" ]; then
+                    line="$(retarget_line "$line" "$base")"
+                else
+                    line="- [${base%.md}]($base)"
+                fi
+                # EACH LINE IS ESCAPED FIRST, THEN joined with a literal `\n`.
+                # The order is the whole contract, exactly as esc_field/unpad
+                # already document it: escaping per line turns a content
+                # backslash into `\\`, so a hook legitimately containing the two
+                # characters `\n` — ordinary in a repo that documents regexes —
+                # survives as those two characters instead of becoming a real
+                # newline. Joining first and escaping after would make the
+                # separator and the content indistinguishable. Measured: without
+                # this, `matches \n and \t literally` was written as two lines.
+                line="$(esc_field "$line")"
+                if [ -n "$_block" ]; then
+                    _block="$_block\\n$line"
+                else
+                    _block="$line"
+                fi
+                _n=$((_n + 1))
+            done <"$mapping"
+            command rm -f "$_named"
+            if [ "$_n" -gt 0 ]; then
+                emit_edit "move-concept" "$root/$dir/index.md" "insert-block" \
+                    "$((_at + 1))" "" "$_block" \
+                    "name $_n arriving concept(s) in the existing $dir/ index"
+            fi
+            continue
+        fi
+        body="# $dir\n"
+        count=0
+        while IFS="$(command printf '\t')" read -r _o new_rel || [ -n "$_o" ]; do
+            [ -n "$new_rel" ] || continue
+            case "$new_rel" in "$dir"/*) ;; *) continue ;; esac
+            base="${new_rel##*/}"
+            # ENVIRON, NEVER `awk -v`: a `-v` assignment is escape-processed, so
+            # a path legitimately containing a backslash is mangled and the
+            # lookup silently misses. Same rule as the moved_new lookup and as
+            # migrate.sh's apply path.
+            line="$(OKF_K="$new_rel" command awk -F"$(command printf '\t')" \
+                '$1 == ENVIRON["OKF_K"] { sub(/^[^\t]*\t/, ""); print; exit }' "$claimed")"
+            if [ -n "$line" ]; then
+                # The ORIGINAL index line, retargeted to the sibling basename —
+                # its hook text is the operator's prose and is what makes the
+                # entry useful to recall against. A bare regenerated link would
+                # silently discard it.
+                body="$body\n$(retarget_line "$line" "$base")"
+            else
+                body="$body\n- [${base%.md}]($base)"
+            fi
+            count=$((count + 1))
+        done <"$mapping"
+        [ "$count" -gt 0 ] || continue
+        emit_edit "move-concept" "$root/$dir/index.md" "create" "0" "" "$body" \
+            "create the §8 directory index for $dir/ naming $count moved concept(s)"
+    done <<EOF
+$dirs
+EOF
+}
+
+# --- rewrite_inbound_links ---------------------------------------------------
+
+# lookup_mapping REL MAPPING_FILE — the new path for REL, or empty.
+lookup_mapping() {
+    local rel="$1" mapping="$2" old new
+    while IFS="$(command printf '\t')" read -r old new || [ -n "$old" ]; do
+        if [ "$old" = "$rel" ]; then
+            command printf '%s' "$new"
+            return 0
+        fi
+    done <"$mapping"
+    return 0
+}
+
+# relative_to DEST FROM_DIR — DEST expressed relative to FROM_DIR.
+#
+# The python twin gets this from os.path.relpath. Written out because BSD has no
+# `realpath --relative-to`, and the paths here need not exist.
+relative_to() {
+    local dest="$1" from="$2" d_head f_head up=""
+    if [ -z "$from" ]; then
+        command printf '%s' "$dest"
+        return 0
+    fi
+    # Strip the shared leading segments.
+    while [ -n "$from" ]; do
+        d_head="${dest%%/*}"
+        f_head="${from%%/*}"
+        [ "$d_head" = "$f_head" ] || break
+        case "$dest" in */*) dest="${dest#*/}" ;; *) dest="" ;; esac
+        case "$from" in */*) from="${from#*/}" ;; *) from="" ;; esac
+    done
+    while [ -n "$from" ]; do
+        up="$up../"
+        case "$from" in */*) from="${from#*/}" ;; *) from="" ;; esac
+    done
+    command printf '%s' "$up$dest"
+}
+
+# rewritten_target TARGET HERE_REL MAPPING_FILE — TARGET rewritten for the move
+# set, or empty when it needs no change.
+#
+# HANDLES BOTH LIVE LINK FORMS, which is not a nicety: wikilink-convert emits the
+# `/`-rooted bundle-relative form, while a hand-written MEMORY.md / index-*.md
+# uses plain relative targets. A rewriter that understood only one would leave
+# every pointer in the other form dangling — the silent un-recall this transform
+# exists to prevent.
+#
+# The OUTPUT form always matches the INPUT form. Restyling links is
+# wikilink-convert's job (§6.1); doing it here would make this diff unreviewable.
+rewritten_target() {
+    local target="$1" here_rel="$2" mapping="$3"
+    local rooted=0 old_rel new_rel here_dir new_here new_here_dir
+    case "$target" in *://*) return 0 ;; esac
+    case "$target" in
+        *.md) ;;
+        *) return 0 ;;
+    esac
+    if [ "${target#/}" != "$target" ]; then
+        rooted=1
+        old_rel="$(normalize_rel "${target#/}")"
+    else
+        case "$here_rel" in
+            */*) here_dir="${here_rel%/*}" ;;
+            *) here_dir="" ;;
+        esac
+        old_rel="$(normalize_rel "${here_dir:+$here_dir/}$target")"
+    fi
+    new_rel="$(lookup_mapping "$old_rel" "$mapping")"
+    [ -n "$new_rel" ] || return 0
+    if [ "$rooted" -eq 1 ]; then
+        command printf '/%s' "$new_rel"
+        return 0
+    fi
+    # The REFERRING file may itself be moving, so the relative link is recomputed
+    # from where that file will LAND, not where it sits now. Missing this breaks
+    # exactly the links between two files that move together — the common case
+    # when a whole bucket relocates at once.
+    new_here="$(lookup_mapping "$here_rel" "$mapping")"
+    [ -n "$new_here" ] || new_here="$here_rel"
+    case "$new_here" in
+        */*) new_here_dir="${new_here%/*}" ;;
+        *) new_here_dir="" ;;
+    esac
+    relative_to "$new_rel" "$new_here_dir"
+}
+
+# rewrite_inbound_links ROOT FILE_LIST MAPPING_FILE
+#
+# "EVERY inbound reference" is the acceptance criterion (AC3) and the reason this
+# is a whole-bundle pass: a file linked from two different directories must have
+# BOTH rewritten, and a rewriter stopping at the first hit leaves the second
+# dangling while a fixture checking only one still passes.
+#
+# Indexes are not special-cased (AC4) — an index is a file containing links, so
+# one pass satisfies both criteria and there is no second code path to drift.
+rewrite_inbound_links() {
+    local root="$1" list="$2" mapping="$3" claimed="${4:-}"
+    local path here_rel line n in_fence changed label target new_target t
+    local claimed_line sub_dir moved_new moved_target _cand old_rel _isidx
+    local _rw_trim _rw_old _rw_new
+    [ -s "$mapping" ] || return 0
+
+    while IFS= read -r path || [ -n "$path" ]; do
+        [ -n "$path" ] || continue
+        here_rel="${path#"$root"/}"
+        n=0
+        in_fence=0
+        while IFS= read -r line || [ -n "$line" ]; do
+            n=$((n + 1))
+            t="${line#"${line%%[![:space:]]*}"}"
+            case "$t" in
+                '```'* | '~~~'*)
+                    in_fence=$((1 - in_fence))
+                    continue
+                    ;;
+            esac
+            [ "$in_fence" -eq 0 ] || continue
+            case "$line" in *']('*) ;; *) continue ;; esac
+
+            # A line RELOCATED into a new directory index must not also be
+            # repointed at the concept: it would then be named by two indexes,
+            # which is memory-multi-index — a HIGH finding and a real ambiguity
+            # about which index owns the concept. Repoint it at the SUB-INDEX
+            # instead (§8: the root names the bucket, the bucket names its
+            # concepts).
+            # ONLY AN INDEX RELOCATES A LINE — being an index entry is a property
+            # of WHERE the line lives, not of what it says.
+            #
+            # RESOLVED BY LINK TARGET, NOT BY LINE TEXT. This used to look the
+            # line up in `claimed` by its exact prose, and that was actively
+            # wrong: `claimed` holds ONE line per moved concept (the first seen,
+            # alphabetically), so when TWO indexes name the same concept with
+            # DIFFERENT hooks — a terse root summary and a longer topic-index
+            # line, ordinary in this repo's own bundle — only the first matched.
+            # The second fell through to the generic rewrite below and was
+            # repointed straight at the concept, which the real validator reports
+            # as memory-dangling-index. Identical in the python twin, so
+            # byte-parity was blind to it.
+            _isidx=0
+            is_index_name "${here_rel##*/}" && _isidx=1
+            if [ "$_isidx" -eq 1 ]; then
+                # EVERY LINK ON THE LINE, not just the first, and the winner is
+                # the first one that RESOLVES INTO A RELOCATED DIRECTORY. This
+                # used to inspect the first bundle-internal `.md` link and break
+                # unconditionally, so an index line whose first link names a
+                # STATIONARY file aborted the decision: the line fell through to
+                # the generic rewrite and the concept that DID move was
+                # repointed straight at its new path, which the real validator
+                # reports as memory-dangling-index. Measured on
+                # `- see [Stay](stays-put.md) then [Thing](golem-thing.md)`.
+                #
+                # A directory only owns a sub-index when a concept was actually
+                # RELOCATED into it — `claimed`'s first field carries those new
+                # paths, the same set python builds as sub_index_of. Testing
+                # that INSIDE the loop is what makes a non-resolving link a
+                # non-candidate rather than a veto over the rest of the line.
+                sub_dir=""
+                moved_target=""
+                while IFS="$(command printf '\t')" read -r label target || [ -n "$label" ]; do
+                    [ -n "$target" ] || continue
+                    case "$target" in *://*) continue ;; esac
+                    case "$target" in
+                        *.md) ;;
+                        *) continue ;;
+                    esac
+                    if [ "${target#/}" != "$target" ]; then
+                        old_rel="$(normalize_rel "${target#/}")"
+                    else
+                        case "$here_rel" in
+                            */*) t="${here_rel%/*}" ;;
+                            *) t="" ;;
+                        esac
+                        old_rel="$(normalize_rel "${t:+$t/}$target")"
+                    fi
+                    moved_new="$(lookup_mapping "$old_rel" "$mapping")"
+                    case "$moved_new" in
+                        */*) ;;
+                        *) continue ;;
+                    esac
+                    _cand="${moved_new%/*}"
+                    [ -n "$claimed" ] && [ -s "$claimed" ] || continue
+                    if OKF_D="$_cand" command awk -F"$(command printf '\t')" \
+                        '{ d = $1; sub(/\/[^\/]*$/, "", d)
+                           if (d == ENVIRON["OKF_D"]) { found = 1; exit } }
+                         END { exit !found }' "$claimed" 2>/dev/null; then
+                        sub_dir="$_cand"
+                        moved_target="$target"
+                        break
+                    fi
+                done <<EOF
+$(scan_links "$line")
+EOF
+                if [ -n "$sub_dir" ]; then
+                    claimed_line="$(retarget_line "$line" "$sub_dir/index.md" "$moved_target")"
+                    if [ "$claimed_line" != "$line" ]; then
+                        emit_edit "move-concept" "$path" "replace-line" "$n" \
+                            "$line" "$claimed_line" \
+                            "point at the §8 directory index for $sub_dir/"
+                    fi
+                    continue
+                fi
+            fi
+
+            # BUILT ON scan_links, NOT A SECOND HAND-ROLLED WALK. This loop used
+            # to re-implement the parser, and it therefore did NOT inherit
+            # scan_links' bracketed-label fix: on a body line
+            # `See [see [1]](golem-thing.md) for detail.` it committed to the
+            # outer `[`, matched the SECOND `]`, and emitted
+            # `[see [1](golem/golem-thing.md)` — silently eating one `]` and
+            # rewriting a target python leaves alone (its LINK_RE finds no link
+            # there at all). Measured live on that exact fixture, both runtimes.
+            # This file already warns that "two parsers over one format is two
+            # things to drift"; this was the drift.
+            #
+            # A FAITHFUL PORT of python's loop, which iterates matches over the
+            # ORIGINAL line while replacing into the accumulator, one occurrence
+            # at a time (`changed.replace(match.group(0), …, 1)`). Two identical
+            # links on one line therefore rewrite left to right, because after
+            # the first replacement the first remaining occurrence is the second
+            # link.
+            changed="$line"
+            while IFS="$(command printf '\t')" read -r label target || [ -n "$label" ]; do
+                [ -n "$target" ] || continue
+                # TRIMMED like python's `match.group(2).strip()`, and the
+                # replacement drops the padding exactly as python's rebuilt
+                # `[label](target)` does — the same tested-trimmed/replaced-raw
+                # split retarget_line documents.
+                _rw_trim="$target"
+                while :; do
+                    case "$_rw_trim" in
+                        ' '*) _rw_trim="${_rw_trim# }" ;;
+                        *' ') _rw_trim="${_rw_trim% }" ;;
+                        *) break ;;
+                    esac
+                done
+                new_target="$(rewritten_target "$_rw_trim" "$here_rel" "$mapping")"
+                [ -n "$new_target" ] || continue
+                _rw_old="[$label]($target)"
+                _rw_new="[$label]($new_target)"
+                # LITERAL first-occurrence replacement. The quotes inside the
+                # expansions are what make the needle a literal string rather
+                # than a glob — unquoted, a label containing `[` or `*` would be
+                # read as a pattern, which is the very shape this fix is about.
+                case "$changed" in
+                    *"$_rw_old"*)
+                        changed="${changed%%"$_rw_old"*}$_rw_new${changed#*"$_rw_old"}"
+                        ;;
+                esac
+            done <<EOF
+$(scan_links "$line")
+EOF
+
+            if [ "$changed" != "$line" ]; then
+                emit_edit "move-concept" "$path" "replace-line" "$n" \
+                    "$line" "$changed" \
+                    "follow moved concept(s) to their new path"
+            fi
+        done <"$path"
+    done <"$list"
+}

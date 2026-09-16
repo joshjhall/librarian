@@ -192,7 +192,15 @@ test_healthy_bundle_is_silent() {
     command printf -- '---\ntype: Reference\ntitle: A thing\ndescription: one line\ntags: [a, b]\nmetadata:\n  status: stable\n---\n\nBody.\n' >"$b/rich.md"
     # A NESTED concept, and a nested index.md with NO frontmatter (the normal
     # conformant shape for a non-root index).
-    command printf -- '---\ntype: project\n---\n\nNested body.\n' >"$b/sub/nested.md"
+    #
+    # IT CARRIES THE SECTIONS ITS TYPE REQUIRES. `project` is one of the two
+    # types with a `body_requirements` entry (**Why:** | **How to apply:**), so
+    # a bare "Nested body." is NOT conformant — this fixture asserted zero rows
+    # only because the health pass walked the root and never descended. Once it
+    # does, the row it emits here is a TRUE positive, and the fixture was the
+    # thing that was wrong: a bundle this case calls "fully conformant" has to
+    # actually be conformant, or it cannot serve as the zero-rows baseline.
+    command printf -- '---\ntype: project\n---\n\n**Why:** nested concepts are health-checked too.\n\n**How to apply:** give a required section to every type that declares one.\n' >"$b/sub/nested.md"
     command printf -- '# Sub index\n\n* [Nested](nested.md) - a nested thing\n' >"$b/sub/index.md"
 
     list="$(list_bundle "$b")"
@@ -916,6 +924,131 @@ test_memory_dangling_index() {
         "okf: an index naming a sibling index is not dangling"
 }
 
+# §8 SUB-INDEX ROUTING (#934). The graph used to enumerate the ROOT LEVEL ONLY
+# and key every target by BASENAME, so a root line naming `sub/index.md`
+# collapsed to `index.md` — not a root-level concept — and every correctly
+# nested bundle reported a dangling pointer. okf-migrate's move-concept
+# transform produces exactly that shape, which is what forced the extension.
+#
+# The three claims that matter, and the third is the one that keeps this from
+# being a blanket loosening: a directory WITHOUT an index.md is not judged at
+# all, so a repo keeping unrelated markdown beside its bundle is not flooded.
+test_subdirectory_index_routing() {
+    local b list
+    b="$(fresh_bundle)"
+    command mkdir -p "$b/golem" "$b/loose"
+    command printf -- '# Index\n\n* [Golem](golem/index.md) - bucket\n* [Root](root-concept.md) - x\n' >"$b/MEMORY.md"
+    command printf -- '---\ntype: reference\n---\n\nBody.\n' >"$b/root-concept.md"
+    command printf -- '# Golem\n\n* [Nested](nested.md) - x\n' >"$b/golem/index.md"
+    command printf -- '---\ntype: reference\n---\n\nBody.\n' >"$b/golem/nested.md"
+    command printf -- '---\ntype: reference\n---\n\nBody.\n' >"$b/golem/unlisted.md"
+    # A directory that never adopted an index.md — §8 makes the directory index
+    # the routing mechanism, so there is nothing here to judge against.
+    command printf -- '---\ntype: reference\n---\n\nBody.\n' >"$b/loose/stray.md"
+    list="$(list_bundle "$b")"
+
+    # (1) A root line naming a PRESENT sub-index is structure, not a dangling
+    # pointer — the regression this extension fixes.
+    assert_not_contains "$(emit_rows sh "$list" memory-dangling-index)" "index.md" \
+        "okf: a root line naming a present sub-index is not dangling (bash)"
+    # (2) The sub-index routes its OWN directory: a concept it names is not an
+    # orphan, and one it omits IS. Both halves, or the row could pass by the
+    # whole directory going unexamined.
+    assert_not_contains "$(emit_rows sh "$list" memory-orphan)" "nested.md" \
+        "okf: a concept its directory index names is not an orphan (bash)"
+    assert_fires "$list" memory-orphan "unlisted.md" \
+        "okf: ...and one that directory index omits IS an orphan"
+    # (3) A directory with NO index.md is skipped entirely. Without this the
+    # extension would report every stray markdown file in any repo that keeps
+    # some beside its bundle — the "fires on everything" shape §11 forbids.
+    assert_not_contains "$(emit_rows sh "$list" memory-orphan)" "stray.md" \
+        "okf: a directory with no index.md is not judged (bash)"
+
+    if [ "$HAVE_PY" -eq 1 ]; then
+        assert_not_contains "$(emit_rows py "$list" memory-dangling-index)" "index.md" \
+            "okf: a root line naming a present sub-index is not dangling (python)"
+        assert_not_contains "$(emit_rows py "$list" memory-orphan)" "nested.md" \
+            "okf: a concept its directory index names is not an orphan (python)"
+        assert_not_contains "$(emit_rows py "$list" memory-orphan)" "stray.md" \
+            "okf: a directory with no index.md is not judged (python)"
+    fi
+
+    # A SYMLINKED SUBDIRECTORY IS NEVER DESCENDED — a safety boundary, not
+    # tidiness, and the same line okf-migrate's collect_bundle draws on the write
+    # side: this toolset runs against SOMEONE ELSE'"'"'S bundle. Both `os.path.isdir`
+    # (python) and the `*/` glob (bash) FOLLOW a symlink, so `evil -> /elsewhere`
+    # was descended and its files reported under the bundle'"'"'s own name.
+    # Measured in BOTH runtimes before fixing.
+    b="$(fresh_bundle)"
+    command mkdir -p "$WORKDIR/outside.$$"
+    command printf -- '---\ntype: reference\n---\n\nBody.\n' >"$WORKDIR/outside.$$/leaked-name.md"
+    command printf -- '# evil\n\n* [Nope](nope.md) - x\n' >"$WORKDIR/outside.$$/index.md"
+    command printf -- '# Index\n\n* [Evil](evil/index.md) - bucket\n' >"$b/MEMORY.md"
+    command ln -s "$WORKDIR/outside.$$" "$b/evil"
+    list="$(list_bundle "$b")"
+    assert_not_contains "$(emit_rows sh "$list" memory-orphan)" "leaked-name.md" \
+        "okf: a symlinked subdirectory is never descended (bash)"
+    assert_not_contains "$(emit_rows sh "$list" memory-dangling-index)" "nope.md" \
+        "okf: ...and its index is never read (bash)"
+    if [ "$HAVE_PY" -eq 1 ]; then
+        assert_not_contains "$(emit_rows py "$list" memory-orphan)" "leaked-name.md" \
+            "okf: a symlinked subdirectory is never descended (python)"
+    fi
+
+    # THE ROOT LEVEL NEEDS THE SAME GUARD, and this case exists because the
+    # first fix guarded only the level the finding NAMED (subdirectories). Both
+    # `os.path.isfile` and `[ -f ]` follow a symlink, so a root-level
+    # `leaked.md -> /outside/x.md` was admitted as a concept and READ — and the
+    # health checks echo a memory's own stale_check into their evidence, so
+    # off-root CONTENT was disclosed in the report. Measured in both runtimes.
+    b="$(fresh_bundle)"
+    command mkdir -p "$WORKDIR/offroot.$$"
+    command printf -- '---\ntype: reference\nstale_after: 2020-01-01\nstale_check: OFFROOT-SENTINEL\n---\n\nBody.\n' \
+        >"$WORKDIR/offroot.$$/secret.md"
+    command printf -- '# Index\n\n* [Leaked](leaked.md) - x\n* [Kept](kept.md) - x\n' >"$b/MEMORY.md"
+    command printf -- '---\ntype: reference\n---\n\nBody.\n' >"$b/kept.md"
+    command ln -s "$WORKDIR/offroot.$$/secret.md" "$b/leaked.md"
+    list="$(list_bundle "$b")"
+    assert_not_contains "$(emit_rows sh "$list" memory-stale)" "OFFROOT-SENTINEL" \
+        "okf: a ROOT-LEVEL symlinked concept is never read (bash)"
+    if [ "$HAVE_PY" -eq 1 ]; then
+        assert_not_contains "$(emit_rows py "$list" memory-stale)" "OFFROOT-SENTINEL" \
+            "okf: a ROOT-LEVEL symlinked concept is never read (python)"
+    fi
+    # TEETH, so this cannot pass by the whole pass having gone silent: a REAL
+    # root-level concept carrying the same expired frontmatter DOES produce its
+    # stale row. `kept.md` is named by the index, so orphan is the wrong
+    # property to assert here — staleness is the one the symlink case suppresses.
+    command printf -- '---\ntype: reference\nstale_after: 2020-01-01\nstale_check: INBUNDLE-SENTINEL\n---\n\nBody.\n' \
+        >"$b/kept.md"
+    list="$(list_bundle "$b")"
+    assert_contains "$(emit_rows sh "$list" memory-stale)" "INBUNDLE-SENTINEL" \
+        "okf: ...while a REAL root-level concept is still read and judged"
+
+    # A SYMLINKED SUB-INDEX reads as ABSENT, not present. The walk skips it, so
+    # counting it present would leave its directory silently unchecked while no
+    # dangling row fired either — the gap reading as a clean pass.
+    b="$(fresh_bundle)"
+    command mkdir -p "$WORKDIR/offidx.$$" "$b/fake"
+    command printf -- '# x\n' >"$WORKDIR/offidx.$$/index.md"
+    command printf -- '# Index\n\n* [Fake](fake/index.md) - bucket\n' >"$b/MEMORY.md"
+    command ln -s "$WORKDIR/offidx.$$/index.md" "$b/fake/index.md"
+    command printf -- '---\ntype: reference\n---\n\nBody.\n' >"$b/fake/c.md"
+    list="$(list_bundle "$b")"
+    assert_fires "$list" memory-dangling-index "fake/index.md" \
+        "okf: a SYMLINKED sub-index reads as absent, never silently present"
+
+    # A root line naming an ABSENT sub-index is still dangling. Presence is what
+    # the check tests, so without this the sub-index arm would be a blanket
+    # exemption for anything ending in `/index.md`.
+    b="$(fresh_bundle)"
+    command printf -- '# Index\n\n* [Missing](gone/index.md) - bucket\n' >"$b/MEMORY.md"
+    command printf -- '---\ntype: reference\n---\n\nBody.\n' >"$b/kept.md"
+    list="$(list_bundle "$b")"
+    assert_fires "$list" memory-dangling-index "gone/index.md" \
+        "okf: a root line naming an ABSENT sub-index is still dangling"
+}
+
 test_memory_multi_index() {
     local b list
 
@@ -1006,6 +1139,51 @@ test_memory_missing_why() {
     list="$(list_bundle "$b")"
     assert_silent "$list" memory-missing-why \
         "okf: an unconfigured type carries no body requirement"
+
+    # HEALTH IS CHECKED AT EVERY DEPTH, not only at the bundle root.
+    #
+    # The graph half of this pass learned to walk subdirectories (§8 routing)
+    # while the health half kept iterating the root's concepts only — so a
+    # concept STOPPED being health-checked the moment it was filed into a
+    # directory, which is exactly what okf-migrate's move-concept does to a
+    # whole bundle. Measured on this repo's own 260-file bundle with a mirror
+    # taxonomy: 80 known memory-missing-why rows became 1, at exit 0. A
+    # migration that silences 79 real findings while reporting success would
+    # read as the migration having FIXED them.
+    #
+    # The nested concept is IDENTICAL in body to the root one above, so the
+    # only thing under test is its depth.
+    b="$(graph_bundle)"
+    command mkdir -p "$b/sub"
+    command printf -- '---\ntype: feedback\n---\n\nGuidance with no why.\n' >"$b/sub/nested.md"
+    command printf -- '# sub\n\n* [Nested](nested.md) - a thing\n' >"$b/sub/index.md"
+    command printf -- '* [Sub](sub/index.md) - a bucket\n' >>"$b/MEMORY.md"
+    list="$(list_bundle "$b")"
+    assert_fires "$list" memory-missing-why "**Why:**" \
+        "okf: a NESTED memory with no Why section fires too"
+
+    # ...and staleness, the other health rule in the same loop, reaches nested
+    # concepts as well — asserted separately because one could be fixed without
+    # the other.
+    b="$(graph_bundle)"
+    command mkdir -p "$b/sub"
+    command printf -- '---\ntype: user\nstale_after: 2020-01-01\nstale_check: "re-derive the pin"\n---\n\nBody.\n' >"$b/sub/old.md"
+    command printf -- '# sub\n\n* [Old](old.md) - a thing\n' >"$b/sub/index.md"
+    command printf -- '* [Sub](sub/index.md) - a bucket\n' >>"$b/MEMORY.md"
+    list="$(list_bundle "$b")"
+    assert_fires "$list" memory-stale "re-derive the pin" \
+        "okf: a NESTED memory past its stale_after fires too"
+
+    # A DIRECTORY WITH NO index.md STAYS UNJUDGED, health included. The walk
+    # skips it entirely — a directory that has not adopted §8 routing has no
+    # claim to be checked against, and this is the boundary that keeps the pass
+    # off every repo keeping unrelated markdown beside its bundle.
+    b="$(graph_bundle)"
+    command mkdir -p "$b/loose"
+    command printf -- '---\ntype: feedback\n---\n\nGuidance with no why.\n' >"$b/loose/stray.md"
+    list="$(list_bundle "$b")"
+    assert_silent "$list" memory-missing-why \
+        "okf: a directory with no index.md is not health-checked"
 }
 
 # ============================================================================
@@ -1523,6 +1701,7 @@ run_test test_pin_resolution_parity "check-okf-conformance: bash/python resolve 
 run_test test_evidence_truncation_parity "check-okf-conformance: >80-char multibyte evidence truncation parity"
 run_test test_memory_orphan "check-okf-conformance: orphans, the no-index rule, and tolerated [[wiki-links]]"
 run_test test_memory_dangling_index "check-okf-conformance: a dangling index line vs an index naming an index"
+run_test test_subdirectory_index_routing "check-okf-conformance: §8 sub-index routing — each directory judged against its own index.md"
 run_test test_memory_multi_index "check-okf-conformance: two indexes claiming one concept vs a repeated line"
 run_test test_memory_stale "check-okf-conformance: staleness against an INJECTED date, quoting stale_check"
 run_test test_memory_missing_why "check-okf-conformance: per-type body requirements, and unconfigured types"

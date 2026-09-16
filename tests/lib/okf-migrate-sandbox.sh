@@ -54,6 +54,10 @@ write_concept() {
 #     assert_exit 0 "$OKF_RC" "plan exits 0"
 #     assert_contains "$OKF_OUT" "+++ b/" "plan renders a diff"
 #
+# $OKF_MIGRATE_CONFIG_DIR is passed THROUGH (empty unless a caller set it) so a
+# case can point the engine at a fixture thresholds.yml — the move-concept cases
+# need a configured taxonomy, whose shipped default is deliberately empty.
+#
 # OKF_TODAY is not injected (this engine judges no dates), but the VERSION PIN
 # is injected in every case: a fixture that inherited the repo's pin would start
 # failing the day someone bumps it, which is a silent false verdict rather than
@@ -65,6 +69,7 @@ run_py() {
     shift 2
     OKF_RC=0
     OKF_OUT="$(OKF_BUNDLE_ROOT="$root" OKF_PINNED_VERSION="${OKF_TEST_VERSION:-0.2}" \
+        OKF_MIGRATE_CONFIG_DIR="${OKF_MIGRATE_CONFIG_DIR:-}" \
         command python3 "$OKF_MIGRATE_PY" "$mode" "$@" 2>&1)" || OKF_RC=$?
 }
 
@@ -76,6 +81,7 @@ run_sh() {
     OKF_RC=0
     OKF_OUT="$(PATTERNS_FORCE_BASH=1 OKF_BUNDLE_ROOT="$root" \
         OKF_PINNED_VERSION="${OKF_TEST_VERSION:-0.2}" \
+        OKF_MIGRATE_CONFIG_DIR="${OKF_MIGRATE_CONFIG_DIR:-}" \
         command bash "$OKF_MIGRATE_SH" "$mode" "$@" 2>&1)" || OKF_RC=$?
 }
 

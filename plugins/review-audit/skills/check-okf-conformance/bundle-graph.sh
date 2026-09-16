@@ -160,6 +160,17 @@ index_targets() {
             s = $0
             while (match(s, /\]\([^)]*\.md\)/)) {
                 t = substr(s, RSTART + 2, RLENGTH - 3)
+                # A `<dir>/index.md` target keeps its directory — it names a §8
+                # SUB-INDEX, and collapsing it to `index.md` like any other
+                # target made every sub-index read as dangling (#934).
+                sub(/^\//, "", t)
+                sub(/^\.\//, "", t)
+                if (t ~ /^[^\/]+\/index\.md$/) {
+                    print t "\t" NR
+                    n++
+                    s = substr(s, RSTART + RLENGTH)
+                    continue
+                }
                 sub(/^.*\//, "", t)
                 print t "\t" NR
                 n++
@@ -284,6 +295,13 @@ scan_bundle() {
     local indexes="" concepts=""
     for f in "$root"/*.md; do
         [ -f "$f" ] || continue
+        # THE ROOT LEVEL NEEDS THE SAME SYMLINK GUARD AS THE SUBDIRECTORIES
+        # below. `[ -f ]` FOLLOWS a symlink, so `leaked.md -> /outside/x.md` was
+        # admitted as a concept and then READ — and the health checks echo a
+        # memory's own `stale_check` into their evidence, so off-root content was
+        # disclosed in the report. Measured in BOTH runtimes: a sentinel string
+        # in an outside file appeared verbatim in a memory-stale row.
+        [ -L "$f" ] && continue
         base="${f##*/}"
         if is_index "$base" "$names"; then
             indexes="${indexes}${base}
@@ -332,6 +350,30 @@ EOF
             *"|$target|"*) continue ;;
         esac
         seen_targets="${seen_targets}|$target|"
+        # A `<dir>/index.md` target is a §8 SUB-INDEX: present iff the file
+        # exists. It is not a concept and must never be judged as one.
+        case "$target" in
+            */index.md)
+                # PRESENT MEANS "a real file we will actually walk": a SYMLINKED
+                # sub-index is skipped by the directory walk, so counting it
+                # present would leave its directory silently unchecked while no
+                # dangling row fired either.
+                if [ ! -f "$root/$target" ] || [ -L "$root/$target" ]; then
+                    # ENVIRON, NEVER `awk -v`: a `-v` assignment is
+                    # escape-processed, so a target containing the two
+                    # characters `\n` decodes and stops matching the literal
+                    # field — the row still fires, but with an EMPTY index name
+                    # and line number, which is a finding nobody can act on.
+                    # Same rule moves.sh follows; these two sites were added by
+                    # the very commit that fixed the class elsewhere.
+                    first_idx="$(command printf '%s' "$named" | OKF_T="$target" command awk -F"$TAB" '$1 == ENVIRON["OKF_T"] { print $2; exit }')"
+                    first_line="$(command printf '%s' "$named" | OKF_T="$target" command awk -F"$TAB" '$1 == ENVIRON["OKF_T"] { print $3; exit }')"
+                    emit "$root/$first_idx" "$first_line" "$C_DANGLING_INDEX" \
+                        "Index names a subdirectory index that does not exist: $target" "HIGH"
+                fi
+                continue
+                ;;
+        esac
         # An index pointing at another INDEX is ordinary structure (a root index
         # naming its sub-indexes), so it is neither dangling nor multi-indexed.
         case "
@@ -340,7 +382,10 @@ $indexes" in
 $target
 "*) continue ;;
         esac
-        sites="$(command printf '%s' "$named" | command awk -F"$TAB" -v t="$target" '$1 == t { print $2 "\t" $3 }')"
+        # ENVIRON here too: pre-existing, but this diff's index_targets change
+        # widened what shapes `$target` can take (a `<dir>/index.md` now keeps
+        # its slash), so the exposure grew with it.
+        sites="$(command printf '%s' "$named" | OKF_T="$target" command awk -F"$TAB" '$1 == ENVIRON["OKF_T"] { print $2 "\t" $3 }')"
         first_idx="$(command printf '%s\n' "$sites" | command head -1 | command cut -f1)"
         first_line="$(command printf '%s\n' "$sites" | command head -1 | command cut -f2)"
         case "
@@ -382,7 +427,102 @@ $concepts
 EOF
     fi
 
+    # Each SUBDIRECTORY against its own index.md (§8). ONE LEVEL PER INDEX: a
+    # directory's index routes that directory's concepts exactly as the root
+    # index routes the root's, so this is the same rule at two levels rather
+    # than a special case.
+    #
+    # A DIRECTORY WITHOUT AN index.md IS SKIPPED ENTIRELY. §8 makes the directory
+    # index the routing mechanism, so a directory that has not adopted one has
+    # nothing to be judged against; reporting there would fire on every repo
+    # keeping unrelated markdown beside its bundle.
+    local sub sub_dir sub_index sub_named sub_concepts sub_base sub_targets
+    local nested_concepts=""
+    # SYMLINKED DIRECTORIES ARE SKIPPED — a SAFETY boundary, not tidiness, and
+    # the same line okf-migrate's collect_bundle draws on the write side: this
+    # toolset runs against SOMEONE ELSE'S bundle. The `*/` glob form FOLLOWS a
+    # symlink, so `evil -> /somewhere/else` was descended and its files reported
+    # under the bundle's name. Measured in BOTH runtimes before fixing.
+    for sub_dir in "$root"/*/; do
+        [ -d "$sub_dir" ] || continue
+        [ -L "${sub_dir%/}" ] && continue
+        sub="${sub_dir%/}"
+        sub="${sub##*/}"
+        case "$sub" in .*) continue ;; esac
+        sub_index="$root/$sub/index.md"
+        [ -f "$sub_index" ] || continue
+        [ -L "$sub_index" ] && continue
+
+        sub_named=""
+        sub_targets="$(index_targets "$sub_index")"
+        while IFS="$TAB" read -r target line_no; do
+            [ -n "$target" ] || continue
+            target="${target##*/}"
+            case "$sub_named" in
+                *"
+$target$TAB"*) continue ;;
+            esac
+            sub_named="${sub_named}
+${target}${TAB}${line_no}"
+        done <<EOF
+$sub_targets
+EOF
+
+        sub_concepts=""
+        for sub_base in "$root/$sub"/*.md; do
+            [ -f "$sub_base" ] || continue
+            # A symlinked .md is skipped too: it would be read and reported under
+            # its in-bundle name while its bytes came from outside.
+            [ -L "$sub_base" ] && continue
+            sub_base="${sub_base##*/}"
+            case "$sub_base" in index.md | log.md) continue ;; esac
+            sub_concepts="${sub_concepts}${sub_base}
+"
+        done
+
+        while IFS="$TAB" read -r target line_no; do
+            [ -n "$target" ] || continue
+            case "$target" in index.md) continue ;; esac
+            case "
+$sub_concepts" in
+                *"
+$target
+"*) continue ;;
+            esac
+            emit "$sub_index" "$line_no" "$C_DANGLING_INDEX" \
+                "$L_DANGLING: $target" "HIGH"
+        done <<EOF
+$(command printf '%s' "$sub_named")
+EOF
+
+        while IFS= read -r sub_base; do
+            [ -n "$sub_base" ] || continue
+            # Collected for the HEALTH pass below, which walks root concepts AND
+            # these — see its own note.
+            nested_concepts="${nested_concepts}${sub}/${sub_base}
+"
+            case "$sub_named" in
+                *"
+$sub_base$TAB"*) continue ;;
+            esac
+            emit "$root/$sub/$sub_base" 1 "$C_ORPHAN" "$L_ORPHAN" "HIGH"
+        done <<EOF
+$sub_concepts
+EOF
+    done
+
     # Health: staleness and per-type body requirements.
+    #
+    # ROOT CONCEPTS **AND** NESTED ONES. Staleness and body requirements are
+    # properties of a memory's own text — nothing about them is root-specific —
+    # so walking only the root meant a concept STOPPED being health-checked the
+    # moment it was filed into a directory. Measured on this repo's own bundle
+    # with a mirror taxonomy: 80 known memory-missing-why rows became 1, and the
+    # scan still exited 0 — a migration silencing 79 real findings while
+    # reporting success, which would have read as the migration FIXING them.
+    #
+    # Nested concepts come only from directories that HAVE an index.md, because
+    # the walk above skips the others entirely; that boundary is deliberate.
     #
     # The config is read ONCE, outside the per-file loop. Reading it inside meant
     # re-parsing thresholds.yml for every concept — 222 redundant parses on this
@@ -439,6 +579,6 @@ EOF
             emit "$f" 1 "$C_MISSING_WHY" "$L_MISSING_WHY: $missing" "MEDIUM"
         fi
     done <<EOF
-$concepts
+$concepts$nested_concepts
 EOF
 }

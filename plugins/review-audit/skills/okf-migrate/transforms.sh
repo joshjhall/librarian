@@ -214,7 +214,13 @@ emit_edit() {
     local path new old="$5"
     path="$(esc_field "$2")"
     new="$6"
-    if [ "$3" != "create" ]; then
+    # `create` and `insert-block` both arrive PRE-ENCODED from their producer
+    # (a create body builds its own `\n` markers; an insert-block escapes each
+    # line and then joins with a `\n` separator). Re-escaping either would turn
+    # those markers' backslashes into `\\`, and unpad would decode them back to
+    # a literal `\n` instead of a newline — which is how a generated index.md
+    # once came out as one line reading `---\nokf_version: 0.2\n---`.
+    if [ "$3" != "create" ] && [ "$3" != "insert-block" ]; then
         old="$(esc_field "$old")"
         new="$(esc_field "$new")"
     fi

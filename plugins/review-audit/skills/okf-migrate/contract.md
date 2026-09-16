@@ -82,9 +82,12 @@ on it byte for byte. Tab-separated, one per line:
 transform \t path \t kind \t line \t old \t new \t note
 ```
 
-`kind` is `create`, `replace-line`, or `insert-line`. A `create` carries its
-whole body in `new` with newlines escaped as `\n`, since the record itself is
-line-oriented.
+`kind` is `create`, `replace-line`, `insert-line`, or `move`. A `create` carries
+its whole body in `new` with newlines escaped as `\n`, since the record itself is
+line-oriented. A `move` carries the bundle-relative source in `old` and the
+destination in `new`, and changes no bytes — `plan` renders it as a
+`rename from` / `rename to` pair rather than a `+`/`-` diff, because showing a
+rename as content would misrepresent what `apply` does.
 
 **Every field is prefixed with a colon, which the reader strips.** That is not
 decoration. `read` splits on `IFS`, and when `IFS` holds a *whitespace*
@@ -139,6 +142,19 @@ Partial application is not a thing. An ambiguity anywhere blocks the whole
 `apply` and writes nothing — a half-migrated bundle is harder to reason about
 than an unmigrated one.
 
+**Every path is validated BEFORE any write**, which is what makes that a claim
+about the whole apply rather than about each edit's turn. `move-concept` forced
+this: its renames run *last* (a link rewrite must read the file at its old
+path), so a destination check inside the rename loop fired only after every link
+rewrite was already on disk. Measured: a taxonomy rule spelled `= ../../escaped`
+exited 2 with the right message and left the bundle's links rewritten to point
+outside it — a refusal that had already done most of the damage.
+
+A move's **destination** gets its own resolved-root check, since it is the one
+path a transform can nominate that did not already exist in the bundle. It
+resolves through the nearest *existing* ancestor, so a new subdirectory is
+allowed while an escaping path is still refused.
+
 ## Transform applicability
 
 | Transform | `plan` | `apply` |
@@ -146,6 +162,7 @@ than an unmigrated one.
 | `adopt-bundle` | ✓ | ✓ |
 | `backfill-type` | ✓ | ✓ (ambiguous ⇒ exit 3) |
 | `wikilink-convert` | ✓ | ✓ |
+| `move-concept` | ✓ | ✓ |
 | `split-index` | ✓ | refused (exit 2) |
 | `confirmed-merge` | ✓ | refused (exit 2) |
 
@@ -166,6 +183,15 @@ and refuses to do it.
   path it *would* occupy rather than dropped. OKF §6.1 tolerates a broken link
   as knowledge not yet written, so the conversion preserves the fact that
   someone meant to link there.
+- **Lossless on reachability** — a moved concept is still named by exactly one
+  index afterwards. `move-concept` generates the §8 directory index and
+  *relocates* the naming line into it, rather than repointing the old line: a
+  concept named in both places is `memory-multi-index`, and one named in
+  neither is a silent un-recall (#632's shape).
+- **History-preserving** — moves use `git mv`, so `git log --follow` on a
+  relocated concept still reaches the commit that explains why it was written.
+  A bundle under no version control falls back to a plain rename, the same line
+  the dirty-tree gate draws.
 
 All three are fixture-pinned in `tests/validate-okf-migrate.sh`.
 
