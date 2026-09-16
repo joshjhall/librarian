@@ -161,17 +161,36 @@
 #                        and sweeping the handoff cost across its whole plausible
 #                        range, 175k minimizes WORST-CASE regret (4.1%, vs 6.1%
 #                        at 150k and 14.5% at 250k). This supersedes the 250-300k
-#                        figure in #784's body, which assumed a 78k floor against
-#                        a measured ~91k. Derivation + reproduction recipe:
-#                        docs/verification/context-threshold-tally-784.md.
+#                        figure in #784's body, which assumed a 78k floor.
+#                        RE-DERIVED on a 1M-era corpus (#1056) and UNCHANGED —
+#                        a result, not an omission. The larger window is not an
+#                        input to a cost optimum, and R is now MEASURED (R=3,
+#                        n=1) rather than swept, which narrows the range whose
+#                        blind minimax answer was 250k: over R=1-10 the answer is
+#                        150k-175k, and 175k stays within 2.3pp throughout while
+#                        150k falls behind it by R=10. Holding 175k also keeps a
+#                        71k working band above the raised floor; 150k would give
+#                        46k and roughly double the handoff count.
+#                        docs/verification/context-threshold-rederivation-1056.md.
 #                                                          Default: 175000
 #   CONTEXT_BUDGET_FLOOR The measured cost of a session's FIRST request — the
 #                        system prompt, tools, and skill preamble a fresh session
 #                        re-pays before it does anything (#784). Emitted by
 #                        context-budget.sh as context for the verdict: it is what
 #                        a handoff costs, so it is what makes cycling too eagerly
-#                        a net loss. Measured ~91k across 28 local sessions.
-#                                                          Default: 91000
+#                        a net loss.
+#                        RE-MEASURED (#1056) and MOVED, 91k -> 104k. The floor is
+#                        BIMODAL BY SESSION SHAPE: main-checkout sessions floor at
+#                        ~84.4k, worktree/golem sessions at ~104.4k — a ~24% gap,
+#                        reproducible within ~50 tokens per group, caused by the
+#                        skill preamble a golem loads and a plain session does
+#                        not. The old ~91k sat BETWEEN the clusters, so it was
+#                        wrong for both. This constant is deliberately tuned to
+#                        the ~104k GOLEM figure, because context-budget.sh exists
+#                        to serve golem handoffs; no shape-detection logic is
+#                        added, keeping the knob a plain constant. Set the env var
+#                        if your sessions floor elsewhere (~84k main checkout).
+#                                                          Default: 104000
 #
 # This file only DEFINES variables (no side effects beyond `export`), so it is
 # safe to source from any script.
@@ -319,7 +338,7 @@
 # this file); the pair is pinned equivalent by validate-context-budget.sh's drift
 # guard, the same arrangement golem-notify.sh's inlined sink defaults use.
 : "${CONTEXT_BUDGET_THRESHOLD:=175000}"
-: "${CONTEXT_BUDGET_FLOOR:=91000}"
+: "${CONTEXT_BUDGET_FLOOR:=104000}"
 
 export TOKEN_REPORT_TIMEOUT TOKEN_REPORT_RECONCILE_PCT
 

@@ -121,6 +121,44 @@ retunes it (full record + reproduction recipe:
   rather than best under one guess.
 
 This **supersedes the 250–300k figure in #784's body**, which assumed a 78k
-floor; the measured floor is ~91k. Both knobs are env-overridable
-(`CONTEXT_BUDGET_THRESHOLD`, `CONTEXT_BUDGET_FLOOR`), so retuning is a variable,
-not an edit — but retune from the derivation, not from a round number.
+floor. Both knobs are env-overridable (`CONTEXT_BUDGET_THRESHOLD`,
+`CONTEXT_BUDGET_FLOOR`), so retuning is a variable, not an edit — but retune from
+the derivation, not from a round number.
+
+**Re-derived on a 1M-era corpus (#1056), and 175k held.** #784's inputs were
+measured under a 200k window. Re-running its method on current `claude-opus-5`
+sessions kept the threshold and moved the floor to **104k** (it is bimodal by
+session shape — ~84.4k main checkout vs ~104.4k worktree/golem). The threshold
+survived for two reasons: the window is not an input to a *cost* optimum, and
+the raised floor narrows the working band to 71k, so cycling sooner would roughly
+double the handoff count for ~1.5pp of modeled saving. Record:
+`docs/verification/context-threshold-rederivation-1056.md`.
+
+## Recording `R` at a handoff
+
+`R` — the re-orientation requests a handoff spends before productive work
+resumes — was **swept** in #784 because nothing measured it, and the sweep is
+why minimax was needed at all. A handoff now records what it cost, so the next
+re-derivation looks the number up instead.
+
+**No new state format** (see § "The handoff"): this is one optional field on the
+`checkpoint` object, the same way `scope_expansions` was added for #756.
+
+1. **Writing it.** When you act on a `handoff` verdict, copy the
+   `context-budget.sh check` output that produced it into
+   `checkpoint.handoff_marker` — `context_tokens`, `threshold`, `floor`,
+   `pct_of_threshold`, and an ISO timestamp `at`. This is data already in hand;
+   take no new measurement. Set `r_measured` to `null`.
+1. **Filling it in.** A resumed session that finds a `handoff_marker` with
+   `r_measured: null` is the only place that can close the loop. **Count from
+   your first request**, and freeze the count at your first file-modifying
+   request — `R` is everything before it: re-reading the state file, the plan,
+   and files the prior session already read. Write the number to `r_measured`
+   with a one-line note on what the re-orientation consisted of.
+1. **Do not reconstruct it afterwards.** A count recalled once the work is
+   underway is an estimate, not a measurement. If you lose it, write `null` and
+   say so — an honest gap beats an invented number.
+1. **Fail open.** A missing or malformed `handoff_marker` means "R unknown for
+   this handoff" and **nothing else**. It must never error, block a resume, or
+   gate the handoff it observes; it is telemetry riding along on a checkpoint
+   that has a job to do.

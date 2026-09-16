@@ -32,6 +32,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 CTX_BUDGET="$REPO_ROOT/plugins/workflow/scripts/context-budget.sh"
 CONFIG_SH="$REPO_ROOT/plugins/workflow/scripts/config.sh"
+STATE_SCHEMA="$REPO_ROOT/plugins/workflow/skills/next-issue/schemas/next-issue-state.schema.json"
 
 # Both are read by the sourced sandbox library rather than by this file, and are
 # defined the same way validate-golem-scripts.sh defines them for its fragments.
@@ -646,7 +647,9 @@ test_emits_the_documented_default_threshold_and_floor() {
     plant_transcript "$sb" 42 "$TRANSCRIPT_CTX_OK"
     run_ctx_budget "$sb" "$sb/.worktrees/issue-42"
     assert_contains "$RUN_OUT" "threshold=175000" "the derived default threshold"
-    assert_contains "$RUN_OUT" "floor=91000" "the measured default floor"
+    # Floor re-measured in #1056: 91000 -> 104000 (bimodal by session shape;
+    # tuned to the ~104.4k worktree/golem cluster, this script's caller).
+    assert_contains "$RUN_OUT" "floor=104000" "the measured default floor"
 }
 
 # config.sh's comment claims the two knobs must be EXPORTED because the consumer
@@ -703,6 +706,95 @@ test_defaults_match_config_sh() {
     assert_not_empty "$script_floor" "context-budget.sh declares a floor default"
     assert_not_empty "$cfg_floor" "config.sh declares a floor default"
     assert_equals "$script_floor" "$cfg_floor" "floor defaults agree across the two files"
+}
+
+# --- checkpoint handoff_marker (#1056) -------------------------------------
+#
+# The marker records what a handoff cost (R), turning the parameter #784 had to
+# sweep into one a later derivation looks up. The testable surface is the
+# SCHEMA, not the prose: `checkpoint` sets additionalProperties:false, so a
+# field that is documented but not declared makes every state file carrying it
+# invalid — the marker would be written by the handing-off session and then
+# rejected on resume, which is exactly the silent loss it exists to prevent.
+
+# Emit a checkpoint carrying a fully-populated marker, as handoff-protocol.md
+# specifies one. Every key here must be schema-declared or the resume breaks.
+marker_checkpoint_json() {
+    command cat <<'EOF'
+{
+  "completed_phase": "plan",
+  "next_action": "resume at the plan gate",
+  "handoff_marker": {
+    "context_tokens": 197956,
+    "threshold": 175000,
+    "floor": 104000,
+    "pct_of_threshold": 113,
+    "at": "2026-09-16T05:10:00Z",
+    "r_measured": 3,
+    "r_measured_note": "read state file, plan, and corpus",
+    "r_measured_framings": { "strict_reorientation": 3, "all_before_first_edit": 9 },
+    "note": "handoff taken at the plan-approved phase boundary"
+  }
+}
+EOF
+}
+
+test_checkpoint_marker_keys_are_all_schema_declared() {
+    if jq_missing; then
+        skip_test "jq not available (schema check needs jq)"
+        return 0
+    fi
+    local undeclared
+    # Every key the protocol writes, checked against the schema's declared
+    # properties. Fails loudly naming the offender rather than just a count.
+    undeclared="$(marker_checkpoint_json | command jq -r --slurpfile s "$STATE_SCHEMA" '
+        ($s[0].properties.checkpoint.properties) as $cp
+        | [ keys_unsorted[] | select($cp[.] == null) ]
+        + [ .handoff_marker | keys_unsorted[]
+            | select($cp.handoff_marker.properties[.] == null)
+            | "handoff_marker." + . ]
+        | join(",")')"
+    assert_equals "" "$undeclared" "every marker checkpoint key is schema-declared"
+}
+
+# additionalProperties:false is what makes the declaration load-bearing. Pin it,
+# so the declaration above cannot be "satisfied" by loosening the schema.
+test_checkpoint_rejects_undeclared_properties() {
+    if jq_missing; then
+        skip_test "jq not available (schema check needs jq)"
+        return 0
+    fi
+    local strict marker_strict
+    strict="$(command jq -r '.properties.checkpoint.additionalProperties' "$STATE_SCHEMA")"
+    marker_strict="$(command jq -r '.properties.checkpoint.properties.handoff_marker.additionalProperties' "$STATE_SCHEMA")"
+    assert_equals "false" "$strict" "checkpoint still refuses undeclared properties"
+    assert_equals "false" "$marker_strict" "handoff_marker still refuses undeclared properties"
+}
+
+# FAIL OPEN: the marker is telemetry riding on a checkpoint that has a job to
+# do. A checkpoint WITHOUT one must stay valid — if the field were ever made
+# required, an ordinary /clear checkpoint would fail to resume.
+test_checkpoint_without_marker_is_still_valid() {
+    if jq_missing; then
+        skip_test "jq not available (schema check needs jq)"
+        return 0
+    fi
+    local required
+    required="$(command jq -r '.properties.checkpoint.required // [] | join(",")' "$STATE_SCHEMA")"
+    assert_not_contains "$required" "handoff_marker" "a marker-less checkpoint still resumes (fail open)"
+}
+
+# r_measured is null between the handoff (which cannot know it) and the resumed
+# session (which counts it). If the schema pinned it to integer, the writing
+# side could not emit a conforming marker at all.
+test_r_measured_accepts_null_until_counted() {
+    if jq_missing; then
+        skip_test "jq not available (schema check needs jq)"
+        return 0
+    fi
+    local types
+    types="$(command jq -r '.properties.checkpoint.properties.handoff_marker.properties.r_measured.type | if type == "array" then sort | join(",") else . end' "$STATE_SCHEMA")"
+    assert_equals "integer,null" "$types" "r_measured is integer-or-null (null until the resumed session counts it)"
 }
 
 # The newest-mtime session is the active one. After a handoff the fresh session
@@ -772,5 +864,9 @@ run_test test_missing_jq_exits_3 "an absent jq exits 3 (absence forced, not obse
 run_test test_config_export_propagates_to_the_subprocess "config.sh export propagates to the subprocess"
 run_test test_defaults_match_config_sh "defaults match config.sh (drift guard)"
 run_test test_reads_the_newest_session_transcript "reads the newest session transcript"
+run_test test_checkpoint_marker_keys_are_all_schema_declared "handoff_marker keys are all schema-declared (#1056)"
+run_test test_checkpoint_rejects_undeclared_properties "checkpoint + marker still refuse undeclared properties"
+run_test test_checkpoint_without_marker_is_still_valid "a marker-less checkpoint still resumes (fail open)"
+run_test test_r_measured_accepts_null_until_counted "r_measured is integer-or-null until counted"
 
 generate_report

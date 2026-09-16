@@ -46,13 +46,37 @@
 #     30.1% at 400k). So 175k is robust across the whole plausible range of
 #     handoff costs rather than tuned to one guessed value.
 #
-# This SUPERSEDES the 250-300k figure in #784's body, which assumed a 78k floor;
-# the measured floor is ~91k. Both knobs are env-overridable, so an operator who
-# disagrees changes a variable rather than this file.
+# This SUPERSEDES the 250-300k figure in #784's body, which assumed a 78k floor.
+# Both knobs are env-overridable, so an operator who disagrees changes a variable
+# rather than this file.
+#
+# RE-DERIVED ON A 1M-ERA CORPUS (#1056). #784's corpus predates the 1M context
+# window. Re-running its method on 4 current claude-opus-5 sessions (vs #784's
+# 28 — current n, not better n) moved ONE of the two knobs. Full record:
+# docs/verification/context-threshold-rederivation-1056.md.
+#
+#   * THE FLOOR MOVED, 91k -> 104k. It is bimodal by session SHAPE: main-checkout
+#     sessions floor at ~84.4k, worktree/golem sessions at ~104.4k (a ~24% gap,
+#     reproducible within ~50 tokens per group, caused by the skill preamble a
+#     golem loads). 91k sat BETWEEN the clusters, so it was wrong for both. The
+#     constant is tuned to the golem shape because that is this script's caller;
+#     no shape detection is added, deliberately.
+#   * THE THRESHOLD DID NOT MOVE, and that is a result rather than an omission.
+#     The 5x larger window is not an input to a COST optimum, and the decile
+#     effect the threshold counters re-confirms at 3.78x on the sessions that run
+#     long enough to show it.
+#   * R IS NOW MEASURED (R=3, n=1) rather than swept, by instrumenting a real
+#     handoff — see checkpoint.handoff_marker in next-issue/state-format.md. That
+#     collapses the blind R=3-50 range whose minimax answer was 250k; over the
+#     measured neighbourhood R=1-10 the answer is 150k-175k, and 175k is within
+#     2.3pp everywhere in it while 150k falls BEHIND 175k by R=10.
+#   * The floor move is itself an argument for holding 175k: it narrows the
+#     working band to 71k. At 150k the band is 46k and the corpus sessions hand
+#     off nearly twice as often, for ~1.5pp of modeled saving.
 #
 # Config (env-overridable; see config.sh for the authoritative documentation):
 #   CONTEXT_BUDGET_THRESHOLD  Handoff threshold, tokens.        Default: 175000
-#   CONTEXT_BUDGET_FLOOR      Measured session floor, tokens.   Default: 91000
+#   CONTEXT_BUDGET_FLOOR      Measured session floor, tokens.   Default: 104000
 #   CLAUDE_PROJECTS_DIR       Base dir holding per-project transcript dirs.
 #                             Default: $HOME/.claude/projects
 #
@@ -138,7 +162,7 @@ fi
 # guard — the same arrangement golem-notify.sh uses for its inlined sink
 # defaults.
 : "${CONTEXT_BUDGET_THRESHOLD:=175000}"
-: "${CONTEXT_BUDGET_FLOOR:=91000}"
+: "${CONTEXT_BUDGET_FLOOR:=104000}"
 
 # Validate the knobs before use. An operator typo (`CONTEXT_BUDGET_THRESHOLD=175k`)
 # must fail loud rather than silently compare against a string: under `[` a

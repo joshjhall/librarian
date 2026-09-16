@@ -39,6 +39,7 @@
 - [An issue's stated cause can be false](issue-cause-may-be-falsified-by-measurement.md) — A/B the SUGGESTED fix; a no-op fix means the diagnosis is wrong (#766)
 - [An issue's premise may undercount defects](issue-premise-may-undercount-defects.md) — run the issue's OWN repro; if removing the named cause still fails, there are two
 - [Size the effect from the right quantity](size-the-effect-from-the-right-quantity.md) — bytes emitted vs the RECORD that accrues; flips "too small to see" into "a large effect is missing"
+- [One-time cost vs per-request surcharge](one-time-cost-vs-per-request-surcharge.md) — report the BREAK-EVEN count, then find the row where it fails (#1056)
 - [Measured cause may invert the remedy](measured-cause-may-invert-the-remedy.md) — a real total hides a billing split; check the premise's countable claims first (#787)
 - [Deferred work may be doable now](deferred-work-may-be-doable-now.md) — "wait for Phase N" is an estimate; probe the blocker before accepting it
 - [Strictness-first failures are in the checker](strictness-first-fails-in-the-checker.md) — a finer gate's first findings are its own parser bugs; never edit the subject to go green
