@@ -1016,10 +1016,14 @@ Body.'
         --confirm --allow-dirty 2>&1)" || OKF_RC=$?
     assert_exit 0 "$OKF_RC" "a file:/dir: taxonomy applies cleanly"
 
+    # SINGLE-QUOTED, not "$(file:)". Inside double quotes that is a command
+    # SUBSTITUTION, so every run of this suite tried to execute `file:` and
+    # `dir:` and printed two `command not found` lines to stderr — noise in the
+    # pre-push log of every push in the repo, from an assertion MESSAGE.
     assert_file_exists "$root/golem/golem-thing.md" \
-        "a $(file:) glob routes a concept by its BASENAME"
+        'a file: glob routes a concept by its BASENAME'
     assert_file_exists "$root/archive/old.md" \
-        "a $(dir:) glob routes a concept by its current DIRECTORY"
+        'a dir: glob routes a concept by its current DIRECTORY'
     # Teeth: a concept matching NEITHER rule stays put, so this cannot pass by
     # the transform having moved everything.
     assert_file_exists "$root/plain.md" \
