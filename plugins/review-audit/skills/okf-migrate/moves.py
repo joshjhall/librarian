@@ -351,7 +351,26 @@ def plan_directory_indexes(
             # memory-orphan, because the line naming it had been repointed at the
             # sub-index while the sub-index never learned about it.
             existing = read_lines(index_path)
-            existing_text = "\n".join(existing)
+            # THE ALREADY-NAMED SET, built ONCE and FENCE-AWARE, through the same
+            # LINK_RE every other pass here uses. A substring test over the raw
+            # text cannot skip a fence, so an index that DOCUMENTS the index-line
+            # format ("```markdown / - [Thing](t.md)") read its own EXAMPLE as a
+            # live pointer and suppressed the append, leaving the concept named
+            # by nothing outside a code block — the same
+            # fenced-example-as-a-live-claim defect index_members,
+            # plan_directory_indexes and rewrite_inbound_links each already
+            # guard against. Measured identically in the bash twin, so
+            # byte-parity was blind to it.
+            already_named: set[str] = set()
+            _in_fence = False
+            for _line in existing:
+                if FENCE_RE.match(_line):
+                    _in_fence = not _in_fence
+                    continue
+                if _in_fence:
+                    continue
+                for _match in LINK_RE.finditer(_line):
+                    already_named.add(_match.group(2).strip())
             # ONE EDIT FOR THE WHOLE BLOCK, not one per arriving concept, and
             # that is a correctness requirement rather than tidiness. Edits to a
             # file are applied HIGHEST LINE FIRST (migrate.py apply_edits), and
@@ -375,7 +394,9 @@ def plan_directory_indexes(
                 # THE WHOLE RISK, reached by the code meant to prevent it.
                 # Measured, and IDENTICALLY in the bash twin, so byte-parity was
                 # blind to it — the same shape as the append-ordering bug above.
-                if "](" + base + ")" in existing_text:
+                # An exact match against a PARSED target settles it: prose is
+                # not a link, and neither is a fenced example.
+                if base in already_named:
                     continue
                 line = claimed.get(new_rel)
                 rendered_lines.append(

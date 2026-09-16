@@ -305,6 +305,97 @@ Naming note: the concept file is called (golem-thing.md) by convention.'
         "both runtimes append identically (the defect was shared, not a skew)"
 }
 
+test_fenced_example_in_the_target_index_does_not_suppress_the_append() {
+    local root sh_index py_index sh_live py_live
+    if [ "$OKF_HAVE_PY" -ne 1 ]; then
+        skip_test "python3 >= 3.11 unavailable"
+        return 0
+    fi
+    # THE THIRD SPELLING OF ONE DEFECT. "Is this concept already listed?" was
+    # first a bare `(base)` substring (prose suppressed the append), then a
+    # `](base)` substring — which still cannot skip a FENCE, so an index that
+    # DOCUMENTS the index-line format read its own EXAMPLE as a live pointer and
+    # suppressed the append again. The concept is then named only inside a code
+    # block, which no reader and no validator treats as a pointer: a
+    # memory-orphan produced by the code that exists to prevent one.
+    #
+    # Fixed by parsing the existing index with the same fence-aware scanner the
+    # rest of the file uses, rather than grepping its raw bytes. Both runtimes
+    # had every spelling identically, so byte-parity never saw any of them.
+    root="$(fresh_bundle "$WORKDIR")"
+    command mkdir -p "$root/golem"
+    write_concept "$root" "MEMORY.md" '# Memory
+
+- [Golem](index-golem.md) — bucket'
+    write_concept "$root" "index-golem.md" '# Golem
+
+- [Thing](golem-thing.md) — the claiming line'
+    write_concept "$root" "golem-thing.md" '---
+type: feedback
+---
+
+MOVING-CONCEPT'
+    write_concept "$root" "golem/index.md" '# golem
+
+How to write an index line:
+
+```markdown
+- [Thing](golem-thing.md) — FENCED EXAMPLE, not a live pointer
+```'
+
+    run_moves apply "$root" --transform move-concept --confirm --allow-dirty
+    assert_exit 0 "$OKF_RC" "bash applies cleanly"
+    sh_index="$(command cat "$root/golem/index.md")"
+    # THE ASSERTION IS ABOUT A LIVE LINK, so the fence is stripped first: a
+    # plain grep for the target would match the EXAMPLE and pass against the
+    # very bug this pins.
+    sh_live="$(command awk 'BEGIN { f = 0 }
+        /^[ \t]*(```|~~~)/ { f = 1 - f; next }
+        f == 0 { print }' "$root/golem/index.md")"
+
+    assert_contains "$sh_live" "](golem-thing.md)" \
+        "the concept is named OUTSIDE the fence, not only by the example"
+    assert_contains "$sh_index" "FENCED EXAMPLE" \
+        "...and the operator's fenced sample is preserved untouched"
+    validator_rows "$root"
+    assert_true "[ '$OKF_LISTED' -gt 0 ]" "the validator actually scanned files"
+    assert_not_contains "$OKF_ROWS" "memory-orphan" \
+        "no memory-orphan row — the concept is reachable"
+
+    root="$(fresh_bundle "$WORKDIR")"
+    command mkdir -p "$root/golem"
+    write_concept "$root" "MEMORY.md" '# Memory
+
+- [Golem](index-golem.md) — bucket'
+    write_concept "$root" "index-golem.md" '# Golem
+
+- [Thing](golem-thing.md) — the claiming line'
+    write_concept "$root" "golem-thing.md" '---
+type: feedback
+---
+
+MOVING-CONCEPT'
+    write_concept "$root" "golem/index.md" '# golem
+
+How to write an index line:
+
+```markdown
+- [Thing](golem-thing.md) — FENCED EXAMPLE, not a live pointer
+```'
+
+    run_moves_py apply "$root" --transform move-concept --confirm --allow-dirty
+    assert_exit 0 "$OKF_RC" "python applies cleanly"
+    py_index="$(command cat "$root/golem/index.md")"
+    py_live="$(command awk 'BEGIN { f = 0 }
+        /^[ \t]*(```|~~~)/ { f = 1 - f; next }
+        f == 0 { print }' "$root/golem/index.md")"
+
+    assert_contains "$py_live" "](golem-thing.md)" \
+        "the python runtime names it outside the fence too"
+    assert_equals "$py_index" "$sh_index" \
+        "both runtimes append identically (the defect was shared, not a skew)"
+}
+
 test_existing_index_without_a_trailing_newline_appends_after_it() {
     local root sh_index py_index
     if [ "$OKF_HAVE_PY" -ne 1 ]; then

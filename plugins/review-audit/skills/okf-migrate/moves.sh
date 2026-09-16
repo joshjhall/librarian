@@ -412,7 +412,7 @@ EOF
 plan_directory_indexes() {
     local root="$1" list="$2" mapping="$3" claimed="$4"
     local dirs path here line old_rel new_rel dir base body count target label
-    local _pdi_fence _pdi_t
+    local _pdi_fence _pdi_t _named _nf _nl _nt _nlbl _ntgt
     : >"$claimed"
     [ -s "$mapping" ] || return 0
 
@@ -523,6 +523,35 @@ EOF
             # awk agrees with splitlines on all three cases: unterminated,
             # terminated, and empty.
             _at="$(command awk 'END { print NR }' "$root/$dir/index.md")"
+            # THE ALREADY-NAMED SET, built ONCE and FENCE-AWARE, through
+            # scan_links — the same parser every other pass in this file uses.
+            # A grep over the raw file cannot skip a fence, so an index that
+            # DOCUMENTS the index-line format ("```markdown / - [Thing](t.md)")
+            # read its own EXAMPLE as a live pointer and suppressed the append,
+            # leaving the concept named by nothing outside a code block. That is
+            # the same fenced-example-as-a-live-claim defect index_members,
+            # plan_directory_indexes and rewrite_inbound_links each already
+            # guard against — measured here identically in both runtimes, so
+            # byte-parity was blind to it.
+            _named="$(command mktemp)"
+            _nf=0
+            while IFS= read -r _nl || [ -n "$_nl" ]; do
+                _nt="${_nl#"${_nl%%[![:space:]]*}"}"
+                case "$_nt" in
+                    '```'* | '~~~'*)
+                        _nf=$((1 - _nf))
+                        continue
+                        ;;
+                esac
+                [ "$_nf" -eq 0 ] || continue
+                case "$_nl" in *']('*) ;; *) continue ;; esac
+                while IFS="$(command printf '\t')" read -r _nlbl _ntgt || [ -n "$_nlbl" ]; do
+                    [ -n "$_ntgt" ] || continue
+                    command printf '%s\n' "$_ntgt" >>"$_named"
+                done <<EOF
+$(scan_links "$_nl")
+EOF
+            done <"$root/$dir/index.md"
             _block=""
             _n=0
             while IFS="$(command printf '\t')" read -r _o new_rel || [ -n "$_o" ]; do
@@ -539,9 +568,9 @@ EOF
                 # THE WHOLE RISK, reached by the code meant to prevent it.
                 # Measured, and IDENTICALLY in both runtimes, so byte-parity was
                 # blind to it — same shape as the append-ordering bug above.
-                # Requiring the `](` makes it markdown link syntax rather than
-                # any parenthesized text.
-                command grep -F "]($base)" "$root/$dir/index.md" >/dev/null 2>&1 && continue
+                # An exact match against a PARSED target settles it: prose is
+                # not a link, and neither is a fenced example.
+                command grep -Fx "$base" "$_named" >/dev/null 2>&1 && continue
                 line="$(OKF_K="$new_rel" command awk -F"$(command printf '\t')" \
                     '$1 == ENVIRON["OKF_K"] { sub(/^[^\t]*\t/, ""); print; exit }' "$claimed")"
                 if [ -n "$line" ]; then
@@ -566,6 +595,7 @@ EOF
                 fi
                 _n=$((_n + 1))
             done <"$mapping"
+            command rm -f "$_named"
             if [ "$_n" -gt 0 ]; then
                 emit_edit "move-concept" "$root/$dir/index.md" "insert-block" \
                     "$((_at + 1))" "" "$_block" \
