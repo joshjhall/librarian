@@ -498,6 +498,10 @@ def scan_bundle(root: str, emit, thresholds_path: str) -> None:
     # would fire on every repo keeping unrelated markdown beside its bundle —
     # the "fires on everything" shape the root-level pass guards against above,
     # arriving one level down.
+    #
+    # The kept directories' concepts are COLLECTED here, as paths relative to
+    # `root`, and the health pass below consumes them — see its own note.
+    nested_concepts: list[str] = []
     for sub in subdirs:
         sub_dir = os.path.join(root, sub)
         sub_index = os.path.join(sub_dir, "index.md")
@@ -538,11 +542,31 @@ def scan_bundle(root: str, emit, thresholds_path: str) -> None:
                 "HIGH",
             )
         for name in sub_concepts:
+            nested_concepts.append(sub + "/" + name)
             if name not in sub_named:
                 emit(os.path.join(sub_dir, name), 1, C_ORPHAN, L_ORPHAN, "HIGH")
 
     # --- health: staleness and body requirements -----------------------------
-    for name in concepts:
+    #
+    # ROOT CONCEPTS **AND** NESTED ONES. Staleness and body requirements are
+    # properties of a memory's own text — nothing about them is root-specific —
+    # so walking only the root meant a concept STOPPED being health-checked the
+    # moment it was filed into a directory. Measured on this repo's own bundle
+    # with a mirror taxonomy: 80 known memory-missing-why rows became 1, and the
+    # scan still exited 0. A migration that silences 79 real findings while
+    # reporting success is the vacuous-scan shape, and it would have read as the
+    # migration having FIXED them.
+    #
+    # This asymmetry was introduced by the same change that added the
+    # per-directory graph pass above: the graph half learned to walk
+    # subdirectories and the health half did not. Same "fixed the level the
+    # finding named, rather than the class" shape recorded twice already here.
+    #
+    # Nested concepts come only from directories that HAVE an index.md — the
+    # walk above skips the others entirely, and that boundary is deliberate
+    # (a directory without an index has not adopted §8 routing, so this pass
+    # has no claim on its files either).
+    for name in concepts + nested_concepts:
         path = os.path.join(root, name)
         lines = read(name)
         fields = frontmatter_fields(lines)

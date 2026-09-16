@@ -195,6 +195,22 @@ def plan_moves(
     taken: set = {os.path.relpath(p, root) for p in concepts}
     for path in sorted(concepts):
         rel = os.path.relpath(path, root)
+        # AN INDEX IS NEVER RELOCATED AS A CONCEPT. collect_bundle() excludes
+        # only §3.1's RESERVED names (`index.md`, `log.md`); the CONFIGURED
+        # index names — `MEMORY.md`, `index-*.md` — arrive here as ordinary
+        # concepts. So one index merely LINKING to another made the target a
+        # "member" of it and moved it: measured on this repo's own bundle, a
+        # sentence in index-runtime.md reading "live in the root
+        # [MEMORY.md](MEMORY.md)" relocated MEMORY.md into runtime/, and all
+        # five index-*.md into core/. The validator then read each one as a
+        # malformed concept (okf-unparseable-frontmatter x6), because an index
+        # is only an index at the bundle ROOT.
+        #
+        # Routing files are the bundle's structure, not its contents. A taxonomy
+        # describes where CONCEPTS live; moving the thing that does the routing
+        # is never what an operator meant by it.
+        if is_index_name(os.path.basename(rel), index_names):
+            continue
         target_dir = resolve_destination(rel, rules, member_of)
         if not target_dir:
             continue

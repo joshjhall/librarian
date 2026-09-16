@@ -286,6 +286,18 @@ plan_moves() {
     while IFS= read -r path || [ -n "$path" ]; do
         [ -n "$path" ] || continue
         rel="${path#"$root"/}"
+        # AN INDEX IS NEVER RELOCATED AS A CONCEPT. The bundle collector excludes
+        # only §3.1's reserved names (`index.md`, `log.md`); the CONFIGURED index
+        # names — `MEMORY.md`, `index-*.md` — arrive here as ordinary concepts.
+        # So one index merely LINKING to another made the target a "member" of it
+        # and moved it: measured on this repo's own bundle, a sentence in
+        # index-runtime.md reading "live in the root [MEMORY.md](MEMORY.md)"
+        # relocated MEMORY.md into runtime/ and all five index-*.md into core/.
+        # The validator then read each one as a malformed concept, because an
+        # index is only an index at the bundle ROOT.
+        #
+        # Routing files are the bundle's structure, not its contents.
+        is_index_name "${rel##*/}" && continue
         target_dir="$(resolve_destination "$rel" "$rules" "$members")"
         [ -n "$target_dir" ] || continue
         new_rel="$target_dir/${rel##*/}"

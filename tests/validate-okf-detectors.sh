@@ -192,7 +192,15 @@ test_healthy_bundle_is_silent() {
     command printf -- '---\ntype: Reference\ntitle: A thing\ndescription: one line\ntags: [a, b]\nmetadata:\n  status: stable\n---\n\nBody.\n' >"$b/rich.md"
     # A NESTED concept, and a nested index.md with NO frontmatter (the normal
     # conformant shape for a non-root index).
-    command printf -- '---\ntype: project\n---\n\nNested body.\n' >"$b/sub/nested.md"
+    #
+    # IT CARRIES THE SECTIONS ITS TYPE REQUIRES. `project` is one of the two
+    # types with a `body_requirements` entry (**Why:** | **How to apply:**), so
+    # a bare "Nested body." is NOT conformant — this fixture asserted zero rows
+    # only because the health pass walked the root and never descended. Once it
+    # does, the row it emits here is a TRUE positive, and the fixture was the
+    # thing that was wrong: a bundle this case calls "fully conformant" has to
+    # actually be conformant, or it cannot serve as the zero-rows baseline.
+    command printf -- '---\ntype: project\n---\n\n**Why:** nested concepts are health-checked too.\n\n**How to apply:** give a required section to every type that declares one.\n' >"$b/sub/nested.md"
     command printf -- '# Sub index\n\n* [Nested](nested.md) - a nested thing\n' >"$b/sub/index.md"
 
     list="$(list_bundle "$b")"
@@ -1131,6 +1139,51 @@ test_memory_missing_why() {
     list="$(list_bundle "$b")"
     assert_silent "$list" memory-missing-why \
         "okf: an unconfigured type carries no body requirement"
+
+    # HEALTH IS CHECKED AT EVERY DEPTH, not only at the bundle root.
+    #
+    # The graph half of this pass learned to walk subdirectories (§8 routing)
+    # while the health half kept iterating the root's concepts only — so a
+    # concept STOPPED being health-checked the moment it was filed into a
+    # directory, which is exactly what okf-migrate's move-concept does to a
+    # whole bundle. Measured on this repo's own 260-file bundle with a mirror
+    # taxonomy: 80 known memory-missing-why rows became 1, at exit 0. A
+    # migration that silences 79 real findings while reporting success would
+    # read as the migration having FIXED them.
+    #
+    # The nested concept is IDENTICAL in body to the root one above, so the
+    # only thing under test is its depth.
+    b="$(graph_bundle)"
+    command mkdir -p "$b/sub"
+    command printf -- '---\ntype: feedback\n---\n\nGuidance with no why.\n' >"$b/sub/nested.md"
+    command printf -- '# sub\n\n* [Nested](nested.md) - a thing\n' >"$b/sub/index.md"
+    command printf -- '* [Sub](sub/index.md) - a bucket\n' >>"$b/MEMORY.md"
+    list="$(list_bundle "$b")"
+    assert_fires "$list" memory-missing-why "**Why:**" \
+        "okf: a NESTED memory with no Why section fires too"
+
+    # ...and staleness, the other health rule in the same loop, reaches nested
+    # concepts as well — asserted separately because one could be fixed without
+    # the other.
+    b="$(graph_bundle)"
+    command mkdir -p "$b/sub"
+    command printf -- '---\ntype: user\nstale_after: 2020-01-01\nstale_check: "re-derive the pin"\n---\n\nBody.\n' >"$b/sub/old.md"
+    command printf -- '# sub\n\n* [Old](old.md) - a thing\n' >"$b/sub/index.md"
+    command printf -- '* [Sub](sub/index.md) - a bucket\n' >>"$b/MEMORY.md"
+    list="$(list_bundle "$b")"
+    assert_fires "$list" memory-stale "re-derive the pin" \
+        "okf: a NESTED memory past its stale_after fires too"
+
+    # A DIRECTORY WITH NO index.md STAYS UNJUDGED, health included. The walk
+    # skips it entirely — a directory that has not adopted §8 routing has no
+    # claim to be checked against, and this is the boundary that keeps the pass
+    # off every repo keeping unrelated markdown beside its bundle.
+    b="$(graph_bundle)"
+    command mkdir -p "$b/loose"
+    command printf -- '---\ntype: feedback\n---\n\nGuidance with no why.\n' >"$b/loose/stray.md"
+    list="$(list_bundle "$b")"
+    assert_silent "$list" memory-missing-why \
+        "okf: a directory with no index.md is not health-checked"
 }
 
 # ============================================================================

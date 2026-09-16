@@ -437,6 +437,7 @@ EOF
     # nothing to be judged against; reporting there would fire on every repo
     # keeping unrelated markdown beside its bundle.
     local sub sub_dir sub_index sub_named sub_concepts sub_base sub_targets
+    local nested_concepts=""
     # SYMLINKED DIRECTORIES ARE SKIPPED — a SAFETY boundary, not tidiness, and
     # the same line okf-migrate's collect_bundle draws on the write side: this
     # toolset runs against SOMEONE ELSE'S bundle. The `*/` glob form FOLLOWS a
@@ -496,6 +497,10 @@ EOF
 
         while IFS= read -r sub_base; do
             [ -n "$sub_base" ] || continue
+            # Collected for the HEALTH pass below, which walks root concepts AND
+            # these — see its own note.
+            nested_concepts="${nested_concepts}${sub}/${sub_base}
+"
             case "$sub_named" in
                 *"
 $sub_base$TAB"*) continue ;;
@@ -507,6 +512,17 @@ EOF
     done
 
     # Health: staleness and per-type body requirements.
+    #
+    # ROOT CONCEPTS **AND** NESTED ONES. Staleness and body requirements are
+    # properties of a memory's own text — nothing about them is root-specific —
+    # so walking only the root meant a concept STOPPED being health-checked the
+    # moment it was filed into a directory. Measured on this repo's own bundle
+    # with a mirror taxonomy: 80 known memory-missing-why rows became 1, and the
+    # scan still exited 0 — a migration silencing 79 real findings while
+    # reporting success, which would have read as the migration FIXING them.
+    #
+    # Nested concepts come only from directories that HAVE an index.md, because
+    # the walk above skips the others entirely; that boundary is deliberate.
     #
     # The config is read ONCE, outside the per-file loop. Reading it inside meant
     # re-parsing thresholds.yml for every concept — 222 redundant parses on this
@@ -563,6 +579,6 @@ EOF
             emit "$f" 1 "$C_MISSING_WHY" "$L_MISSING_WHY: $missing" "MEDIUM"
         fi
     done <<EOF
-$concepts
+$concepts$nested_concepts
 EOF
 }
