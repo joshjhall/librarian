@@ -757,18 +757,100 @@ test_checkpoint_marker_keys_are_all_schema_declared() {
     assert_equals "" "$undeclared" "every marker checkpoint key is schema-declared"
 }
 
-# additionalProperties:false is what makes the declaration load-bearing. Pin it,
-# so the declaration above cannot be "satisfied" by loosening the schema.
+# Validate an INSTANCE against the nested checkpoint/handoff_marker schema.
+# tests/validate-contracts.sh's jq_validate_against_schema is top-level only by
+# its own documented contract, so it cannot reach checkpoint.handoff_marker --
+# hence this nested walker. Prints one line per violation; silence == valid.
+#
+# Behavioral, not declarative: the earlier keys-are-declared test reads the
+# schema's own metadata, which would still pass if additionalProperties were
+# quietly loosened. This runs real documents through and asserts the OUTCOME.
+validate_marker_instance() {
+    local instance="$1"
+    command jq -n --slurpfile s "$STATE_SCHEMA" --slurpfile d "$instance" '
+        ($s[0].properties.checkpoint) as $cp | ($d[0]) as $doc |
+        def jstype: if type == "number" and (. == floor) then "integer" else type end;
+        def check($obj; $sch; $path):
+            [ ( select($sch.additionalProperties == false)
+                | $obj | keys_unsorted[] as $k
+                | select($sch.properties[$k] == null)
+                | "\($path).\($k): undeclared property" ),
+              ( $obj | to_entries[] as $kv
+                | ($sch.properties[$kv.key]) as $p
+                | select($p != null and $p.type != null)
+                | (if ($p.type | type) == "array" then $p.type else [$p.type] end) as $want
+                | select(($want | index($kv.value | jstype)) == null)
+                | "\($path).\($kv.key): want \($want|join("|")), got \($kv.value|jstype)" ) ];
+        (check($doc; $cp; "checkpoint")
+         + (if $doc.handoff_marker then
+              check($doc.handoff_marker; $cp.properties.handoff_marker; "handoff_marker")
+            else [] end))[]' 2>&1
+}
+
+# A well-formed marker must validate. This is the control: without it, a walker
+# that rejected everything would make the rejection cases below pass vacuously.
+test_wellformed_marker_instance_validates() {
+    if jq_missing; then
+        skip_test "jq not available (schema check needs jq)"
+        return 0
+    fi
+    local tmp out
+    tmp="$(command mktemp)"
+    marker_checkpoint_json >"$tmp"
+    out="$(validate_marker_instance "$tmp")"
+    command rm -f "$tmp"
+    assert_equals "" "$out" "a well-formed handoff_marker instance validates"
+}
+
+# additionalProperties:false is what makes the declaration load-bearing. Drive a
+# real document carrying an undeclared nested key and assert it is REJECTED --
+# reading the schema's own additionalProperties would restate the diff instead.
 test_checkpoint_rejects_undeclared_properties() {
     if jq_missing; then
         skip_test "jq not available (schema check needs jq)"
         return 0
     fi
-    local strict marker_strict
-    strict="$(command jq -r '.properties.checkpoint.additionalProperties' "$STATE_SCHEMA")"
-    marker_strict="$(command jq -r '.properties.checkpoint.properties.handoff_marker.additionalProperties' "$STATE_SCHEMA")"
-    assert_equals "false" "$strict" "checkpoint still refuses undeclared properties"
-    assert_equals "false" "$marker_strict" "handoff_marker still refuses undeclared properties"
+    local tmp out
+    tmp="$(command mktemp)"
+    marker_checkpoint_json |
+        command jq '.handoff_marker.bogus_key = "nope" | .other_bogus = 1' >"$tmp"
+    out="$(validate_marker_instance "$tmp")"
+    command rm -f "$tmp"
+    assert_contains "$out" "handoff_marker.bogus_key: undeclared property" \
+        "an undeclared handoff_marker key is rejected"
+    assert_contains "$out" "checkpoint.other_bogus: undeclared property" \
+        "an undeclared checkpoint key is rejected"
+}
+
+# r_measured is integer-or-null; anything else must be refused. Pins the TYPE
+# union behaviorally -- a string sneaking through would make R uncountable.
+test_marker_rejects_wrong_r_measured_type() {
+    if jq_missing; then
+        skip_test "jq not available (schema check needs jq)"
+        return 0
+    fi
+    local tmp out
+    tmp="$(command mktemp)"
+    marker_checkpoint_json | command jq '.handoff_marker.r_measured = "three"' >"$tmp"
+    out="$(validate_marker_instance "$tmp")"
+    command rm -f "$tmp"
+    assert_contains "$out" "handoff_marker.r_measured" \
+        "a non-integer, non-null r_measured is rejected"
+}
+
+# The null arm specifically: the handing-off session CANNOT know R, so it must
+# be able to emit a conforming marker with r_measured unset-but-present.
+test_marker_accepts_null_r_measured_instance() {
+    if jq_missing; then
+        skip_test "jq not available (schema check needs jq)"
+        return 0
+    fi
+    local tmp out
+    tmp="$(command mktemp)"
+    marker_checkpoint_json | command jq '.handoff_marker.r_measured = null' >"$tmp"
+    out="$(validate_marker_instance "$tmp")"
+    command rm -f "$tmp"
+    assert_equals "" "$out" "r_measured=null validates (the write side emits it)"
 }
 
 # FAIL OPEN: the marker is telemetry riding on a checkpoint that has a job to
@@ -782,19 +864,6 @@ test_checkpoint_without_marker_is_still_valid() {
     local required
     required="$(command jq -r '.properties.checkpoint.required // [] | join(",")' "$STATE_SCHEMA")"
     assert_not_contains "$required" "handoff_marker" "a marker-less checkpoint still resumes (fail open)"
-}
-
-# r_measured is null between the handoff (which cannot know it) and the resumed
-# session (which counts it). If the schema pinned it to integer, the writing
-# side could not emit a conforming marker at all.
-test_r_measured_accepts_null_until_counted() {
-    if jq_missing; then
-        skip_test "jq not available (schema check needs jq)"
-        return 0
-    fi
-    local types
-    types="$(command jq -r '.properties.checkpoint.properties.handoff_marker.properties.r_measured.type | if type == "array" then sort | join(",") else . end' "$STATE_SCHEMA")"
-    assert_equals "integer,null" "$types" "r_measured is integer-or-null (null until the resumed session counts it)"
 }
 
 # The newest-mtime session is the active one. After a handoff the fresh session
@@ -865,8 +934,10 @@ run_test test_config_export_propagates_to_the_subprocess "config.sh export propa
 run_test test_defaults_match_config_sh "defaults match config.sh (drift guard)"
 run_test test_reads_the_newest_session_transcript "reads the newest session transcript"
 run_test test_checkpoint_marker_keys_are_all_schema_declared "handoff_marker keys are all schema-declared (#1056)"
-run_test test_checkpoint_rejects_undeclared_properties "checkpoint + marker still refuse undeclared properties"
+run_test test_wellformed_marker_instance_validates "a well-formed marker instance validates (control)"
+run_test test_checkpoint_rejects_undeclared_properties "an undeclared nested key is rejected (instance-level)"
+run_test test_marker_rejects_wrong_r_measured_type "a wrong-typed r_measured is rejected (instance-level)"
+run_test test_marker_accepts_null_r_measured_instance "r_measured=null validates (write side)"
 run_test test_checkpoint_without_marker_is_still_valid "a marker-less checkpoint still resumes (fail open)"
-run_test test_r_measured_accepts_null_until_counted "r_measured is integer-or-null until counted"
 
 generate_report

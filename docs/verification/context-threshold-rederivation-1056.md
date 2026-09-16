@@ -25,12 +25,17 @@ constraint. The measurements below reproduce that structure on 1M-era data.
 Four sessions, all `claude-opus-5` (the 1M-era model), captured 2026-09-14→16
 from one operator and one repo.
 
-| session | n (dedup'd top-level requests) | floor | last |
-| --- | ---: | ---: | ---: |
-| main checkout A | 389 | 84,369 | 482,408 |
-| main checkout B | 232 | 84,537 | 359,582 |
-| worktree/golem | 170 | 104,416 | 219,736 |
-| worktree (#1056 planning) | 59 | 104,410 | 182,296 |
+Figures below are **normalized**, matching the sibling tally's stated policy and
+AC7: per-request context sizes (which the threshold is denominated in, so they
+are the subject rather than a disclosure) and ratios. Session lengths are given
+as relative sizes rather than raw request counts.
+
+| session | relative length | floor | last | growth |
+| --- | ---: | ---: | ---: | ---: |
+| main checkout A | 1.00 (longest) | 84.4k | 482.4k | 5.7x |
+| main checkout B | 0.60 | 84.5k | 359.6k | 4.3x |
+| worktree/golem | 0.44 | 104.4k | 219.7k | 2.1x |
+| worktree (#1056 planning) | 0.15 | 104.4k | 182.3k | 1.7x |
 
 **This corpus is smaller than #784's (4 sessions vs 28) but current rather than
 stale.** That is the whole reason it is worth running: #784's n is better, its
@@ -168,12 +173,12 @@ the floor.
 But a request carrying 175–200k of context costs **~8–11k units more** than the
 same request at the floor:
 
-| session | surcharge per request above 175k | break-even | requests actually spent in 175k–250k |
-| --- | ---: | ---: | ---: |
-| main checkout A | +8.2k | 19.7 | 85 |
-| main checkout B | +10.7k | 15.1 | 38 |
-| worktree/golem | +9.7k | 16.5 | 92 |
-| worktree (#1056) | +0.3k | 641 | 11 |
+| session | surcharge per request above 175k | time spent in the band, vs break-even |
+| --- | ---: | ---: |
+| main checkout A | +8.2k | **4.3x** past it |
+| main checkout B | +10.7k | **2.5x** past it |
+| worktree/golem | +9.7k | **5.6x** past it |
+| worktree (#1056) | +0.3k | **0.02x** — never reaches it |
 
 So running on from 175k to 250k does not *save* the 161k — it spends ~9k extra
 on **every** request in that band, 2–5x the reload cost for the three sessions
@@ -202,11 +207,11 @@ outcome, not a failure to deliver, and it is chosen on two grounds:
    narrows the gap between where a fresh session starts and where it must hand
    off. Handoffs actually taken by the corpus sessions:
 
-   | floor / threshold | band | main A | main B | golem | #1056 |
-   | --- | ---: | ---: | ---: | ---: | ---: |
-   | 91k / 175k (old) | 84k | 4 | 3 | 1 | 1 |
-   | **104k / 175k (new)** | **71k** | 5 | 3 | 1 | 1 |
-   | 104k / 150k | 46k | 8 | 5 | 2 | 1 |
+   | floor / threshold | band | handoffs across the corpus, vs the old setting |
+   | --- | ---: | ---: |
+   | 91k / 175k (old) | 84k | 1.00x (baseline) |
+   | **104k / 175k (new)** | **71k** | **1.11x** |
+   | 104k / 150k | 46k | **1.78x** |
 
    Dropping to 150k would nearly **double** the handoff count for ~1.5pp of
    modeled saving, each handoff carrying real costs the model does not price
@@ -239,6 +244,12 @@ optional `handoff_marker` — no new state format, per `handoff-protocol.md` §
 
 ## Limits
 
+- **Normalization costs some reproducibility.** Per-session request counts are
+  withheld per AC7 and the sibling tally's policy, so the tables report relative
+  lengths and ratios. Session *count* (4) and the measured `R` (3) are published
+  — the first because the sibling tally publishes its own 28, the second because
+  it is the deliverable. Anyone with transcript access reproduces the absolutes
+  from the recipe below.
 - **n=4 sessions, one operator, one repo, one model.** #784 had 28. Treat every
   figure here as current-model evidence, not as a better-powered replacement.
 - **`R` is n=1**, self-measured by the session performing the handoff.
