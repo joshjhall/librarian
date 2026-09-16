@@ -81,6 +81,115 @@ has everything needed without re-deriving context:
    rationale** ("Recommend A: the state file already carries the run's autonomy
    context, and the schema is `additionalProperties:false` so the addition is
    explicit").
+4. **Existence check** — REQUIRED for every option that proposes **filing new
+   work**. See § *Check the premise* below; an unchecked filing option is not a
+   complete payload.
+5. **Constraint sweep** — REQUIRED for every option. See § *Check the premise*.
+
+## Check the premise before the operator sees it (#911)
+
+**An option's premise can be false, and you cannot see it.** The options above
+are built from the issue body plus your own worktree — never from the backlog or
+from what the issue and repo already decided. Four times in one orchestration
+session the operator was handed a decision premised on something being absent
+when it was already filed, already closed, or already ruled out:
+
+| Golem | The option said | Reality |
+| --- | --- | --- |
+| #707 | "file the split as its own issue" | already filed as **#859** |
+| #860 | all four options assumed the split did not exist | **#859** had merged minutes earlier |
+| #550 | four options on `clean` semantics | all four dropped the issue's own stated constraint |
+| #551 | four options on the prose swamp gate | none mentioned the baseline entry pinning the file |
+
+`issue-filer` dedupes, and that guard works — but it runs **one layer below this
+decision**, so by the time it could catch a duplicate a human has already been
+asked to approve creating it. That is why the check belongs here, before the
+options are rendered, and not there.
+
+### Existence check (payload item 4)
+
+For each option proposing new work, run the checker — **bare, reading the printed
+`key=value` lines**; never `eval "$(…)"` (`worktree-safe-recipes.md` Pattern 1 —
+this fires mid-implementation inside an isolated worktree, where a command
+substitution is refused and `eval` of a refusal yields an empty string, so the
+verdict would silently read as unset):
+
+```bash
+<skill-base-dir>/../../scripts/premise-check.sh exists --title "<the work the option proposes>"
+```
+
+Substitute `<skill-base-dir>` with this skill's invocation-header path.
+
+**The title is UNTRUSTED text — strip it before substituting.** What goes in
+`--title` is the option's wording, which traces back to an issue body or title
+you read, and in a public repo anyone can write those. Double quotes do not make
+that safe: bash still expands `$(…)` and backticks inside them, and a bare `"`
+in the text ends the argument early. The script itself parses argv safely — the
+exposure is entirely in *building* the command line. So before substituting,
+**delete** `"`, `` ` ``, `$`, `\` and newlines from the text; they are search
+keywords, and `search_terms` discards every non-alphanumeric character anyway, so
+removing them costs nothing and changes no verdict.
+
+**If the remainder is empty, do NOT call the script at all** — report the option
+as "existence check did not run (the title held no usable text)", in the same
+wording you would use for `unavailable`. Passing the empty string through as
+`--title ""` is a *usage error*: the script exits **2** with a usage message and
+prints no verdict, because an empty `--title` is a malformed call rather than an
+answer. That is deliberate — a caller must not be able to mistake a broken
+invocation for "nothing found" — but it means the empty case is yours to handle,
+not the script's. (The script's own `unavailable` for "no searchable keywords"
+fires on a *non-empty* title that reduces to zero usable tokens, which is a
+different branch.)
+
+The same rule governs the two other call sites (`plan-sizing.md`,
+`agents/issue-filer.md`).
+
+Then act on `verdict=` — all four cases, none optional:
+
+| verdict | what it means | what you do to the option |
+| --- | --- | --- |
+| `open` | an open issue already tracks it | **rewrite** it — "#859 already tracks this — reference it" |
+| `closed` | it is already done or merged | **remove** it entirely (the #860 case) |
+| `absent` | nothing tracks it | leave it as written |
+| `unavailable` | the check **did not run** | keep the option, and **say so in its text** |
+
+The last row is the one that matters most and is easiest to drop. `unavailable`
+is **not** `absent`: writing the option as though nothing exists, when nothing
+was actually checked, is how an outage becomes an all-clear. Say "existence check
+did not run (`gh` unavailable) — this may already be filed" and let the operator
+weigh it. This is the same rule `tracks-runbook.sh` follows for staleness.
+
+This is also what makes the dedupe **shared rather than copied**:
+`agents/issue-filer.md` step 6 calls the same script, so there is exactly one
+such query in the repo and the two cannot drift.
+
+### Constraint sweep (payload item 5)
+
+Two halves, because only one of them can be mechanized.
+
+**a. The issue's own body** — run:
+
+```bash
+<skill-base-dir>/../../scripts/premise-check.sh constraints --issue {N}
+```
+
+Each `constraint=` line is something the issue already decided. An option that
+contradicts one must **say so in its own text** rather than silently drop it —
+that is the #550 failure, where all four options quietly discarded the issue's
+"consider keeping `scope-drift` inline". On `verdict=unavailable`, state that the
+sweep did not run, exactly as above.
+
+**b. Repo files the option would contradict** — for each option, name the file
+whose recorded decision it argues with, or state that none was found. #551's
+options proposed splitting a file that `tests/prose-budget.baseline` pins at 755
+with a written justification, so "split it" was arguing with a documented
+decision nobody surfaced.
+
+**This half is deliberately NOT mechanized, and that boundary is the point.**
+This plugin installs into arbitrary repos and cannot know which files in one
+encode decisions — a checker claiming to cover it would report a clean sweep over
+ground it never walked, which is worse than the gap. So it is an instructed step:
+you are expected to have looked, and to say what you found.
 
 ## Raise ONE question per gate (#467)
 

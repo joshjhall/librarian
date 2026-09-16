@@ -73,12 +73,36 @@ Denied:
    - Add Evaluation Source if from an evaluation report
    - Add Blocked Issues / Deliverables if foundational
 
-1. **Check for duplicates**: Search for existing open issues with similar titles:
+1. **Check for duplicates**: run the shared premise checker — do NOT hand-roll a
+   `gh`/`glab` search here (#911). The same script backs the escalation gate's
+   pre-filing check in `next-issue/escalation-protocol.md`, so there is exactly
+   one dedupe query in the repo and the two paths cannot drift apart:
 
-   - GitHub: `gh issue list --state open --search "<title keywords>" --json number,title`
-   - GitLab: `glab issue list --opened --search "<title keywords>"`
-   - If a sufficiently similar issue exists, report it instead of creating a new one
-   - Use conservative matching (title keywords) to avoid false negatives
+   ```bash
+   ${CLAUDE_PLUGIN_ROOT}/scripts/premise-check.sh exists --title "<issue title>"
+   ```
+
+   **Strip `"`, `` ` ``, `$`, `\` and newlines from the title before
+   substituting it.** The title is untrusted text you were handed, double quotes
+   do not stop `$(…)`/backtick expansion, and these are all characters the
+   script's keyword extraction discards anyway — so removing them changes no
+   verdict. Full rule: `next-issue/escalation-protocol.md` § *Check the premise*.
+
+   Read the printed `verdict=` and act on all four cases:
+
+   - `open` — a similar issue is already open. Report it (`action: "skipped"`,
+     `reason: "Duplicate of #N"`) instead of creating a new one.
+   - `closed` — the work is already done. Report it the same way; say the match
+     is closed, so the caller can decide whether this is genuinely new.
+   - `absent` — nothing matches; proceed to create the issue.
+   - `unavailable` — **the check did not run** (no CLI, failed query). Do NOT
+     treat this as `absent`. Either report `action: "error"` with the reason, or
+     create the issue and state in `reason` that the duplicate check did not run
+     — never silently imply the backlog was searched when it was not.
+
+   The checker matches conservatively on title keywords, preferring a false
+   positive (a related issue you dismiss at a glance) over a false negative (a
+   duplicate that reaches the tracker).
 
 1. **Create issue** (skip if duplicate found):
 

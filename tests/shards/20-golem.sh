@@ -83,3 +83,8 @@ run_stage "ephemeral-port allocation + retry" bash "$SCRIPT_DIR/validate-free-po
 # that does not exist, which is what keeps them discriminating now that #921 has
 # created the two that were missing.
 run_stage "status-label transition ordering" bash "$SCRIPT_DIR/validate-label-transition.sh"
+# The escalation premise checker (#911): an option proposing work that is
+# already filed, closed, or ruled out must never reach the operator as offered.
+# Its fixtures stub `gh` rather than querying the live backlog, so the closed-hit
+# case (#860) stays a fixed reproduction instead of drifting with the tracker.
+run_stage "escalation premise checker" bash "$SCRIPT_DIR/validate-premise-check.sh"

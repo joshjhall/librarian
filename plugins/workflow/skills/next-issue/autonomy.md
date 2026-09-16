@@ -164,7 +164,8 @@ The harness-perm-mode row (L1 `acceptEdits` vs L2–L4 `auto`) is surfaced in th
   L1–L3, auto-passed (agent picks its recommendation) at L4**, and a **dead-end**
   (whose only auto-resolution would break the merge invariant) blocks at **every**
   level, L4 included. Follow `escalation-protocol.md` for the payload format
-  (decision, options + tradeoffs, recommendation), the feed emission
+  (decision, options + tradeoffs, recommendation, **existence check, constraint
+  sweep** — see § *Check the premise*), the feed emission
   (`ESCALATION:`-prefixed message → `golem-notify.sh`, surfaced distinctly by
   `${CLAUDE_PLUGIN_ROOT}/scripts/golem-status.sh`), and the **never-time-out**
   rule at this gate. Err toward escalating when unsure.
