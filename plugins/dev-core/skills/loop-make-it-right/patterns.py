@@ -30,6 +30,23 @@ import sys
 CERTAINTY = "HIGH"
 EVIDENCE_CAP = 60  # long-function/nesting/name evidence uses printf '%.60s'
 
+
+def truncate_chars(s: str) -> str:
+    """First EVIDENCE_CAP characters of `s`, with a marker when it actually cut.
+
+    THE MARKER IS THE POINT (#786). A silently trimmed evidence field reads as a
+    complete one, so a reader reasons about a line that does not end where the
+    text stops. The ellipsis REPLACES the last character rather than extending
+    past the cap, so the column stays bounded at exactly EVIDENCE_CAP.
+
+    Byte-for-byte equivalent to `truncate_chars` in the sibling patterns.sh --
+    tests/validate-python-ports.sh pins the two runtimes' TSV output.
+    """
+    if len(s) <= EVIDENCE_CAP:
+        return s
+    return s[: EVIDENCE_CAP - 1] + "\u2026"
+
+
 BRACE_EXTS = ("ts", "js", "tsx", "jsx", "go", "rs")
 
 # Function-definition patterns.
@@ -139,7 +156,7 @@ def scan_long_functions(path: str, lines: list[str], ext: str, max_lines: int) -
                     break
             func_lines = end_off if end_off is not None else (total - idx)
             if func_lines > max_lines:
-                ev = strip_eol_cr(content)[:EVIDENCE_CAP]
+                ev = truncate_chars(strip_eol_cr(content))
                 emit(
                     path,
                     idx,
@@ -158,7 +175,7 @@ def scan_long_functions(path: str, lines: list[str], ext: str, max_lines: int) -
                     break
             func_lines = next_off if next_off is not None else (total - idx)
             if func_lines > max_lines:
-                ev = strip_eol_cr(content)[:EVIDENCE_CAP]
+                ev = truncate_chars(strip_eol_cr(content))
                 emit(
                     path,
                     idx,
@@ -181,7 +198,7 @@ def scan_deep_nesting(path: str, lines: list[str], ext: str, max_depth: int) -> 
             continue
         depth = _leading_ws_len(line) // unit
         if depth > max_depth:
-            ev = strip_eol_cr(line)[:EVIDENCE_CAP]
+            ev = truncate_chars(strip_eol_cr(line))
             emit(
                 path,
                 idx,
@@ -207,7 +224,7 @@ def scan_single_char_names(path: str, lines: list[str], ext: str) -> None:
         varname = m.group(1)
         if varname in SKIP_VARNAMES:
             continue
-        ev = strip_eol_cr(content)[:EVIDENCE_CAP]
+        ev = truncate_chars(strip_eol_cr(content))
         emit(
             path,
             idx,

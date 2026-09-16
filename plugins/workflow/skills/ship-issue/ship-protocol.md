@@ -246,7 +246,9 @@ These env vars toggle non-default behavior; all are opt-in:
   `AbortSignal`), and a *spinning* agent emits no tokens so it never advances the
   harness token budget — so a harness cannot self-deadline. The skill bounds the
   wait instead: invoke the harness as a background task and poll `TaskOutput`
-  against this threshold. The threshold/extension **arithmetic is not re-derived
+  against this threshold — for the completion state, not the accumulated
+  transcript (`TaskOutput` averages 7,776 chars, the highest per-call of any
+  tool, #786). The threshold/extension **arithmetic is not re-derived
   in prose** (that drift wedged three golems, #327) — the skill **calls**
   `scripts/workflow-wall-timeout.sh check --elapsed-min N --level L
   --extensions-used K` each poll, which reads this var and returns a

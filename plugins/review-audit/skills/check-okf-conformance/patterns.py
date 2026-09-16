@@ -67,6 +67,23 @@ from bundle_graph import is_index, read_index_names, scan_bundle  # noqa: E402
 
 EVIDENCE_CAP = 80  # matches truncate_chars 80 in patterns.sh
 
+
+def truncate_chars(s: str) -> str:
+    """First EVIDENCE_CAP characters of `s`, with a marker when it actually cut.
+
+    THE MARKER IS THE POINT (#786). A silently trimmed evidence field reads as a
+    complete one, so a reader reasons about a line that does not end where the
+    text stops. The ellipsis REPLACES the last character rather than extending
+    past the cap, so the column stays bounded at exactly EVIDENCE_CAP.
+
+    Byte-for-byte equivalent to `truncate_chars` in the sibling patterns.sh --
+    tests/validate-python-ports.sh pins the two runtimes' TSV output.
+    """
+    if len(s) <= EVIDENCE_CAP:
+        return s
+    return s[: EVIDENCE_CAP - 1] + "\u2026"
+
+
 # Reserved filenames, OKF §3.1. These have defined meaning at ANY level of the
 # hierarchy and are NOT concept documents, so the concept-level rules (§4.1
 # frontmatter, required `type`) do not apply to them. Exactly the spec's two —
@@ -268,7 +285,7 @@ def emit(path: str, line_no: int, category: str, evidence: str, certainty: str) 
                 path,
                 str(line_no),
                 category,
-                strip_eol_cr(evidence)[:EVIDENCE_CAP],
+                truncate_chars(strip_eol_cr(evidence)),
                 certainty,
             )
         )

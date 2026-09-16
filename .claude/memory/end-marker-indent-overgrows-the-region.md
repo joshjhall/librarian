@@ -44,6 +44,22 @@ grammar where the over-grown text is still well-formed. **Only a length bound
 distinguishes over-growth**; pair it with the validity check rather than choosing
 between them.
 
+**A third arm: the end anchor's own definition can be unreliable, with nothing
+having drifted at all.** Confirmed again on #786, mutation-testing
+`tests/lint-truncation-markers.sh`'s detector for `truncate_chars`'s `…`
+marker: `sed -n '/^def truncate_chars/,/^[a-zA-Z_@]/p' "$f" | grep -qE '…'`
+stayed green even after the marker was reverted to a silent
+`s[:EVIDENCE_CAP]`, because the range never terminated at the function's true
+end and swept in an unrelated `…` sitting in a prose comment far below
+(measured: `plugins/review-audit/skills/check-lifecycle/patterns.py:259`). No
+delimiter moved — "next top-level def/decorator line" is simply not a reliable
+function-boundary signature on its own: it can stop early (a blank line inside
+a docstring satisfies nothing, so the range keeps going) or run long (no
+matching line for hundreds of lines). **Where a single line inside the intended
+region already distinguishes it, anchor on that line directly and drop the
+range entirely** — `^ *return s\[: *[A-Za-z_]+ - 1\]` needs no end delimiter at
+all and cannot inherit this failure mode.
+
 Also make the end pattern tolerate how the delimiter really drifts — trailing
 whitespace, an inline comment — since over-tightening it is itself a way to stop
 matching. But tolerance needs its own divergence arm (an *indented* delimiter
@@ -54,4 +70,6 @@ test proves nothing.
 
 Related: [[prose-contract-anchored-to-prose]] for why ids beat headings in the
 first place; [[gate-and-evidence-converge-tautology]] for the sibling shape where
-a check gets easier to satisfy for a different reason.
+a check gets easier to satisfy for a different reason;
+[[green-suite-is-not-evidence-until-mutated]] for the general habit that surfaced
+all three instances of this file.

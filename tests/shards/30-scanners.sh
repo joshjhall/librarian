@@ -151,6 +151,13 @@ run_stage "Pre-scan input-shape guard" bash "$SCRIPT_DIR/lint-prescan-input-guar
 # which pairs a .py with its .sh, structurally cannot reach that one.
 run_stage "Evidence-field CR strip" bash "$SCRIPT_DIR/lint-evidence-cr-strip.sh"
 
+# Same corpus, same copy-spreads-the-defect argument, one property over: the
+# clamp must SAY it cut (#786). Cheap — greps plus a sourced helper per copy,
+# ~2s — so it does not disturb the three-way leg balance this shard's header
+# warns about. It also pins the #267 byte-faithful exemption, which is the
+# boundary on every ceiling in the repo.
+run_stage "Truncation markers" bash "$SCRIPT_DIR/lint-truncation-markers.sh"
+
 # The same shape, one predicate over: is_test_file's name arms must match the
 # BASENAME, so a DIRECTORY named test_helpers/ can never make real source
 # beneath it read as test code. Fixed by hand twice (#568, #836) before anything

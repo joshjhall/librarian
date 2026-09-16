@@ -46,6 +46,23 @@ import sys
 
 EVIDENCE_CAP = 80  # match patterns.py: evidence truncated to 80 codepoints
 
+
+def truncate_chars(s: str) -> str:
+    """First EVIDENCE_CAP characters of `s`, with a marker when it actually cut.
+
+    THE MARKER IS THE POINT (#786). A silently trimmed evidence field reads as a
+    complete one, so a reader reasons about a line that does not end where the
+    text stops. The ellipsis REPLACES the last character rather than extending
+    past the cap, so the column stays bounded at exactly EVIDENCE_CAP.
+
+    Byte-for-byte equivalent to `truncate_chars` in the sibling patterns.sh --
+    tests/validate-python-ports.sh pins the two runtimes' TSV output.
+    """
+    if len(s) <= EVIDENCE_CAP:
+        return s
+    return s[: EVIDENCE_CAP - 1] + "\u2026"
+
+
 # Every agnix row is emitted at a fixed MEDIUM certainty (issue #470). agnix's
 # `rule_severity` is issue *severity*, not detection *confidence*, and it marks
 # essentially the whole CC-* schema surface HIGH — the checker's certainty=HIGH
@@ -157,7 +174,7 @@ def normalize(diagnostics: list[dict]) -> None:
         # stays a fixed confirmation tier. A null/absent rule_severity coalesces
         # to "" via _field, rendering as "[CC-AG-001|] message".
         severity = _field(diag, "rule_severity")
-        evidence = ("[" + rule + "|" + severity + "] " + message)[:EVIDENCE_CAP]
+        evidence = truncate_chars(("[" + rule + "|" + severity + "] " + message))
         emit(path, line_no, category, evidence, AGNIX_CERTAINTY)
 
 

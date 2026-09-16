@@ -279,7 +279,13 @@ test_strip_is_behaviorally_correct() {
                 command cat -v
         )"
 
-        assert_equals '[password = "x"][password = "x"][abcd]' "$out" \
+        # The third case CUTS, so it carries the #786 truncation marker and the
+        # CR must still be gone from what remains. `cat -v` renders the marker
+        # as `M-bM-^@M-&` (UTF-8 U+2026), which is what makes a stray `^M`
+        # beside it still legible in a failure diff. Its expected width is 4 --
+        # three sliced characters plus the ellipsis -- because the marker
+        # REPLACES the last character rather than extending past the cap.
+        assert_equals '[password = "x"][password = "x"][abcM-bM-^@M-&]' "$out" \
             "${script#"$PLUGINS_DIR"/}: CRLF and LF evidence are identical, and the slice is unaffected"
     done < <(list_truncate_chars_files)
 

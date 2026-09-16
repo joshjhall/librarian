@@ -72,6 +72,22 @@ def read_lines(path: str) -> list[str]:
     return lines
 
 
+def truncate_chars(s: str) -> str:
+    """First EVIDENCE_CAP characters of `s`, with a marker when it actually cut.
+
+    THE MARKER IS THE POINT (#786). A silently trimmed evidence field reads as a
+    complete one, so a reader reasons about a line that does not end where the
+    text stops. The ellipsis REPLACES the last character rather than extending
+    past the cap, so the column stays bounded at exactly EVIDENCE_CAP.
+
+    Byte-for-byte equivalent to `truncate_chars` in the sibling patterns.sh --
+    tests/validate-python-ports.sh pins the two runtimes' TSV output.
+    """
+    if len(s) <= EVIDENCE_CAP:
+        return s
+    return s[: EVIDENCE_CAP - 1] + "\u2026"
+
+
 def emit(path: str, line_no: str, category: str, message: str, certainty: str) -> None:
     sys.stdout.write("\t".join((path, line_no, category, message, certainty)) + "\n")
 
@@ -297,7 +313,8 @@ def check_claude_md_drift(path: str, lines: list[str]) -> None:
                     path,
                     str(idx),
                     "claude-md-drift",
-                    "Referenced path not found: " + strip_eol_cr(target)[:EVIDENCE_CAP],
+                    "Referenced path not found: "
+                    + truncate_chars(strip_eol_cr(target)),
                     "MEDIUM",
                 )
 
@@ -335,7 +352,7 @@ def check_config_inconsistency(path: str, lines: list[str]) -> None:
                     str(idx),
                     "config-inconsistency",
                     "Referenced agent/skill not found: "
-                    + strip_eol_cr(plugin + ":" + name)[:EVIDENCE_CAP],
+                    + truncate_chars(strip_eol_cr((plugin + ":" + name))),
                     "MEDIUM",
                 )
 
@@ -353,7 +370,7 @@ def check_mcp_config(path: str, lines: list[str]) -> None:
             str(idx),
             "mcp-misconfiguration",
             "Insecure HTTP URL in config (use HTTPS): "
-            + strip_eol_cr(line)[:EVIDENCE_CAP],
+            + truncate_chars(strip_eol_cr(line)),
             "HIGH",
         )
 
@@ -374,7 +391,7 @@ def check_hook_safety(path: str, lines: list[str]) -> None:
                 str(idx),
                 "hook-safety",
                 "Destructive command in hook without confirmation: "
-                + strip_eol_cr(line)[:EVIDENCE_CAP],
+                + truncate_chars(strip_eol_cr(line)),
                 "HIGH",
             )
         if secret_leak.search(line):
@@ -383,7 +400,7 @@ def check_hook_safety(path: str, lines: list[str]) -> None:
                 str(idx),
                 "hook-safety",
                 "Potential secret leak in hook output: "
-                + strip_eol_cr(line)[:EVIDENCE_CAP],
+                + truncate_chars(strip_eol_cr(line)),
                 "HIGH",
             )
 
@@ -407,7 +424,7 @@ def check_harness_logic(path: str, lines: list[str]) -> None:
                 str(idx),
                 "harness-logic",
                 "Finding ref may collide (no per-finding index): "
-                + strip_eol_cr(line)[:EVIDENCE_CAP],
+                + truncate_chars(strip_eol_cr(line)),
                 "MEDIUM",
             )
         if bare_agent.search(line):
@@ -416,7 +433,7 @@ def check_harness_logic(path: str, lines: list[str]) -> None:
                 str(idx),
                 "harness-logic",
                 "Bare agentType (needs <plugin>:<name> for the Workflow tool): "
-                + strip_eol_cr(line)[:EVIDENCE_CAP],
+                + truncate_chars(strip_eol_cr(line)),
                 "MEDIUM",
             )
         if unsafe_interp.search(line):
@@ -425,7 +442,7 @@ def check_harness_logic(path: str, lines: list[str]) -> None:
                 str(idx),
                 "harness-logic",
                 "Interpolation into --dangerously-skip-permissions (validate first): "
-                + strip_eol_cr(line)[:EVIDENCE_CAP],
+                + truncate_chars(strip_eol_cr(line)),
                 "HIGH",
             )
         if install.search(line) and not install_safe.search(line):
@@ -434,7 +451,7 @@ def check_harness_logic(path: str, lines: list[str]) -> None:
                 str(idx),
                 "harness-logic",
                 "Install/regen may run lifecycle scripts (use lockfile-only): "
-                + strip_eol_cr(line)[:EVIDENCE_CAP],
+                + truncate_chars(strip_eol_cr(line)),
                 "MEDIUM",
             )
 

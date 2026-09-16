@@ -42,6 +42,14 @@ call (see SKILL.md `## Autonomy Levels` and `autonomy.md`).
    `file:line` anchors, never a transcript of what it read — otherwise the plan
    context absorbs the exploration anyway and the delegation bought nothing.
 
+   **Then size each inline read you do make.** The routing above decides *who*
+   reads; it does not bound how much comes back. Read the narrowest range that
+   could contain the answer and widen only on an actual miss — `sed` averages
+   2,458 chars per call here and `cat` 1,809, and a plan-phase read is resident
+   for the whole implement/review budget that follows it (#786). Where the
+   question is "how does X work" rather than a known line range, prefer
+   `codegraph_explore`. Full rule: `/dev-core:reading-granularity`.
+
 1. **Run the plan-lens sizing step** — load `plan-sizing.md` and follow it.
    Build the candidate file list from the exploration you just did, estimate the
    lines the plan adds to each, and run

@@ -289,7 +289,20 @@ for _cand in C.UTF-8 C.utf8 en_US.UTF-8 en_US.utf8; do
     fi
 done
 unset _cand
-# truncate_chars <maxchars> <string> — first <maxchars> characters on stdout.
+# truncate_chars <maxchars> <string> — first <maxchars> characters on stdout,
+# with a visible marker when the slice actually cut something (#786).
+#
+# THE MARKER IS THE POINT. A silently trimmed evidence field reads as a
+# complete one: a reviewer sees `const SECRET = "AKIA…EXAMPLE" && do_someth`
+# and reasons about a line that does not end there. That is the same
+# false-completeness ship-issue/workflow.js already guards against for its
+# pre-scan list and conventions digest (PRESCAN_MAX / DIGEST_MAX_CHARS, both
+# disclosed in-prompt) — this helper was the remaining silent clamp.
+#
+# The ellipsis REPLACES the last character rather than extending past the cap,
+# so the column stays bounded at exactly <maxchars> and a caller that budgeted
+# for n gets n. It is appended AFTER slicing, never itself sliced, so the
+# byte-wise printf fallback below cannot split it mid-sequence.
 truncate_chars() {
     local n="$1" s="$2"
     # Strip a trailing CR before slicing (#902). Evidence is captured from the
@@ -305,9 +318,15 @@ truncate_chars() {
     s=${s%$'\r'}
     if [ -n "$_PRESCAN_UTF8_LOCALE" ]; then
         local LC_CTYPE="$_PRESCAN_UTF8_LOCALE"
-        command printf '%s' "${s:0:$n}"
+        if [ "${#s}" -gt "$n" ]; then
+            printf '%s…' "${s:0:$((n - 1))}"
+        else
+            printf '%s' "$s"
+        fi
+    elif [ "${#s}" -gt "$n" ]; then
+        command printf "%.$((n - 1))s…" "$s"
     else
-        command printf "%.${n}s" "$s"
+        command printf '%s' "$s"
     fi
 }
 

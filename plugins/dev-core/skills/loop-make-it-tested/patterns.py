@@ -98,6 +98,26 @@ def read_lines(path: str) -> list[str]:
     return lines
 
 
+def truncate_chars(s: str, cap: int) -> str:
+    """First `cap` characters of `s`, with a marker when it actually cut.
+
+    THE MARKER IS THE POINT (#786). A silently trimmed evidence field reads as a
+    complete one, so a reader reasons about a line that does not end where the
+    text stops. The ellipsis REPLACES the last character rather than extending
+    past the cap, so the column stays bounded at exactly `cap`.
+
+    Byte-for-byte equivalent to `truncate_chars` in the sibling patterns.sh --
+    tests/validate-prescan-differential.sh diffs the two over the whole repo.
+
+    Takes `cap` as an argument rather than reading a module constant: this port
+    has no EVIDENCE_CAP, because its two call sites cap at 60 to match the
+    `truncate_chars 60` in patterns.sh.
+    """
+    if len(s) <= cap:
+        return s
+    return s[: cap - 1] + "\u2026"
+
+
 def _py_public_symbols_gate(lines: list[str]) -> str:
     """This MODULE's public-API policy — "all:<names>", "none", or "open".
 
@@ -242,7 +262,7 @@ def scan_file(path: str, lines: list[str]) -> None:
                 ],
                 func_name,
             ):
-                ev = strip_eol_cr(content)[:60]
+                ev = truncate_chars(strip_eol_cr(content), 60)
                 emit(
                     path,
                     str(idx),
@@ -257,7 +277,7 @@ def scan_file(path: str, lines: list[str]) -> None:
             func_name = m.group(1) if m else ""
             test_file = f"{dirname}/{name_no_ext}_test.go"
             if os.path.isfile(test_file) and not _word_in_file(test_file, func_name):
-                ev = strip_eol_cr(content)[:60]
+                ev = truncate_chars(strip_eol_cr(content), 60)
                 emit(
                     path,
                     str(idx),

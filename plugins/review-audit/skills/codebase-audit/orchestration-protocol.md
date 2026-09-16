@@ -259,6 +259,15 @@ heuristic pass → judgment pass → within-skill dedup, emitting the
 (`verify`) barrier then re-scores every domain's findings at once (see below),
 before the aggregate step.
 
+**Read granularity inside a scan.** A scan is the most read-heavy phase in this
+skill, and every char a scanner pulls in is resident for the rest of the audit.
+Each scanner reads the narrowest range that could answer the question it is
+scanning for and widens only on an actual miss — the deterministic pre-scan
+already hands it `file:line` anchors, so the range is usually known before the
+read. `sed` averages 2,458 chars per call and `cat` 1,809 across the measured
+fleet (#786); prefer `codegraph_explore` where the question is about symbols
+rather than a line range. Full rule: `/dev-core:reading-granularity`.
+
 The active scanner set is whatever `map` discovered, with the domain-override
 precedence (a `check-*` skill overrides the `audit-*` agent for its domain; a
 project agent overrides a built-in of the same name). Built-in domains:

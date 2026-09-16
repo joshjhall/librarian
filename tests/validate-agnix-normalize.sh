@@ -110,6 +110,31 @@ JSON
 STUBEOF
 command chmod +x "$STUB_LONG"
 
+# A stub whose composed evidence lands EXACTLY on the 80-codepoint cap, so the
+# marker must be ABSENT. The cut case above cannot show this: an unconditional
+# marker -- `.[0:79] + "…"` with the `if length > 80` guard dropped or written
+# `>=` -- truncates a value that needed no truncation and still measures 80
+# codepoints, so test_evidence_truncated_to_80 passes either way.
+#
+# The evidence is `[RULE|SEVERITY] message`, and `[CC-AG-001|HIGH] ` is 17
+# codepoints, so the message is 63 B's for a composed 80. That arithmetic is
+# why this is a separate fixture rather than a longer message on STUB_LONG.
+#
+# This clamp is written inline in jq rather than as a `truncate_chars() {`
+# bash function, so it is invisible to tests/lint-truncation-markers.sh's
+# discovery (`grep -rl '^truncate_chars() {'`) and is NOT part of that gate's
+# 15-copy corpus. This test is the boundary arm for this site specifically.
+STUB_EXACT="$WORKDIR/stub-exact.sh"
+command cat >"$STUB_EXACT" <<'STUBEOF'
+#!/usr/bin/env bash
+command cat <<'JSON'
+{"version":"0.40.0","files_checked":1,"diagnostics":[
+ {"rule":"CC-AG-001","file":"a.md","line":1,"message":"BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB","rule_severity":"HIGH"}
+],"summary":{}}
+JSON
+STUBEOF
+command chmod +x "$STUB_EXACT"
+
 # A stub emitting non-JSON -> fail-loud parse path.
 STUB_BAD="$WORKDIR/stub-bad.sh"
 command printf '%s\n%s\n' '#!/usr/bin/env bash' 'echo "not json {{{"' >"$STUB_BAD"
@@ -331,12 +356,45 @@ test_unmapped_and_project_rows_dropped() {
 test_evidence_truncated_to_80() {
     # The `[RULE] message` evidence column is capped at 80 codepoints (matches
     # patterns.py str[:80]); parity holds on the boundary.
+    #
+    # Counted with `wc -m`, NOT awk's `length()`. Since #786 a cut value ends in
+    # a multibyte ellipsis, and awk's length() is BYTE-based here -- it reported
+    # 82 for a correctly-capped 80-CHARACTER field, which would read as the
+    # clamp being broken when it is the ruler that is wrong.
     run_bash "$STUB_LONG" "$FILE_LIST"
-    _ev="$(command printf '%s' "$RUN_OUT" | command awk -F'\t' 'NR==1{print length($4)}')"
+    # `$( )` strips the trailing newline cut emits, so wc -m counts the field
+    # itself rather than the field plus its terminator.
+    _ev="$(command printf '%s' "$RUN_OUT" | command sed -n '1p' | command cut -f4)"
+    _ev="$(command printf '%s' "$_ev" | LC_ALL=C.UTF-8 command wc -m | command tr -d ' ')"
     assert_equals "80" "$_ev" "bash: evidence truncated to 80 codepoints"
     if [ "$HAVE_PY" = "1" ]; then
         run_py "$STUB_LONG" "$FILE_LIST"
         assert_equals "$RUN_OUT" "$PY_OUT" "parity: truncation identical bash == python"
+    fi
+}
+
+test_marker_absent_at_exact_cap() {
+    # AC6: a value that lands exactly ON the cap was not cut, so it must come
+    # back UNMARKED. Together with test_evidence_truncated_to_80 above this is
+    # the cut/exact pair that makes the marker conditional rather than
+    # unconditional -- the same triad tests/lint-truncation-markers.sh applies
+    # to the 15 truncate_chars copies, applied here to the jq clamp that gate's
+    # discovery cannot see.
+    run_bash "$STUB_EXACT" "$FILE_LIST"
+    _ev="$(command printf '%s' "$RUN_OUT" | command sed -n '1p' | command cut -f4)"
+
+    # Width first: pins that the value really is AT the cap, so the absence
+    # asserted below is the boundary case and not merely a short string.
+    _evlen="$(command printf '%s' "$_ev" | LC_ALL=C.UTF-8 command wc -m | command tr -d ' ')"
+    assert_equals "80" "$_evlen" "bash: exact-cap evidence is 80 codepoints"
+
+    assert_not_contains "$_ev" "…" \
+        "bash: no truncation marker on a value that lands exactly on the cap"
+
+    if [ "$HAVE_PY" = "1" ]; then
+        run_py "$STUB_EXACT" "$FILE_LIST"
+        assert_equals "$RUN_OUT" "$PY_OUT" \
+            "parity: exact-cap handling identical bash == python"
     fi
 }
 
@@ -711,6 +769,7 @@ run_test test_agnix_config_placement "AGNIX_CONFIG forwarded as --config before 
 run_test test_null_fields_parity "JSON null fields dropped/coalesced + parity"
 run_test test_unmapped_and_project_rows_dropped "unmapped + project rows dropped"
 run_test test_evidence_truncated_to_80 "evidence truncated to 80 codepoints + parity"
+run_test test_marker_absent_at_exact_cap "no marker at the exact cap (#786 AC6) + parity"
 run_test test_certainty_is_fixed_medium "certainty is a fixed MEDIUM, severity moves to evidence (#470) + parity"
 run_test test_null_severity_renders_empty "null rule_severity renders an empty severity slot (#470) + parity"
 run_test test_tsv_injection_scrubbed "tab/newline/CR in agnix text cannot forge TSV columns or rows + parity"

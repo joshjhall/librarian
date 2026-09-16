@@ -225,7 +225,13 @@ if [ -z "$_trimmed" ]; then
 fi
 
 # --- map diagnostics -> TSV (jq: prefix map, overlap filter, 80-codepoint cap) -
-# .[0:80] slices by codepoint (matches Python str[:80]); join("\t") avoids @tsv's
+# The cap MARKS what it cut (#786): over 80 codepoints it keeps 79 and appends
+# `…`, so the field stays exactly 80 wide and a clamped message cannot read as a
+# complete one. Below the cap the value is untouched — an unconditional marker
+# would be as uninformative as none. This mirrors `truncate_chars` in the
+# patterns.sh family and `truncate_chars` in the agnix-normalize.py primary,
+# whose TSV this must match byte-for-byte.
+# The slice is by CODEPOINT (matching Python's str[:n]); join("\t") avoids @tsv's
 # escaping so the row is byte-identical to the Python primary. Unmapped rules and
 # empty-`file` diagnostics (project-level advisories) are dropped.
 # Certainty is a fixed "MEDIUM" and agnix's own rule_severity rides in the
@@ -270,7 +276,8 @@ if type != "object" then error("not an object") else . end
     (((.line // "") | tostring) | scrub),
     $category,
     ((("[" + $rule + "|" + ((.rule_severity // "") | tostring) + "] "
-       + ((.message // "") | tostring))[0:80]) | scrub),
+       + ((.message // "") | tostring))
+      | if length > 80 then .[0:79] + "…" else . end) | scrub),
     "MEDIUM"
   ]
 | join("\t")

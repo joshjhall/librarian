@@ -281,6 +281,12 @@ For triggered cases, read broader context (surrounding code, related files
 from `related_files`). Apply deeper analysis. Emit findings with certainty
 `LOW` and method `llm`.
 
+**"Broader" means one step wider than the finding, not the whole file.** You
+already hold a `file:line` here: widen to the enclosing function or the named
+related file, and widen again only if that genuinely left the ambiguity
+unresolved. Reading the whole file to be safe costs 2,458 chars on average and
+stays resident for the rest of the scan (#786, `/dev-core:reading-granularity`).
+
 If no ambiguous cases exist, skip this pass.
 
 ### Step 6: Merge and Deduplicate

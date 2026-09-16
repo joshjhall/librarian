@@ -205,7 +205,10 @@ would be dead code that reads as a working safeguard.
 **The bound belongs to the caller.** Wall-time is only measurable in the Claude
 turn that invokes the `Workflow` tool — it can invoke the harness as a
 **background** task and poll `TaskOutput` against a threshold, then `TaskStop`
-and recover partials from `<transcriptDir>/journal.jsonl`. The ship-issue skill
+and recover partials from `<transcriptDir>/journal.jsonl`. Have it poll for the
+**completion state**, not the accumulated transcript: `TaskOutput` averages
+7,776 chars, the highest per-call of any tool (#786), so a poll loop that reads
+the whole output each iteration pays that repeatedly for a one-line answer. The ship-issue skill
 does exactly this via `LIBRARIAN_WORKFLOW_WALL_TIMEOUT` +
 `plugins/workflow/scripts/recover-journal-partials.sh`, mirroring the
 `LIBRARIAN_CI_WAIT_TIMEOUT` CI-wait loop. When a harness needs a latency bound,

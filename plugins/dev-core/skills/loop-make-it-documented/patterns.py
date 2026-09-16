@@ -26,6 +26,23 @@ from fnmatch import fnmatch
 
 EVIDENCE_CAP = 60  # printf '%.60s'
 
+
+def truncate_chars(s: str) -> str:
+    """First EVIDENCE_CAP characters of `s`, with a marker when it actually cut.
+
+    THE MARKER IS THE POINT (#786). A silently trimmed evidence field reads as a
+    complete one, so a reader reasons about a line that does not end where the
+    text stops. The ellipsis REPLACES the last character rather than extending
+    past the cap, so the column stays bounded at exactly EVIDENCE_CAP.
+
+    Byte-for-byte equivalent to `truncate_chars` in the sibling patterns.sh --
+    tests/validate-python-ports.sh pins the two runtimes' TSV output.
+    """
+    if len(s) <= EVIDENCE_CAP:
+        return s
+    return s[: EVIDENCE_CAP - 1] + "\u2026"
+
+
 # Test/non-source files skipped wholesale (substring globs, matching the bash
 # leading `case`).
 SKIP_GLOBS = (
@@ -118,7 +135,7 @@ def scan_python(path: str, lines: list[str]) -> None:
                     path,
                     func_line,
                     "undocumented-public-function",
-                    "No docstring: " + strip_eol_cr(func_text)[:EVIDENCE_CAP],
+                    "No docstring: " + truncate_chars(strip_eol_cr(func_text)),
                 )
             i = j + 1
             continue
@@ -134,7 +151,7 @@ def scan_python(path: str, lines: list[str]) -> None:
                     path,
                     class_line,
                     "undocumented-public-class",
-                    "No docstring: " + strip_eol_cr(class_text)[:EVIDENCE_CAP],
+                    "No docstring: " + truncate_chars(strip_eol_cr(class_text)),
                 )
             i = j + 1
             continue
@@ -149,7 +166,7 @@ def scan_js(path: str, lines: list[str]) -> None:
         if prev > 0:
             prev_content = lines[prev - 1]
             if not JSDOC_END_RE.search(prev_content):
-                ev = strip_eol_cr(content)[:EVIDENCE_CAP]
+                ev = truncate_chars(strip_eol_cr(content))
                 category = "undocumented-export"
                 if "class" in content:
                     category = "undocumented-public-class"
@@ -169,7 +186,7 @@ def scan_go(path: str, lines: list[str]) -> None:
         if prev > 0:
             prev_content = lines[prev - 1]
             if not re.search(r"^// " + re.escape(func_name), prev_content):
-                ev = strip_eol_cr(content)[:EVIDENCE_CAP]
+                ev = truncate_chars(strip_eol_cr(content))
                 emit(
                     path,
                     idx,
@@ -186,7 +203,7 @@ def scan_shell(path: str, lines: list[str]) -> None:
         if prev > 0:
             prev_content = lines[prev - 1]
             if not COMMENT_RE.search(prev_content):
-                ev = strip_eol_cr(content)[:EVIDENCE_CAP]
+                ev = truncate_chars(strip_eol_cr(content))
                 emit(
                     path,
                     idx,

@@ -284,6 +284,11 @@ bundled helper you **call** each poll, so it cannot drift:
 - Invoke the `Workflow` tool as a **background** task and poll `TaskOutput`
   with a finite per-poll timeout, accumulating elapsed wall-time (whole
   minutes). The tool result carries the run's `transcriptDir`.
+  **A poll asks one question — is it done?** `TaskOutput` averages 7,776 chars,
+  the highest per-call of any tool (#786), and a poll loop pays that on every
+  iteration for an answer that is one line. Read the completion state and the
+  `transcriptDir`; do not re-read the accumulated transcript each poll. The
+  findings arrive in the harness's structured result when it finishes.
 - At each poll, ask the helper what to do — pass the accumulated minutes, the
   run's autonomy level, and how many extensions it has already granted:
 

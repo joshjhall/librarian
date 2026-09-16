@@ -45,6 +45,23 @@ from fnmatch import fnmatch
 CERTAINTY = "MEDIUM"
 EVIDENCE_CAP = 80  # matches printf '%.80s' in patterns.sh
 
+
+def truncate_chars(s: str) -> str:
+    """First EVIDENCE_CAP characters of `s`, with a marker when it actually cut.
+
+    THE MARKER IS THE POINT (#786). A silently trimmed evidence field reads as a
+    complete one, so a reader reasons about a line that does not end where the
+    text stops. The ellipsis REPLACES the last character rather than extending
+    past the cap, so the column stays bounded at exactly EVIDENCE_CAP.
+
+    Byte-for-byte equivalent to `truncate_chars` in the sibling patterns.sh --
+    tests/validate-python-ports.sh pins the two runtimes' TSV output.
+    """
+    if len(s) <= EVIDENCE_CAP:
+        return s
+    return s[: EVIDENCE_CAP - 1] + "\u2026"
+
+
 # Non-source files skipped wholesale (lock files before generic extensions) —
 # mirrors the leading `case "$file"` skip arms in patterns.sh.
 SKIP_GLOBS = (
@@ -120,7 +137,7 @@ def is_test_file(path: str) -> bool:
 
 def emit(path: str, line_no: int, category: str, label: str, content: str) -> None:
     """Write one TSV finding row: '<label>: <first 80 chars of the code line>'."""
-    evidence = label + ": " + strip_eol_cr(content)[:EVIDENCE_CAP]
+    evidence = label + ": " + truncate_chars(strip_eol_cr(content))
     sys.stdout.write(
         "\t".join((path, str(line_no), category, evidence, CERTAINTY)) + "\n"
     )
