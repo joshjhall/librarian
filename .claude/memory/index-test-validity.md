@@ -58,5 +58,6 @@ evidence a fix works, and before reporting a mutation round's verdict.
 - [Crashed mutation reads as a survivor](crashed-mutation-reads-as-survivor.md) — an un-applied mutation passes green; assert the edit landed before trusting the verdict
 - [Mutation anchor check fails both ways](mutation-anchor-check-fails-both-ways.md) — re-grepping the anchor lies in BOTH directions; `cmp` against the pristine copy (#936)
 - [Asymmetric mutation reads as untested](asymmetric-mutation-reads-as-untested.md) — a partially-neutered predicate survives; mutate all arms, then each alone
+- [A passing mutation may be inert](passing-mutation-may-be-inert.md) — weak test, unreachable line, or equivalent mutant: read the mutated source to tell which (#934)
 - [A surviving mutation may be a real no-op](surviving-mutation-may-be-a-real-no-op.md) — prove unreachable-vs-untested before writing a test that cannot fail (#589) (#663)
 - [A GNU host can't mutate a GNU-ism](gnu-host-cannot-mutate-a-gnu-ism.md) — reverting to the GNU spelling is a NO-OP; mutate to the other platform's outcome (#679)

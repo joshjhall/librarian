@@ -40,6 +40,16 @@ whole genuine categories. Both were byte-identical across the runtimes, so parit
 was perfect and wrong. A proxy that happens to fit the one sample you have is the
 shape to distrust: key on the property that actually makes the case true.
 
+**How much weight parity can carry, measured (#934).** One PR shipping a
+bundle-mutating transform produced **eight** blocking defects across six review
+cycles; **six were identical in both runtimes**, so the byte-parity fixtures —
+including a whole-tree comparison of the applied output — were blind to every one
+of them. The two that parity did catch were both shallow. What actually found the
+six: content assertions naming the specific corruption, and running the REAL
+downstream checker over the tool's output ([[dry-run-against-real-data]]). Budget
+review effort accordingly: on a two-runtime port, a green parity gate is close to
+zero evidence about correctness, and the reviewer prompt is worth telling so.
+
 Relatedly, prefer a spelling that makes a trap **unreachable** over one that
 documents it — that fix replaced an anchored exclusion with an unanchored one,
 which cannot acquire [[anchor-binds-to-grep-n-prefix]]'s bug at all.
