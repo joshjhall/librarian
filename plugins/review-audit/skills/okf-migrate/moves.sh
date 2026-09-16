@@ -279,7 +279,24 @@ plan_moves() {
         # the second silently destroy the first — an unrecoverable loss of a
         # memory, from a tool whose premise is running against someone else's
         # bundle. Leaving it put is visible in the next check run.
+        #
+        # `-e` ALONE MISSES A DANGLING SYMLINK, and the `taken` list cannot see
+        # a symlink at all: it is seeded from the concept walk, whose
+        # `find -type f` excludes type `l` by construction. So a destination
+        # symlink planned as an ordinary move, and this runtime's rename falls
+        # back to plain `mv` whenever the VCS rename fails — which an existing
+        # destination is exactly what causes. POSIX `mv` resolves its
+        # destination with stat(2) and DEREFERENCES, so a destination linked to
+        # an external directory carried the concept out of the bundle at exit 0
+        # while the plan displayed the in-bundle path.
+        #
+        # Planned away here rather than refused at apply time, so the answer is
+        # the established collision policy (skip this move, exit 0) and so both
+        # runtimes still agree on the exit code.
         if command grep -Fx "$new_rel" "$taken" >/dev/null 2>&1; then
+            continue
+        fi
+        if [ -e "$root/$new_rel" ] || [ -L "$root/$new_rel" ]; then
             continue
         fi
         command printf '%s\n' "$new_rel" >>"$taken"
@@ -296,25 +313,62 @@ plan_moves() {
 # retarget_line LINE BASE — LINE with its first bundle-internal `.md` link
 # target replaced by BASE.
 retarget_line() {
-    local line="$1" base="$2" head label target tail
-    case "$line" in *']('*) ;; *)
-        command printf '%s' "$line"
+    # SCANS PAST non-`.md` and URL links to the first genuinely relinkable one,
+    # matching the python twin. Inspecting only the FIRST link and bailing when
+    # it is not `.md` diverged on an ordinary shape: for
+    # `- [source](https://example.com) [Thing](thing.md) — hook` python
+    # retargeted the `.md` link while bash left the line untouched — a live
+    # byte-parity break in both directory-index builders.
+    #
+    # Built on scan_links, the shared parser the rest of this file uses, rather
+    # than a second hand-rolled walk: two parsers over one format is two things
+    # to drift.
+    _rt_line="$1"
+    _rt_base="$2"
+    _rt_target=""
+    _rt_label=""
+    while IFS="$(command printf '\t')" read -r _rt_lbl _rt_tgt || [ -n "$_rt_lbl" ]; do
+        [ -n "$_rt_tgt" ] || continue
+        # TESTED TRIMMED, REPLACED RAW — python tests `group(2).strip()` while
+        # substituting the untrimmed `group(0)`. Testing the raw target here
+        # made `[Thing]( thing.md )` fail the `*.md` case and pass through
+        # unchanged, while python retargeted it: measured, and pre-existing
+        # rather than introduced by the URL-scanning rewrite.
+        _rt_trim="$_rt_tgt"
+        while :; do
+            case "$_rt_trim" in
+                ' '*) _rt_trim="${_rt_trim# }" ;;
+                *' ') _rt_trim="${_rt_trim% }" ;;
+                *) break ;;
+            esac
+        done
+        case "$_rt_trim" in *://*) continue ;; esac
+        case "$_rt_trim" in
+            *.md)
+                _rt_target="$_rt_tgt"
+                _rt_label="$_rt_lbl"
+                break
+                ;;
+        esac
+    done <<EOF
+$(scan_links "$_rt_line")
+EOF
+    if [ -z "$_rt_target" ]; then
+        command printf '%s' "$_rt_line"
         return 0
-        ;;
-    esac
-    head="${line%%[*}"
-    tail="${line#*[}"
-    label="${tail%%]*}"
-    tail="${tail#*](}"
-    target="${tail%%)*}"
-    case "$target" in
-        *.md) ;;
-        *)
-            command printf '%s' "$line"
-            return 0
-            ;;
-    esac
-    command printf '%s[%s](%s)%s' "$head" "$label" "$base" "${tail#*)}"
+    fi
+    # REPLACE THE WHOLE `[label](target)` CONSTRUCT, not the bare `(target)`
+    # spelling — the python twin replaces `match.group(0)`, the full link. On
+    # `- see (thing.md) then [Thing](thing.md) — hook` a bare-`(target)` search
+    # hits the leading PARENTHETICAL and rewrites that instead of the link,
+    # while python rewrites the link: measured, a byte-parity break in both
+    # directory-index builders. The whole-repo parity fixtures cannot catch it
+    # — they are bounded by the shapes this repo's own bundle happens to
+    # contain, and no index line here is spelled that way.
+    _rt_whole="[$_rt_label]($_rt_target)"
+    _rt_pre="${_rt_line%%"$_rt_whole"*}"
+    _rt_post="${_rt_line#*"$_rt_whole"}"
+    command printf '%s[%s](%s)%s' "$_rt_pre" "$_rt_label" "$_rt_base" "$_rt_post"
 }
 
 # plan_directory_indexes ROOT FILE_LIST MAPPING_FILE CLAIMED_OUT

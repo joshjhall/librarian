@@ -106,6 +106,21 @@ run_moves() {
         command bash "$OKF_MIGRATE_SH" "$mode" "$@" 2>&1)" || OKF_RC=$?
 }
 
+# run_moves_py MODE ROOT [ARGS...] — the PYTHON primary with the same taxonomy.
+# run_moves forces bash, so without this sibling no move-concept case speaks for
+# the python runtime at all.
+run_moves_py() {
+    local mode="$1" root="$2"
+    shift 2
+    local cfg="$WORKDIR/cfg.$$"
+    write_taxonomy "$cfg" "index:index-golem.md = golem"
+    OKF_RC=0
+    OKF_OUT="$(OKF_BUNDLE_ROOT="$root" \
+        OKF_MIGRATE_CONFIG_DIR="$cfg" \
+        OKF_PINNED_VERSION="${OKF_TEST_VERSION:-0.2}" \
+        command python3 "$OKF_MIGRATE_PY" "$mode" "$@" 2>&1)" || OKF_RC=$?
+}
+
 test_move_rewrites_every_inbound_link() {
     local root
     root="$(move_fixture)"
@@ -745,6 +760,255 @@ Body.'
         --confirm --allow-dirty 2>&1)" || OKF_RC=$?
     assert_file_exists "$root2/thing.md" \
         "...and without the override the same bundle moves nothing"
+}
+
+test_symlinked_move_destination_is_skipped() {
+    local root outside before
+    root="$(fresh_bundle "$WORKDIR")"
+    command mkdir -p "$root/golem"
+    outside="$WORKDIR/outdir.$$"
+    command mkdir -p "$outside"
+
+    write_concept "$root" "MEMORY.md" '# Memory
+
+- [Thing](golem-thing.md) — a hook'
+    write_concept "$root" "index-golem.md" '# Golem
+
+- [Thing](golem-thing.md) — a hook'
+    write_concept "$root" "golem-thing.md" '---
+type: feedback
+---
+
+MOVING-CONCEPT'
+    write_concept "$root" "golem/index.md" '# golem
+
+- [Zero](zero.md) — a hook'
+    write_concept "$root" "golem/zero.md" '---
+type: feedback
+---
+
+Body.'
+    # THE MOVE DESTINATION, pre-planted as a symlink to an external DIRECTORY.
+    # plan_moves' `taken` set cannot see it: that set is seeded from the concept
+    # walk, which excludes symlinks by TYPE (collect_bundle's safety boundary).
+    # So the move planned normally and only the WRITE diverged — in bash, whose
+    # rename falls back to plain `mv` when the VCS rename fails (an existing
+    # destination being exactly what causes that), and POSIX `mv` resolves its
+    # destination with stat(2), which DEREFERENCES. Measured before the fix: the
+    # concept landed in the external directory at exit 0 while the plan showed
+    # the in-bundle path.
+    command ln -s "$outside" "$root/golem/golem-thing.md"
+    before="$(command ls -A "$outside" | command wc -l | command tr -d ' ')"
+
+    run_moves apply "$root" --transform move-concept --confirm --allow-dirty
+    # SKIPPED, NOT REFUSED — the established collision policy for an occupied
+    # destination (see test_destination_collision_leaves_the_file_put). An
+    # apply-time abort would also have broken exit-code parity, since the python
+    # twin's os.rename replaces a link node rather than following it and so had
+    # no reason to fail.
+    assert_exit 0 "$OKF_RC" "an occupied destination skips that move, not the run"
+
+    assert_equals "$before" \
+        "$(command ls -A "$outside" | command wc -l | command tr -d ' ')" \
+        "the external directory gained nothing — no write-through (AC7)"
+    assert_file_exists "$root/golem-thing.md" \
+        "the concept stays put rather than vanishing outside the bundle"
+    # The SIBLING concept in the same directory still moves — proving the skip
+    # is scoped to the colliding path rather than the run having gone silent.
+    assert_true "[ -L '$root/golem/golem-thing.md' ]" \
+        "the symlink itself is untouched, never replaced or followed"
+}
+
+test_symlinked_move_destination_is_skipped_in_python() {
+    local root outside before
+    if [ "$OKF_HAVE_PY" -ne 1 ]; then
+        skip_test "python3 >= 3.11 unavailable"
+        return 0
+    fi
+    # THE SAME FIXTURE AGAINST THE PYTHON PRIMARY. run_moves forces bash, so the
+    # case above cannot speak for this runtime at all — and the two genuinely
+    # diverged here before the fix was moved to plan time: python's os.rename
+    # replaced the link node and completed the move at exit 0, bash's `mv`
+    # followed it out of the bundle. Both now plan the move away.
+    root="$(fresh_bundle "$WORKDIR")"
+    command mkdir -p "$root/golem"
+    outside="$WORKDIR/pyoutdir.$$"
+    command mkdir -p "$outside"
+
+    write_concept "$root" "MEMORY.md" '# Memory
+
+- [Thing](golem-thing.md) — a hook'
+    write_concept "$root" "index-golem.md" '# Golem
+
+- [Thing](golem-thing.md) — a hook'
+    write_concept "$root" "golem-thing.md" '---
+type: feedback
+---
+
+MOVING-CONCEPT'
+    write_concept "$root" "golem/index.md" '# golem
+
+- [Zero](zero.md) — a hook'
+    write_concept "$root" "golem/zero.md" '---
+type: feedback
+---
+
+Body.'
+    command ln -s "$outside" "$root/golem/golem-thing.md"
+    before="$(command ls -A "$outside" | command wc -l | command tr -d ' ')"
+
+    run_moves_py apply "$root" --transform move-concept --confirm --allow-dirty
+    assert_exit 0 "$OKF_RC" "python agrees on the exit code (parity)"
+    assert_equals "$before" \
+        "$(command ls -A "$outside" | command wc -l | command tr -d ' ')" \
+        "the external directory gained nothing"
+    assert_file_exists "$root/golem-thing.md" \
+        "the concept stays put in python too"
+    assert_true "[ -L '$root/golem/golem-thing.md' ]" \
+        "the symlink node is NOT replaced — python planned the move away"
+}
+
+test_retarget_skips_a_leading_url_link() {
+    local root body
+    root="$(fresh_bundle "$WORKDIR")"
+    # MEMORY.md does NOT name this concept, so the URL-bearing index line is the
+    # one that claims it — otherwise MEMORY.md's simpler line wins the claim and
+    # retarget_line never sees the URL case at all (measured: that is why the
+    # first draft of this fixture asserted against the wrong line).
+    write_concept "$root" "MEMORY.md" '# Memory
+
+- [Golem](index-golem.md) — bucket'
+    # The claiming index line's FIRST link is an external URL; the `.md` link is
+    # SECOND.
+    # A retargeter inspecting only the first link leaves the line untouched,
+    # while the python twin scans past it — a live byte-parity break in the two
+    # call sites that build a directory index.
+    # The concept sits in `sub/`, so its claimed line spells a SUB-PATH — and
+    # the generated directory index must rewrite that to a sibling basename.
+    command mkdir -p "$root/sub"
+    write_concept "$root" "index-golem.md" '# Golem
+
+- [source](https://example.com) [Thing](sub/thing.md) — a hook'
+    write_concept "$root" "sub/thing.md" '---
+type: feedback
+---
+
+Body.'
+
+    run_moves apply "$root" --transform move-concept --confirm --allow-dirty
+    assert_exit 0 "$OKF_RC" "move-concept applies cleanly"
+
+    body="$(command cat "$root/golem/index.md")"
+    # THE RETARGET MUST ACTUALLY CHANGE THE PATH, which is the only case that
+    # distinguishes the fix: the old line said `(sub/thing.md)` and the new one
+    # must say `(thing.md)` — a sibling reference. A fixture whose before and
+    # after spellings are identical passes either way, which is how the first
+    # draft of this case survived its mutation round.
+    assert_contains "$body" "](thing.md)" \
+        "the .md link was retargeted to the sibling basename PAST the URL"
+    assert_not_contains "$body" "](sub/thing.md)" \
+        "...and the old sub-path spelling is gone"
+    assert_contains "$body" "https://example.com" \
+        "the leading URL link is carried through untouched, not consumed"
+}
+
+test_retarget_line_matches_python_on_adversarial_shapes() {
+    local sh_out py_out shape
+    if [ "$OKF_HAVE_PY" -ne 1 ]; then
+        skip_test "python3 >= 3.11 unavailable"
+        return 0
+    fi
+    # DIRECT FUNCTION-LEVEL PARITY, table-driven over shapes this repo's own
+    # bundle does not contain. The whole-repo parity fixtures are bounded by the
+    # index lines that happen to exist here, so a divergence on a shape nobody
+    # wrote reads as agreement — both of the rows below were live breaks found
+    # by probing the function directly rather than by any end-to-end run.
+    for shape in \
+        '- see (thing.md) then [Thing](thing.md) — hook' \
+        '- [Thing]( thing.md ) — hook' \
+        '- [source](https://example.com) [Thing](thing.md) — hook' \
+        '- [Thing](thing.md) and [Other](other.md) — hook' \
+        '- no links at all' \
+        '- [Thing](thing.txt) — a non-markdown target'; do
+        sh_out="$(OKF_MIGRATE_SKILL_DIR="$SKILL_DIR" command bash -c '
+            . "$0/moves.sh" 2>/dev/null || true
+            retarget_line "$1" "sub/index.md"
+        ' "$SKILL_DIR" "$shape" 2>/dev/null)"
+        py_out="$(command python3 -c '
+import sys
+sys.path.insert(0, sys.argv[1])
+import moves
+sys.stdout.write(moves._retarget_line(sys.argv[2], "sub/index.md"))
+' "$SKILL_DIR" "$shape" 2>/dev/null)"
+        assert_equals "$py_out" "$sh_out" \
+            "bash and python retarget identically: $shape"
+    done
+
+    # ...and at least one shape must actually CHANGE, or the loop above would
+    # pass against two functions that both do nothing.
+    sh_out="$(OKF_MIGRATE_SKILL_DIR="$SKILL_DIR" command bash -c '
+        . "$0/moves.sh" 2>/dev/null || true
+        retarget_line "$1" "sub/index.md"
+    ' "$SKILL_DIR" '- [Thing]( thing.md ) — hook' 2>/dev/null)"
+    assert_contains "$sh_out" "](sub/index.md)" \
+        "the padded-target shape is genuinely retargeted, not passed through"
+}
+
+test_read_index_names_resolves_without_a_preloaded_path() {
+    local out
+    if [ "$OKF_HAVE_PY" -ne 1 ]; then
+        skip_test "python3 >= 3.11 unavailable"
+        return 0
+    fi
+    # THE sys.path INSERT IS THE POINT. read_index_names imports the validator,
+    # which is a SIBLING SKILL DIRECTORY rather than an installed package — so
+    # without inserting VALIDATOR_DIR the import fails, the function falls back
+    # to librarian's defaults, and $OKF_INDEX_NAMES is SILENTLY IGNORED. That is
+    # exactly the bug this fixture pins, and it only appeared to work under a
+    # trace that had already inserted the path.
+    #
+    # Invoked WITHOUT any path preloading, which is what a real CLI run does.
+    # THE VALIDATOR BRANCH, reached only with NO env override — the override
+    # returns early, so a fixture that sets it never exercises the import
+    # (measured: removing the sys.path insert left such a fixture green).
+    #
+    # Asserted against a FIXTURE thresholds.yml whose index_names differ from
+    # the hardcoded fallback. Comparing against the validator's REAL list cannot
+    # detect the bug, because librarian's config and the fallback are the same
+    # three names — the two branches are indistinguishable by their output on
+    # this repo, which is precisely how the first version of this case stayed
+    # green under mutation.
+    local fake_validator
+    fake_validator="$WORKDIR/fakeval.$$"
+    command mkdir -p "$fake_validator"
+    command cp "$SKILL_DIR/../check-okf-conformance/patterns.py" \
+        "$SKILL_DIR/../check-okf-conformance/bundle_graph.py" "$fake_validator/" 2>/dev/null
+    command sed -e 's/^    - MEMORY\.md$/    - SENTINEL-INDEX.md/' \
+        "$SKILL_DIR/../check-okf-conformance/thresholds.yml" >"$fake_validator/thresholds.yml"
+    out="$(command env -uOKF_INDEX_NAMES python3 -c "
+import sys, os
+sys.path.insert(0, '$SKILL_DIR')
+import migrate
+migrate.VALIDATOR_DIR = '$fake_validator'
+print(' '.join(migrate.read_index_names()))
+" 2>&1)"
+    # The SENTINEL proves the import actually read that thresholds.yml. Without
+    # the sys.path insert the import fails and the hardcoded fallback answers,
+    # which carries no sentinel.
+    assert_contains "$out" "SENTINEL-INDEX.md" \
+        "read_index_names IMPORTED the validator rather than falling back"
+
+    # ...and the env override is honored even on that bare path.
+    out="$(OKF_INDEX_NAMES="catalog.md toc.md" command python3 -c "
+import sys
+sys.path.insert(0, '$SKILL_DIR')
+import migrate
+print(' '.join(migrate.read_index_names()))
+" 2>&1)"
+    assert_contains "$out" "catalog.md" "the env override is honored"
+    assert_contains "$out" "toc.md" "...including every name in it"
+    assert_not_contains "$out" "MEMORY.md" \
+        "an override REPLACES the defaults rather than extending them"
 }
 
 test_destination_collision_leaves_the_file_put() {

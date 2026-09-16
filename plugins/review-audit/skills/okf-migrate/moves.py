@@ -206,7 +206,23 @@ def plan_moves(
         # the second silently destroy the first — an unrecoverable loss of a
         # memory, from a tool whose whole premise is running against someone
         # else's bundle. Leaving the file put is visible in the next check run.
-        if new_rel in taken:
+        #
+        # LEXISTS, NOT the `taken` set alone. `taken` is built from `concepts`,
+        # which deliberately EXCLUDES symlinks (collect_bundle's safety
+        # boundary), so a symlink sitting at a destination path was invisible
+        # here and the move planned normally. That is only a near-miss in this
+        # runtime — os.rename(2) replaces the link node rather than following
+        # it — but it is a live write-through in the bash twin, whose `mv`
+        # fallback resolves the destination with stat(2) and DEREFERENCES:
+        # measured, a destination symlinked to an external directory carried
+        # the concept out of the bundle entirely, at exit 0.
+        #
+        # Checked at PLAN time rather than refused at apply time so the answer
+        # stays the established collision policy — skip this one move, exit 0 —
+        # rather than aborting a whole run over one occupied path. Planning it
+        # away also keeps the two runtimes agreeing on the exit code, which an
+        # apply-side refusal in one of them does not.
+        if new_rel in taken or os.path.lexists(os.path.join(root, new_rel)):
             continue
         taken.add(new_rel)
         mapping[rel] = new_rel
