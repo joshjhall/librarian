@@ -47,6 +47,7 @@ run_stage "golem-gate-watch feed snapshot" bash "$SCRIPT_DIR/golem-gate-watch.sh
 run_stage "Lint-gate integrity (resolution + skip reporting)" bash "$SCRIPT_DIR/validate-lint-gates.sh"
 run_stage "Skip visibility (step summary + agnix install branches)" bash "$SCRIPT_DIR/validate-skip-visibility.sh"
 run_stage "run-all verdict reporting (pipe-safe failure)" bash "$SCRIPT_DIR/validate-run-all-reporting.sh"
+run_stage "pre-push pure-delete guard" bash "$SCRIPT_DIR/validate-push-delete-guard.sh"
 run_stage "Release toolchain coverage" bash "$SCRIPT_DIR/validate-release.sh"
 run_stage "seed-worktree-trust path validation" bash "$SCRIPT_DIR/validate-seed-worktree-trust.sh"
 run_stage "golem/worktree helper scripts" bash "$SCRIPT_DIR/validate-golem-scripts.sh"
