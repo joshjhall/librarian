@@ -733,7 +733,7 @@ rewritten_target() {
 rewrite_inbound_links() {
     local root="$1" list="$2" mapping="$3" claimed="${4:-}"
     local path here_rel line n in_fence changed label target new_target t
-    local claimed_line sub_dir moved_new _isidx _rw_trim _rw_old _rw_new
+    local claimed_line sub_dir moved_new old_rel _isidx _rw_trim _rw_old _rw_new
     [ -s "$mapping" ] || return 0
 
     while IFS= read -r path || [ -n "$path" ]; do
@@ -759,35 +759,64 @@ rewrite_inbound_links() {
             # about which index owns the concept. Repoint it at the SUB-INDEX
             # instead (§8: the root names the bucket, the bucket names its
             # concepts).
-            # ONLY AN INDEX RELOCATES A LINE — the claimed map is keyed by line
-            # TEXT, so an ordinary body line equal to a claimed index line would
-            # be repointed at the bucket index instead of following the concept.
+            # ONLY AN INDEX RELOCATES A LINE — being an index entry is a property
+            # of WHERE the line lives, not of what it says.
+            #
+            # RESOLVED BY LINK TARGET, NOT BY LINE TEXT. This used to look the
+            # line up in `claimed` by its exact prose, and that was actively
+            # wrong: `claimed` holds ONE line per moved concept (the first seen,
+            # alphabetically), so when TWO indexes name the same concept with
+            # DIFFERENT hooks — a terse root summary and a longer topic-index
+            # line, ordinary in this repo's own bundle — only the first matched.
+            # The second fell through to the generic rewrite below and was
+            # repointed straight at the concept, which the real validator reports
+            # as memory-dangling-index. Identical in the python twin, so
+            # byte-parity was blind to it.
             _isidx=0
             is_index_name "${here_rel##*/}" && _isidx=1
-            if [ "$_isidx" -eq 1 ] && [ -n "$claimed" ] && [ -s "$claimed" ]; then
-                # ENVIRON, NEVER `awk -v`: a `-v` assignment is
-                # ESCAPE-PROCESSED, so a hook legitimately containing the two
-                # characters `\n` — ordinary in a repo that documents regexes —
-                # became a real newline and the comparison silently missed,
-                # leaving that one line pointed at the concept while its
-                # siblings pointed at the sub-index. Measured on a three-concept
-                # fixture. This is the same rule migrate.sh's apply path states.
-                moved_new="$(OKF_L="$line" command awk -F"$(command printf '\t')" \
-                    '{ ln = $0; sub(/^[^\t]*\t/, "", ln); if (ln == ENVIRON["OKF_L"]) { print $1; exit } }' \
-                    "$claimed")"
-                if [ -n "$moved_new" ]; then
-                    case "$moved_new" in
-                        */*)
-                            sub_dir="${moved_new%/*}"
-                            claimed_line="$(retarget_line "$line" "$sub_dir/index.md")"
-                            if [ "$claimed_line" != "$line" ]; then
-                                emit_edit "move-concept" "$path" "replace-line" "$n" \
-                                    "$line" "$claimed_line" \
-                                    "point at the §8 directory index for $sub_dir/"
-                            fi
-                            continue
-                            ;;
+            if [ "$_isidx" -eq 1 ]; then
+                # The FIRST bundle-internal `.md` link decides, matching python's
+                # `break` after the first resolvable match.
+                sub_dir=""
+                while IFS="$(command printf '\t')" read -r label target || [ -n "$label" ]; do
+                    [ -n "$target" ] || continue
+                    case "$target" in *://*) continue ;; esac
+                    case "$target" in
+                        *.md) ;;
+                        *) continue ;;
                     esac
+                    if [ "${target#/}" != "$target" ]; then
+                        old_rel="$(normalize_rel "${target#/}")"
+                    else
+                        case "$here_rel" in
+                            */*) t="${here_rel%/*}" ;;
+                            *) t="" ;;
+                        esac
+                        old_rel="$(normalize_rel "${t:+$t/}$target")"
+                    fi
+                    moved_new="$(lookup_mapping "$old_rel" "$mapping")"
+                    case "$moved_new" in
+                        */*) sub_dir="${moved_new%/*}" ;;
+                    esac
+                    break
+                done <<EOF
+$(scan_links "$line")
+EOF
+                # A directory only owns a sub-index when a concept was actually
+                # RELOCATED into it — `claimed`'s first field carries those new
+                # paths, the same set python builds as sub_index_of.
+                if [ -n "$sub_dir" ] && [ -n "$claimed" ] && [ -s "$claimed" ] &&
+                    OKF_D="$sub_dir" command awk -F"$(command printf '\t')" \
+                        '{ d = $1; sub(/\/[^\/]*$/, "", d)
+                           if (d == ENVIRON["OKF_D"]) { found = 1; exit } }
+                         END { exit !found }' "$claimed" 2>/dev/null; then
+                    claimed_line="$(retarget_line "$line" "$sub_dir/index.md")"
+                    if [ "$claimed_line" != "$line" ]; then
+                        emit_edit "move-concept" "$path" "replace-line" "$n" \
+                            "$line" "$claimed_line" \
+                            "point at the §8 directory index for $sub_dir/"
+                    fi
+                    continue
                 fi
             fi
 

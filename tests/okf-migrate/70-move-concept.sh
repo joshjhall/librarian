@@ -305,6 +305,99 @@ Naming note: the concept file is called (golem-thing.md) by convention.'
         "both runtimes append identically (the defect was shared, not a skew)"
 }
 
+test_two_indexes_with_different_hooks_both_reach_the_sub_index() {
+    local root cfg sh_root sh_topic py_root py_topic
+    if [ "$OKF_HAVE_PY" -ne 1 ]; then
+        skip_test "python3 >= 3.11 unavailable"
+        return 0
+    fi
+    # TWO INDEXES NAMING ONE CONCEPT WITH DIFFERENT PROSE. A terse root summary
+    # plus a longer topic-index line is ordinary — this repo's own bundle is
+    # full of it. The relocation gate used to look the line up in `claimed` by
+    # its exact TEXT, and `claimed` holds only ONE line per concept (the first
+    # seen, alphabetically), so the second index never matched: it fell through
+    # to the generic rewrite and was repointed straight at the moved concept.
+    # The real validator reports that as memory-dangling-index, because the
+    # concept no longer sits at the path that line now names.
+    #
+    # Identical in both runtimes, so byte-parity was blind — the validator run
+    # below is the assertion that matters, with the parity check secondary.
+    #
+    # The existing fixtures could not see this: move_fixture gives both indexes
+    # the IDENTICAL line, so text equality happened to match both copies.
+    cfg="$WORKDIR/cfg.hooks.$$"
+    write_taxonomy "$cfg" "index:index-golem.md = golem"
+
+    root="$(fresh_bundle "$WORKDIR")"
+    write_concept "$root" "MEMORY.md" '# Memory
+
+- [Thing](golem-thing.md) — terse root hook
+- [Golem](index-golem.md) — bucket'
+    write_concept "$root" "index-golem.md" '# Golem
+
+- [Thing](golem-thing.md) — the longer topic-index hook'
+    write_concept "$root" "golem-thing.md" '---
+type: feedback
+---
+
+MOVING-CONCEPT'
+
+    OKF_RC=0
+    OKF_OUT="$(PATTERNS_FORCE_BASH=1 OKF_BUNDLE_ROOT="$root" \
+        OKF_MIGRATE_CONFIG_DIR="$cfg" \
+        OKF_PINNED_VERSION="${OKF_TEST_VERSION:-0.2}" \
+        command bash "$OKF_MIGRATE_SH" apply --transform move-concept \
+        --confirm --allow-dirty 2>&1)" || OKF_RC=$?
+    assert_exit 0 "$OKF_RC" "bash applies cleanly"
+    sh_root="$(command cat "$root/MEMORY.md")"
+    sh_topic="$(command cat "$root/index-golem.md")"
+
+    # BOTH lines must reach the sub-index. Asserting only the root one passes
+    # against the bug, since the root index is the one `claimed` happened to
+    # keep.
+    assert_contains "$sh_root" "](golem/index.md)" \
+        "the root index line points at the §8 sub-index"
+    assert_contains "$sh_topic" "](golem/index.md)" \
+        "...and so does the SECOND index, whose hook text differs"
+    assert_not_contains "$sh_topic" "](golem/golem-thing.md)" \
+        "the second index is not repointed straight at the concept"
+    # THE TEETH: the failure is a dangling pointer, and only the real validator
+    # judges that the way the bundle's readers do.
+    validator_rows "$root"
+    assert_true "[ '$OKF_LISTED' -gt 0 ]" "the validator actually scanned files"
+    assert_not_contains "$OKF_ROWS" "memory-dangling-index" \
+        "no memory-dangling-index row — both pointers resolve"
+
+    root="$(fresh_bundle "$WORKDIR")"
+    write_concept "$root" "MEMORY.md" '# Memory
+
+- [Thing](golem-thing.md) — terse root hook
+- [Golem](index-golem.md) — bucket'
+    write_concept "$root" "index-golem.md" '# Golem
+
+- [Thing](golem-thing.md) — the longer topic-index hook'
+    write_concept "$root" "golem-thing.md" '---
+type: feedback
+---
+
+MOVING-CONCEPT'
+
+    OKF_RC=0
+    OKF_OUT="$(OKF_BUNDLE_ROOT="$root" \
+        OKF_MIGRATE_CONFIG_DIR="$cfg" \
+        OKF_PINNED_VERSION="${OKF_TEST_VERSION:-0.2}" \
+        command python3 "$OKF_MIGRATE_PY" apply --transform move-concept \
+        --confirm --allow-dirty 2>&1)" || OKF_RC=$?
+    assert_exit 0 "$OKF_RC" "python applies cleanly"
+    py_root="$(command cat "$root/MEMORY.md")"
+    py_topic="$(command cat "$root/index-golem.md")"
+
+    assert_equals "$py_root" "$sh_root" \
+        "both runtimes rewrite the root index identically"
+    assert_equals "$py_topic" "$sh_topic" \
+        "...and the second index too (the defect was shared, not a skew)"
+}
+
 test_fenced_example_in_the_target_index_does_not_suppress_the_append() {
     local root sh_index py_index sh_live py_live
     if [ "$OKF_HAVE_PY" -ne 1 ]; then

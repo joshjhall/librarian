@@ -513,7 +513,6 @@ def rewrite_inbound_links(
     # be repointed here: the concept would then be named by two indexes, which is
     # memory-multi-index — a HIGH finding, and a real ambiguity about which index
     # owns the concept.
-    moved_lines = set((relocated or {}).values())
     sub_index_of = {
         os.path.dirname(new_rel): new_rel
         for new_rel in (relocated or {})
@@ -540,9 +539,19 @@ def rewrite_inbound_links(
             # Gating on the FILE rather than tightening the key is the honest
             # fix: "this line is an index entry" is a property of where it
             # lives, not of what it says.
-            if line in moved_lines and is_index_name(
-                os.path.basename(here_rel), index_names or []
-            ):
+            #
+            # AND THE FILE GATE IS THE WHOLE TEST — the text key is gone. It was
+            # kept alongside for one revision and was actively wrong: `claimed`
+            # holds ONE line per moved concept (the first seen, alphabetically),
+            # so when TWO indexes name the same concept with DIFFERENT hooks —
+            # a terse root summary and a longer topic-index line, ordinary in
+            # this repo's own bundle — only the first matched. The second fell
+            # through to the generic rewrite and was repointed straight at the
+            # concept, which is the memory-dangling-index the real validator
+            # then reports. Identical in both runtimes, so byte-parity was blind.
+            # The decision belongs to WHERE the line lives plus WHAT it resolves
+            # to (`directory in sub_index_of`, below), never to its prose.
+            if is_index_name(os.path.basename(here_rel), index_names or []):
                 # This line's concept now lives in a directory index. Repoint it
                 # at that SUB-INDEX (§8's routing: the root names the bucket, the
                 # bucket names its concepts) rather than at the concept itself.
