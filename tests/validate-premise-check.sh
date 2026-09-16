@@ -332,6 +332,61 @@ test_empty_array_is_still_absent() {
         "the shape guard does not reject a legitimately empty result"
 }
 
+# THE SAME GUARD ON THE TWIN. cmd_constraints consumes CLI output exactly as
+# cmd_exists does, so it carries the same three-guard gap — and the consequence
+# here is worse than a false all-clear. emit_constraints marker-matches
+# arbitrary text, so an error page containing a loose marker is emitted as a
+# `constraint=` line attributed to the issue.
+#
+# Two cases, because they fail differently:
+#   (a) plain garbage -> `verdict=none`, an outage reading as "no constraints";
+#   (b) garbage CONTAINING a marker -> `verdict=found` with the error text
+#       QUOTED TO THE OPERATOR as though the issue had said it. Measured before
+#       the fix: `502 Bad Gateway: do not retry this request` came back as a
+#       constraint. That is a fabricated premise, produced by the tool built to
+#       stop false premises, and it is the half a "does it say none?" assertion
+#       would miss entirely.
+test_constraints_malformed_payload_is_unavailable() {
+    local sb
+    new_sandbox sb
+    stub_cli "$sb" gh 'echo "Service Unavailable"
+exit 0'
+    run_premise "$sb" constraints --issue 1 --platform github
+    assert_contains "$PC_OUT" "verdict=unavailable" \
+        "AC5: exit-0 garbage resolves unavailable for constraints too"
+    assert_not_contains "$PC_OUT" "verdict=none" \
+        "AC5: an unparseable body is NEVER reported as 'no constraints found'"
+}
+
+test_constraints_never_fabricates_from_an_error_page() {
+    local sb
+    new_sandbox sb
+    stub_cli "$sb" gh 'echo "502 Bad Gateway: do not retry this request"
+exit 0'
+    run_premise "$sb" constraints --issue 1 --platform github
+    assert_contains "$PC_OUT" "verdict=unavailable" \
+        "an error page carrying a marker word still resolves unavailable"
+    assert_not_contains "$PC_OUT" "constraint=" \
+        "no constraint line is FABRICATED from an error page (it would be quoted as the issue's own text)"
+    assert_not_contains "$PC_OUT" "Bad Gateway" \
+        "error text never reaches the operator as issue content"
+}
+
+# GitLab parity for the exists guard: the shape check sits before the platform
+# split, but nothing pinned that, so a future change special-casing platform
+# ahead of the guard would go unnoticed on this branch.
+test_gitlab_malformed_payload_is_unavailable() {
+    local sb
+    new_sandbox sb
+    stub_cli "$sb" glab 'echo "Service Unavailable"
+exit 0'
+    run_premise "$sb" exists --title "split the detectors" --platform gitlab
+    assert_contains "$PC_OUT" "verdict=unavailable" \
+        "gitlab: exit-0 garbage resolves unavailable for exists"
+    assert_not_contains "$PC_OUT" "verdict=absent" \
+        "gitlab: a non-JSON payload is never absent"
+}
+
 # --- 4. Body constraints are extracted (#550) ------------------------------
 
 test_constraints_extracted_from_body() {
@@ -866,6 +921,9 @@ run_test test_every_constraint_marker_fires "every CONSTRAINT_MARKERS alternativ
 run_test test_constraints_none_when_body_is_plain "plain body → verdict=none"
 run_test test_malformed_payload_is_unavailable "AC5: exit-0 garbage → unavailable, never absent"
 run_test test_empty_array_is_still_absent "an empty array is still a real absent"
+run_test test_constraints_malformed_payload_is_unavailable "AC5: constraints garbage → unavailable, never none"
+run_test test_constraints_never_fabricates_from_an_error_page "constraints never fabricates a constraint from an error page"
+run_test test_gitlab_malformed_payload_is_unavailable "gitlab: exists garbage → unavailable, never absent"
 run_test test_missing_title_fails_loud "usage: exists without --title → exit 2, no verdict"
 run_test test_missing_issue_fails_loud "usage: constraints without --issue → exit 2, no verdict"
 run_test test_non_numeric_issue_fails_loud "usage: non-numeric --issue → exit 2"

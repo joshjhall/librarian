@@ -264,7 +264,7 @@ cmd_exists() {
     # result" without re-implementing a parser. `[]` passes and correctly means
     # absent; `Service Unavailable` does not.
     case "$_ex_raw" in
-        [[]*) ;;
+        '['*) ;;
         *) emit_unavailable "$_ex_cli returned a non-JSON payload — existence check did not run" ;;
     esac
 
@@ -422,6 +422,23 @@ cmd_constraints() {
         emit_unavailable "$_co_cli query failed (exit $_co_rc) — constraint sweep did not run"
     [ -z "$_co_body" ] &&
         emit_unavailable "$_co_cli returned no body for #$_co_issue — constraint sweep did not run"
+
+    # THE SAME SHAPE GUARD AS cmd_exists, and it is needed MORE here. Both
+    # subcommands treat exit-0 bytes as an answer, so both can render an outage
+    # as an all-clear — but `exists` merely falls through to `absent`, while this
+    # path can FABRICATE. emit_constraints marker-matches arbitrary text, so an
+    # error page containing one of the loose markers is emitted as a
+    # `constraint=` line. Measured: `502 Bad Gateway: do not retry this request`
+    # came back as `verdict=found` with that sentence quoted to the operator as
+    # though the ISSUE had said it — a false premise manufactured by the tool
+    # built to stop false premises.
+    #
+    # `{` rather than `[`: both CLIs return a single object here (`--json body` /
+    # `--output json`), not an array.
+    case "$_co_body" in
+        '{'*) ;;
+        *) emit_unavailable "$_co_cli returned a non-JSON payload for #$_co_issue — constraint sweep did not run" ;;
+    esac
 
     emit_constraints "$_co_body"
 }
