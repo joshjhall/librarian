@@ -780,7 +780,22 @@ validate_marker_instance() {
                 | select($p != null and $p.type != null)
                 | (if ($p.type | type) == "array" then $p.type else [$p.type] end) as $want
                 | select(($want | index($kv.value | jstype)) == null)
-                | "\($path).\($kv.key): want \($want|join("|")), got \($kv.value|jstype)" ) ];
+                | "\($path).\($kv.key): want \($want|join("|")), got \($kv.value|jstype)" ),
+              # A sub-schema under additionalProperties types the VALUES of an
+              # open map (r_measured_framings: every value must be an integer).
+              # Without this arm the map is declared but its contents unchecked,
+              # so a string framing would validate -- the gate asserting a
+              # property it does not actually enforce.
+              ( $obj | to_entries[] as $kv
+                | ($sch.properties[$kv.key]) as $p
+                | select($p != null
+                         and ($p.additionalProperties | type) == "object"
+                         and $p.additionalProperties.type != null
+                         and ($kv.value | type) == "object")
+                | ($p.additionalProperties.type) as $vt
+                | $kv.value | to_entries[] as $inner
+                | select(($inner.value | jstype) != $vt)
+                | "\($path).\($kv.key).\($inner.key): want \($vt), got \($inner.value|jstype)" ) ];
         (check($doc; $cp; "checkpoint")
          + (if $doc.handoff_marker then
               check($doc.handoff_marker; $cp.properties.handoff_marker; "handoff_marker")
@@ -836,6 +851,44 @@ test_marker_rejects_wrong_r_measured_type() {
     command rm -f "$tmp"
     assert_contains "$out" "handoff_marker.r_measured" \
         "a non-integer, non-null r_measured is rejected"
+}
+
+# r_measured's type is an ARRAY (["integer","null"]); every other marker field
+# spells a SCALAR type. Those take the other branch of the walker's ternary, so
+# without this case the branch covering most of the schema has no negative test
+# and a wrapping bug would ship behind a green suite.
+test_marker_rejects_wrong_scalar_typed_field() {
+    if jq_missing; then
+        skip_test "jq not available (schema check needs jq)"
+        return 0
+    fi
+    local tmp out
+    tmp="$(command mktemp)"
+    marker_checkpoint_json |
+        command jq '.handoff_marker.context_tokens = "lots" | .handoff_marker.at = 42' >"$tmp"
+    out="$(validate_marker_instance "$tmp")"
+    command rm -f "$tmp"
+    assert_contains "$out" "handoff_marker.context_tokens: want integer, got string" \
+        "a string in an integer-typed field is rejected (scalar-type branch)"
+    assert_contains "$out" "handoff_marker.at: want string, got integer" \
+        "an integer in a string-typed field is rejected (scalar-type branch)"
+}
+
+# r_measured_framings is an open map whose VALUES are typed. Declaring the map
+# without checking its contents would let a string framing validate.
+test_marker_rejects_non_integer_framing_value() {
+    if jq_missing; then
+        skip_test "jq not available (schema check needs jq)"
+        return 0
+    fi
+    local tmp out
+    tmp="$(command mktemp)"
+    marker_checkpoint_json |
+        command jq '.handoff_marker.r_measured_framings.strict_reorientation = "three"' >"$tmp"
+    out="$(validate_marker_instance "$tmp")"
+    command rm -f "$tmp"
+    assert_contains "$out" "r_measured_framings.strict_reorientation: want integer, got string" \
+        "a non-integer framing value is rejected (additionalProperties sub-schema)"
 }
 
 # The null arm specifically: the handing-off session CANNOT know R, so it must
@@ -937,6 +990,8 @@ run_test test_checkpoint_marker_keys_are_all_schema_declared "handoff_marker key
 run_test test_wellformed_marker_instance_validates "a well-formed marker instance validates (control)"
 run_test test_checkpoint_rejects_undeclared_properties "an undeclared nested key is rejected (instance-level)"
 run_test test_marker_rejects_wrong_r_measured_type "a wrong-typed r_measured is rejected (instance-level)"
+run_test test_marker_rejects_wrong_scalar_typed_field "a wrong-typed scalar field is rejected (other ternary branch)"
+run_test test_marker_rejects_non_integer_framing_value "a non-integer framing value is rejected (sub-schema)"
 run_test test_marker_accepts_null_r_measured_instance "r_measured=null validates (write side)"
 run_test test_checkpoint_without_marker_is_still_valid "a marker-less checkpoint still resumes (fail open)"
 
