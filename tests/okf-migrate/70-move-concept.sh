@@ -947,15 +947,21 @@ type: feedback
 ---
 
 MOVING-CONCEPT'
+    # TILDE FENCE, not backtick. Both runtimes accept ``` and ~~~ (python's
+    # FENCE_RE alternates them; all three bash sites case-match both), but no
+    # fixture in this suite exercised ~~~ at all — so half of every fence guard
+    # here was asserted by nobody. A `~~~` is the spelling you reach for when the
+    # example itself contains backticks, which is exactly what a memory
+    # documenting link syntax does.
     write_concept "$root" "aaa-doc.md" '---
 type: reference
 ---
 
 How to write an index line:
 
-```markdown
+~~~markdown
 - [Thing](golem-thing.md) — FENCED EXAMPLE, not a live pointer
-```'
+~~~'
 
     run_moves apply "$root" --transform move-concept --confirm --allow-dirty
     assert_exit 0 "$OKF_RC" "bash applies cleanly"
@@ -986,6 +992,11 @@ type: feedback
 ---
 
 MOVING-CONCEPT'
+    # BACKTICK fence on this arm, tilde on the bash arm above — so the pair
+    # covers both delimiters AND still compares the two runtimes byte-for-byte
+    # on their respective inputs. The parity assertions below hold because the
+    # two fence spellings are equivalent by construction: any divergence means
+    # one runtime accepted a delimiter the other did not.
     write_concept "$root" "aaa-doc.md" '---
 type: reference
 ---
