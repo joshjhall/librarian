@@ -6,6 +6,14 @@ was derived (issue #784 AC2), and stays open until a comparable golem run is
 measured against the #781 baseline (AC6). Per CLAUDE.md § `docs/verification/`
 this is the running-tally shape, closed with a verdict once that window lands.
 
+> **Inputs re-measured on a 1M-era corpus (#1056).** This file's *method* stands
+> and is reused verbatim; two of its *inputs* were re-derived against current
+> `claude-opus-5` sessions. The floor below (~91k) has since moved to **104k** —
+> it turns out to be bimodal by session shape — while the 175k threshold held.
+> `R`, swept here from 3 to 50, is now **measured** (n=1). See
+> `context-threshold-rederivation-1056.md`. **AC6 remains open**; that work did
+> not close it and nothing in this file is rewritten.
+
 **Figures are NORMALIZED, deliberately** — ratios, percentages, and per-request
 token counts only, no absolute request counts or dollar totals. Same reasoning as
 `token-baseline-tally-781.md` § *Why no absolute figures*: this repo is public,

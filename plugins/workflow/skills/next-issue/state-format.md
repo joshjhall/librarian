@@ -124,6 +124,7 @@ up with full context.
 | `files_modified`  | What changed so far (avoids re-scanning)                    |
 | `files_planned`   | What still needs to change                                  |
 | `scope_expansions` | Decomposition the plan lens added to scope, or a recorded decline (#756) — see `plan-sizing.md`. Marks the growth PLANNED so `drift-detect` does not read it as scope creep |
+| `handoff_marker`  | Present only when this checkpoint was written to act on a `handoff` verdict (#1056). Carries the `context-budget.sh` reading that triggered it (`context_tokens`, `threshold`, `floor`, `pct_of_threshold`, `at`) plus `r_measured` — the re-orientation requests the RESUMED session spent, filled in by that session, `null` until then. **Fail-open**: absent or malformed means "R unknown", never an error or a blocked resume. Protocol: `handoff-protocol.md` § Recording `R` at a handoff |
 | `warnings`        | Discoveries the next phase should know about                |
 | `next_action`     | Explicit directive for post-reset pickup                    |
 | `loop_state`      | Implementation loop progress (completed/remaining/criteria) |
