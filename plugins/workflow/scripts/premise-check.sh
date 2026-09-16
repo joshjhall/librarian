@@ -250,6 +250,24 @@ cmd_exists() {
     [ -z "$_ex_raw" ] &&
         emit_unavailable "$_ex_cli returned no output — existence check did not run"
 
+    # A NON-EMPTY payload is not yet an ANSWER. Exit 0 plus some bytes is what a
+    # proxy error page, a truncated response, or a gateway banner looks like —
+    # and handed to the parser, every one of them yields `verdict=absent`,
+    # because a payload with no records is textually indistinguishable from a
+    # search that matched nothing. `absent` reads as "nothing tracked, file it",
+    # so an outage would once again render as an all-clear (AC5) — this time
+    # through the PARSER rather than the query, which is why the exit-code and
+    # empty-output guards above do not catch it.
+    #
+    # The shape check is deliberately minimal: a JSON array is all either CLI can
+    # return here, so requiring a leading `[` separates "a result" from "not a
+    # result" without re-implementing a parser. `[]` passes and correctly means
+    # absent; `Service Unavailable` does not.
+    case "$_ex_raw" in
+        [[]*) ;;
+        *) emit_unavailable "$_ex_cli returned a non-JSON payload — existence check did not run" ;;
+    esac
+
     parse_and_emit_match "$_ex_raw"
 }
 

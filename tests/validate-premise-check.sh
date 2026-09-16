@@ -291,6 +291,47 @@ test_constraints_unavailable_when_cli_missing() {
         "AC5: an unrun sweep is NEVER reported as 'no constraints found'"
 }
 
+# --- 3b. A malformed payload is not an answer (review cycle 6) -------------
+
+# THE THIRD WAY TO REACH A FALSE `absent`. The two guards above catch a non-zero
+# exit and empty output — but a CLI that exits 0 and prints something
+# unparseable passes both, and the record parser then finds no fields and falls
+# through to `verdict=absent`. A payload with no records is textually
+# indistinguishable from a search that matched nothing.
+#
+# That is AC5 violated through the PARSER instead of the query: a proxy error
+# page or gateway banner would read as "nothing tracked, go ahead and file".
+# Measured before the fix: `Service Unavailable` + exit 0 produced
+# `verdict=absent`.
+test_malformed_payload_is_unavailable() {
+    local sb
+    new_sandbox sb
+    stub_cli "$sb" gh 'echo "Service Unavailable"
+exit 0'
+    run_premise "$sb" exists --title "split the detectors" --platform github
+    assert_exit 0 "$PC_RC" "a malformed payload still exits 0 with a verdict"
+    assert_contains "$PC_OUT" "verdict=unavailable" \
+        "AC5: exit-0 garbage resolves unavailable (an outage is not an all-clear)"
+    assert_not_contains "$PC_OUT" "verdict=absent" \
+        "AC5: a non-JSON payload is NEVER reported as absent"
+}
+
+# The other half of that guard: a genuine empty result must still be `absent`.
+# A shape check that rejected `[]` would turn every real no-match into
+# "unavailable", which is the opposite failure — the option would carry a
+# did-not-run caveat on every clean search and the caveat would stop meaning
+# anything.
+test_empty_array_is_still_absent() {
+    local sb
+    new_sandbox sb
+    stub_cli "$sb" gh "$STUB_EMPTY"
+    run_premise "$sb" exists --title "nothing matches this" --platform github
+    assert_contains "$PC_OUT" "verdict=absent" \
+        "an empty JSON array is a real answer: absent, not unavailable"
+    assert_not_contains "$PC_OUT" "verdict=unavailable" \
+        "the shape guard does not reject a legitimately empty result"
+}
+
 # --- 4. Body constraints are extracted (#550) ------------------------------
 
 test_constraints_extracted_from_body() {
@@ -305,6 +346,40 @@ test_constraints_extracted_from_body() {
     assert_contains "$PC_OUT" "scope-drift" "the constraint text carries its subject"
     assert_not_contains "$PC_OUT" "an ordinary descriptive line" \
         "a line with no constraint marker is not emitted (the sweep is not a body dump)"
+}
+
+# EVERY marker alternative, one line each. Only `consider keeping` had a fixture,
+# so a typo in any of the other ten — a dropped trailing space in `avoid `, a
+# mis-escaped `don.t`, a broken `keep .* inline` — would silently stop matching
+# real constraint text while the suite stayed green. That is the
+# detector-stops-firing shape this branch has already hit twice (the GNU-regex
+# scope gap, and the `\|` it concealed), so the marker list gets the same
+# treatment: one assertion per alternative, keyed to a distinctive word, so a
+# failure names WHICH marker broke.
+test_every_constraint_marker_fires() {
+    local sb
+    new_sandbox sb
+    stub_cli "$sb" gh 'case "$*" in
+  *"--json body"*)
+    printf "%s" "{\"body\":\"consider keeping alpha inline\nthis must not bravo\nthis should not charlie\ndo not delta\ndon'"'"'t echo\nnever foxtrot\nkeep golf inline\navoid hotel\nrequired to india\nthis has to stay juliet\nleave kilo as-is\nan ordinary line about lima\"}" ;;
+  *) echo "{}" ;;
+esac
+exit 0'
+    run_premise "$sb" constraints --issue 1 --platform github
+    assert_contains "$PC_OUT" "alpha" "marker 'consider keeping' fires"
+    assert_contains "$PC_OUT" "bravo" "marker 'must not' fires"
+    assert_contains "$PC_OUT" "charlie" "marker 'should not' fires"
+    assert_contains "$PC_OUT" "delta" "marker 'do not' fires"
+    assert_contains "$PC_OUT" "echo" "marker 'don.t' fires"
+    assert_contains "$PC_OUT" "foxtrot" "marker 'never' fires"
+    assert_contains "$PC_OUT" "golf" "marker 'keep .* inline' fires"
+    assert_contains "$PC_OUT" "hotel" "marker 'avoid ' fires (the trailing space is load-bearing)"
+    assert_contains "$PC_OUT" "india" "marker 'required to' fires"
+    assert_contains "$PC_OUT" "juliet" "marker 'has to stay' fires"
+    assert_contains "$PC_OUT" "kilo" "marker 'leave .* as' fires"
+    # The control: a line with no marker must NOT be emitted, or the sweep is a
+    # body dump and every assertion above passes for the wrong reason.
+    assert_not_contains "$PC_OUT" "lima" "a line with no marker is still not emitted"
 }
 
 test_constraints_none_when_body_is_plain() {
@@ -787,7 +862,10 @@ run_test test_cli_missing_is_unavailable "AC5: gh absent → unavailable, never 
 run_test test_cli_failing_is_unavailable "AC5: gh failing → unavailable, never absent"
 run_test test_constraints_unavailable_when_cli_missing "AC5: unrun sweep → unavailable, never none"
 run_test test_constraints_extracted_from_body "#550 repro: body constraint is surfaced"
+run_test test_every_constraint_marker_fires "every CONSTRAINT_MARKERS alternative fires"
 run_test test_constraints_none_when_body_is_plain "plain body → verdict=none"
+run_test test_malformed_payload_is_unavailable "AC5: exit-0 garbage → unavailable, never absent"
+run_test test_empty_array_is_still_absent "an empty array is still a real absent"
 run_test test_missing_title_fails_loud "usage: exists without --title → exit 2, no verdict"
 run_test test_missing_issue_fails_loud "usage: constraints without --issue → exit 2, no verdict"
 run_test test_non_numeric_issue_fails_loud "usage: non-numeric --issue → exit 2"
