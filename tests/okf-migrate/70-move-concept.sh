@@ -1035,7 +1035,12 @@ test_retarget_line_matches_python_on_adversarial_shapes() {
         '- [source](https://example.com) [Thing](thing.md) — hook' \
         '- [Thing](thing.md) and [Other](other.md) — hook' \
         '- no links at all' \
-        '- [Thing](thing.txt) — a non-markdown target'; do
+        '- [Thing](thing.txt) — a non-markdown target' \
+        '- [see [1]](thing.md) — a LITERAL BRACKET in the label' \
+        '- [a [b] c](thing.md) — a bracketed span mid-label' \
+        '- [a]](thing.md) — a stray close before the paren' \
+        '- [Thing]() — an empty target' \
+        '- [a][b](thing.md) — a reference-style decoy first'; do
         sh_out="$(OKF_MIGRATE_SKILL_DIR="$SKILL_DIR" command bash -c '
             . "$0/moves.sh" 2>/dev/null || true
             retarget_line "$1" "sub/index.md"
@@ -1058,6 +1063,181 @@ sys.stdout.write(moves._retarget_line(sys.argv[2], "sub/index.md"))
     ' "$SKILL_DIR" '- [Thing]( thing.md ) — hook' 2>/dev/null)"
     assert_contains "$sh_out" "](sub/index.md)" \
         "the padded-target shape is genuinely retargeted, not passed through"
+}
+
+test_bracketed_label_does_not_corrupt_either_index() {
+    local root sh_index sh_src py_index py_src
+    if [ "$OKF_HAVE_PY" -ne 1 ]; then
+        skip_test "python3 >= 3.11 unavailable"
+        return 0
+    fi
+    # A LITERAL `[` INSIDE A LINK LABEL — end-to-end, not at the parser.
+    # Python's LINK_RE is `\[([^\]]*)\]\(`, whose label cannot span a `]`, so on
+    # `- [see [1]](golem-thing.md)` it finds NO link and plans NO move. The bash
+    # twin committed to the OUTER `[` and then hunted forward for the next `](`,
+    # yielding label `see [1` and a real target — so it moved the concept AND
+    # wrote a mangled, duplicated line into BOTH index files.
+    #
+    # Asserted through `apply` rather than by calling scan_links, because the
+    # damage is in what lands on disk: a parser-level assertion would have gone
+    # green the moment the two agreed on a label, without ever showing that the
+    # index files stopped being corrupted.
+    root="$(fresh_bundle "$WORKDIR")"
+    write_concept "$root" "MEMORY.md" '# Memory
+
+- [Golem](index-golem.md) — bucket'
+    write_concept "$root" "index-golem.md" '# Golem
+
+- [see [1]](golem-thing.md) — bracketed label'
+    write_concept "$root" "golem-thing.md" '---
+type: feedback
+---
+
+MOVING-CONCEPT'
+
+    run_moves apply "$root" --transform move-concept --confirm --allow-dirty
+    assert_exit 0 "$OKF_RC" "bash applies cleanly"
+    sh_src="$(command cat "$root/index-golem.md")"
+    sh_index=""
+    [ -f "$root/golem/index.md" ] && sh_index="$(command cat "$root/golem/index.md")"
+
+    # THE CORRUPTION SIGNATURE, pinned directly: the mangled output duplicated
+    # the label and spliced the two spellings together. Either half appearing
+    # twice on one line is the bug, regardless of what else changed.
+    assert_not_contains "$sh_src" "bracketed label[see [1]" \
+        "the source index line is not spliced with a rewritten copy of itself"
+    assert_not_contains "$sh_index" "bracketed label[see [1]" \
+        "...and neither is the generated directory index"
+
+    # ...and the python primary, on the same input, agrees byte for byte —
+    # including on whether the concept moved at all.
+    root="$(fresh_bundle "$WORKDIR")"
+    write_concept "$root" "MEMORY.md" '# Memory
+
+- [Golem](index-golem.md) — bucket'
+    write_concept "$root" "index-golem.md" '# Golem
+
+- [see [1]](golem-thing.md) — bracketed label'
+    write_concept "$root" "golem-thing.md" '---
+type: feedback
+---
+
+MOVING-CONCEPT'
+
+    run_moves_py apply "$root" --transform move-concept --confirm --allow-dirty
+    assert_exit 0 "$OKF_RC" "python applies cleanly"
+    py_src="$(command cat "$root/index-golem.md")"
+    py_index=""
+    [ -f "$root/golem/index.md" ] && py_index="$(command cat "$root/golem/index.md")"
+
+    assert_equals "$py_src" "$sh_src" \
+        "both runtimes leave the bracketed index line identical, byte for byte"
+    assert_equals "$py_index" "$sh_index" \
+        "...and agree on the directory index (including that there is none)"
+}
+
+test_claimed_key_lookup_is_exact_not_a_regex() {
+    local root cfg sh_index sh_index2 py_index py_index2
+    if [ "$OKF_HAVE_PY" -ne 1 ]; then
+        skip_test "python3 >= 3.11 unavailable"
+        return 0
+    fi
+    # TWO DESTINATION PATHS DIFFERING ONLY AT A DOT. The claimed map is keyed by
+    # the NEW relative path; the bash writer tested membership with a BRE
+    # (`grep -q "^$new_rel\t"`), where `.` matches any character — so `a.b/x.md`
+    # already claimed made `axb/x.md` read as claimed too, and the second
+    # concept's index line was silently dropped. Python's twin is a dict, so it
+    # keyed literally and kept both.
+    #
+    # `dir:` rules rather than `index:`, because the two paths must differ ONLY
+    # at the dot — which means the same BASENAME arriving from two different
+    # source directories.
+    #
+    # THE ORDER IS LOAD-BEARING AND EASY TO GET BACKWARDS: the metacharacter is
+    # in the PATTERN, not the subject. `grep "^a.b/x.md\t"` matches the already
+    # claimed line `axb/x.md\t…`, so the PLAIN path must be claimed first and the
+    # DOTTED one must be the lookup that collides with it. Reversed, `^axb/x.md`
+    # is all literals against `a.b/x.md` and the bug does not fire at all —
+    # measured: a first draft of this fixture survived its mutation round.
+    cfg="$WORKDIR/cfg.dot.$$"
+    write_taxonomy "$cfg" "dir:src1 = a.b" "dir:src2 = axb"
+
+    root="$(fresh_bundle "$WORKDIR")"
+    write_concept "$root" "MEMORY.md" '# Memory
+
+- [Bucket](index-bucket.md) — bucket'
+    write_concept "$root" "index-bucket.md" '# Bucket
+
+- [Plain](src2/x.md) — the plain-directory concept
+- [Dotted](src1/x.md) — the dotted-directory concept'
+    write_concept "$root" "src1/x.md" '---
+type: feedback
+---
+
+DOTTED'
+    write_concept "$root" "src2/x.md" '---
+type: feedback
+---
+
+PLAIN'
+
+    OKF_RC=0
+    OKF_OUT="$(PATTERNS_FORCE_BASH=1 OKF_BUNDLE_ROOT="$root" \
+        OKF_MIGRATE_CONFIG_DIR="$cfg" \
+        OKF_PINNED_VERSION="${OKF_TEST_VERSION:-0.2}" \
+        command bash "$OKF_MIGRATE_SH" apply --transform move-concept \
+        --confirm --allow-dirty 2>&1)" || OKF_RC=$?
+    assert_exit 0 "$OKF_RC" "bash applies cleanly"
+    sh_index=""
+    [ -f "$root/a.b/index.md" ] && sh_index="$(command cat "$root/a.b/index.md")"
+    sh_index2=""
+    [ -f "$root/axb/index.md" ] && sh_index2="$(command cat "$root/axb/index.md")"
+
+    # BOTH concepts must be named by their own directory index, carrying their
+    # OWN hook. The regex collision dropped the second claim, so `axb/index.md`
+    # fell back to a generated stub with no hook while `a.b/index.md` kept its
+    # real line — assert each hook lands in its own file, which a single
+    # "both exist" check would not distinguish.
+    assert_contains "$sh_index" "the dotted-directory concept" \
+        "the dotted-path concept keeps its real index line"
+    assert_contains "$sh_index2" "the plain-directory concept" \
+        "...and so does the one whose path differs only at the dot"
+
+    root="$(fresh_bundle "$WORKDIR")"
+    write_concept "$root" "MEMORY.md" '# Memory
+
+- [Bucket](index-bucket.md) — bucket'
+    write_concept "$root" "index-bucket.md" '# Bucket
+
+- [Plain](src2/x.md) — the plain-directory concept
+- [Dotted](src1/x.md) — the dotted-directory concept'
+    write_concept "$root" "src1/x.md" '---
+type: feedback
+---
+
+DOTTED'
+    write_concept "$root" "src2/x.md" '---
+type: feedback
+---
+
+PLAIN'
+
+    OKF_RC=0
+    OKF_OUT="$(OKF_BUNDLE_ROOT="$root" \
+        OKF_MIGRATE_CONFIG_DIR="$cfg" \
+        OKF_PINNED_VERSION="${OKF_TEST_VERSION:-0.2}" \
+        command python3 "$OKF_MIGRATE_PY" apply --transform move-concept \
+        --confirm --allow-dirty 2>&1)" || OKF_RC=$?
+    assert_exit 0 "$OKF_RC" "python applies cleanly"
+    py_index=""
+    [ -f "$root/a.b/index.md" ] && py_index="$(command cat "$root/a.b/index.md")"
+    py_index2=""
+    [ -f "$root/axb/index.md" ] && py_index2="$(command cat "$root/axb/index.md")"
+
+    assert_equals "$py_index" "$sh_index" \
+        "both runtimes generate the dotted directory index identically"
+    assert_equals "$py_index2" "$sh_index2" \
+        "...and the plain one too"
 }
 
 test_read_index_names_resolves_without_a_preloaded_path() {

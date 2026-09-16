@@ -66,19 +66,35 @@ normalize_rel() {
 # non-greedy quantifier, and a greedy `\(.*\)` swallows every link on a line but
 # the last — silently dropping the first of two, which is precisely the
 # two-inbound-links case AC3 exists to pin.
+#
+# THE `]` MUST IMMEDIATELY FOLLOW THE LABEL, and a failed start RESTARTS from the
+# next `[` rather than skipping ahead to the next `](`. Python's `\[([^\]]*)\]\(`
+# cannot let a label span a `]`, so on `- [see [1]](thing.md) — hook` it finds NO
+# link at all (it fails from the outer `[` because `]]` is not `](`, and from the
+# inner `[1` for the same reason). Committing to the outer `[` and then hunting
+# forward for the next `](` instead produced label `see [1` AND a target — not
+# merely a parity gap but corruption: bash moved the concept and wrote a mangled,
+# duplicated line into both indexes while python planned nothing.
 scan_links() {
-    local rest="$1" label target
+    local rest="$1" label target after
     while :; do
-        case "$rest" in *'['*']('*')'*) ;; *) break ;; esac
+        case "$rest" in *'['*) ;; *) break ;; esac
+        # Each pass consumes at least this `[`, so the loop always terminates.
         rest="${rest#*[}"
+        case "$rest" in *']'*) ;; *) break ;; esac
         label="${rest%%]*}"
-        case "$rest" in *']('*) ;; *) break ;; esac
-        # A `]` that is not followed by `(` is not a link; skip past this `[`.
-        case "$label" in *']'*) continue ;; esac
-        rest="${rest#*](}"
-        target="${rest%%)*}"
-        case "$rest" in *')'*) rest="${rest#*)}" ;; *) rest="" ;; esac
+        after="${rest#*]}"
+        # `](` only — a `]` followed by anything else is not a link here, so
+        # retry from the next `[` (python's next match attempt), never from a
+        # later `](` that belongs to a different construct.
+        case "$after" in '('*) ;; *) continue ;; esac
+        after="${after#(}"
+        case "$after" in *')'*) ;; *) continue ;; esac
+        target="${after%%)*}"
+        # `([^)]+)` requires at least one character; `[a]()` is not a link.
+        [ -n "$target" ] || continue
         command printf '%s\t%s\n' "$label" "$target"
+        rest="${after#*)}"
     done
 }
 
@@ -449,7 +465,18 @@ plan_directory_indexes() {
                 fi
                 new_rel="$(lookup_mapping "$old_rel" "$mapping")"
                 [ -n "$new_rel" ] || continue
-                command grep -q "^$new_rel	" "$claimed" 2>/dev/null && continue
+                # EXACT FIELD EQUALITY, not a regex. Python's twin is a dict —
+                # `claimed.setdefault(mapping[old_rel], line)` — so the key is
+                # compared literally. A BRE `^$new_rel\t` reads every `.` in a
+                # path as "any character", so two concepts whose new paths differ
+                # only at a dot (`a.b/x.md` vs `axb/x.md`) collide and the second
+                # claim is silently dropped. Same ENVIRON-fed awk the two readers
+                # below use, so writer and readers agree on what a key IS.
+                if OKF_K="$new_rel" command awk -F"$(command printf '\t')" \
+                    '$1 == ENVIRON["OKF_K"] { found = 1; exit } END { exit !found }' \
+                    "$claimed" 2>/dev/null; then
+                    continue
+                fi
                 command printf '%s\t%s\n' "$new_rel" "$line" >>"$claimed"
             done <<EOF
 $(scan_links "$line")
