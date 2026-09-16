@@ -20,9 +20,43 @@ on:
 # privilege.
 jobs:
   validate:
-    name: Validate tagged tree
+    name: Validate tagged tree (${{ matrix.shard }})
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # SHARDED to match ci.yml's quality-gates job. This job ran the whole of
+    # tests/run-all.sh serially under a 15-minute cap and was CANCELLED mid-suite
+    # on the v0.15.0 tag: the three shards cost 8m06s + 6m16s + 7m44s of stage
+    # time on that same commit's PR run, so ~22 minutes of work could not fit in
+    # 15 no matter how fast the runner was. `publish` needs this job, so the
+    # cancellation skipped it — the tag existed with no Release, and containers'
+    # LIBRARIAN_REF (releases/latest) stayed on the previous version.
+    #
+    # The cap was NOT the bug and is not what was raised here. It dates to #55,
+    # when the serial suite still fit; #960 then split the stage list into
+    # tests/shards/NN-<area>.sh and gave ci.yml a leg per shard, but this
+    # workflow kept calling the serial entry point. So the two workflows
+    # disagreed about how long the suite takes, and only the tag path could
+    # notice. Sharding here restores the #143 property this job exists for —
+    # that the release gate is a strict superset of the PR gate — by running the
+    # suite the same WAY, not just the same command.
+    #
+    # Per CLAUDE.md: when a shard nears its cap, re-balance or add a shard;
+    # do not nudge the number. Two earlier raises (15 -> 25 -> 40, #834/#932)
+    # each surfaced as an opaque mid-stage cancellation in a stage unrelated to
+    # the change that tripped it, which is exactly how this failure presented.
+    #
+    # fail-fast: false so one red shard does not cancel its siblings and turn a
+    # single attributable failure into two opaque ones — same reason as ci.yml's.
+    strategy:
+      fail-fast: false
+      matrix:
+        shard:
+          - 10-portability
+          - 20-golem
+          - 30-scanners
+    # 20, mirroring ci.yml's per-shard cap and its derivation: the legs sit
+    # within ~90s of each other, so this is ~3x headroom on every leg. The cap
+    # bounds a HANG; it does not ration normal growth.
+    timeout-minutes: 20
     permissions:
       contents: read
     steps:
@@ -62,8 +96,8 @@ jobs:
       # of what CI runs on a PR, so a tag can never publish from a tree the PR
       # suite would have rejected (issue #143). Mirrors ci.yml's quality-gates
       # job — same command, same anti-drift rationale.
-      - name: Run test suite
-        run: bash tests/run-all.sh
+      - name: Run test suite (shard ${{ matrix.shard }})
+        run: bash tests/run-all.sh --shard ${{ matrix.shard }}
 
       - name: Assert VERSION matches the tag
         run: |
