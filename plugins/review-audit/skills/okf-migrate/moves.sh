@@ -680,8 +680,8 @@ rewritten_target() {
 # one pass satisfies both criteria and there is no second code path to drift.
 rewrite_inbound_links() {
     local root="$1" list="$2" mapping="$3" claimed="${4:-}"
-    local path here_rel line n in_fence changed rest label target new_target t
-    local claimed_line sub_dir moved_new _isidx
+    local path here_rel line n in_fence changed label target new_target t
+    local claimed_line sub_dir moved_new _isidx _rw_trim _rw_old _rw_new
     [ -s "$mapping" ] || return 0
 
     while IFS= read -r path || [ -n "$path" ]; do
@@ -739,37 +739,54 @@ rewrite_inbound_links() {
                 fi
             fi
 
-            changed=""
-            rest="$line"
-            while :; do
-                case "$rest" in *'['*']('*')'*) ;; *) break ;; esac
-                changed="$changed${rest%%'['*}"
-                rest="${rest#*[}"
-                label="${rest%%]*}"
-                case "$rest" in *']('*) ;; *)
-                    changed="${changed}[$rest"
-                    rest=""
-                    break
-                    ;;
-                esac
-                case "$label" in
-                    *']'*)
-                        # A `[` whose `]` is not followed by `(` is not a link.
-                        changed="${changed}["
-                        continue
+            # BUILT ON scan_links, NOT A SECOND HAND-ROLLED WALK. This loop used
+            # to re-implement the parser, and it therefore did NOT inherit
+            # scan_links' bracketed-label fix: on a body line
+            # `See [see [1]](golem-thing.md) for detail.` it committed to the
+            # outer `[`, matched the SECOND `]`, and emitted
+            # `[see [1](golem/golem-thing.md)` — silently eating one `]` and
+            # rewriting a target python leaves alone (its LINK_RE finds no link
+            # there at all). Measured live on that exact fixture, both runtimes.
+            # This file already warns that "two parsers over one format is two
+            # things to drift"; this was the drift.
+            #
+            # A FAITHFUL PORT of python's loop, which iterates matches over the
+            # ORIGINAL line while replacing into the accumulator, one occurrence
+            # at a time (`changed.replace(match.group(0), …, 1)`). Two identical
+            # links on one line therefore rewrite left to right, because after
+            # the first replacement the first remaining occurrence is the second
+            # link.
+            changed="$line"
+            while IFS="$(command printf '\t')" read -r label target || [ -n "$label" ]; do
+                [ -n "$target" ] || continue
+                # TRIMMED like python's `match.group(2).strip()`, and the
+                # replacement drops the padding exactly as python's rebuilt
+                # `[label](target)` does — the same tested-trimmed/replaced-raw
+                # split retarget_line documents.
+                _rw_trim="$target"
+                while :; do
+                    case "$_rw_trim" in
+                        ' '*) _rw_trim="${_rw_trim# }" ;;
+                        *' ') _rw_trim="${_rw_trim% }" ;;
+                        *) break ;;
+                    esac
+                done
+                new_target="$(rewritten_target "$_rw_trim" "$here_rel" "$mapping")"
+                [ -n "$new_target" ] || continue
+                _rw_old="[$label]($target)"
+                _rw_new="[$label]($new_target)"
+                # LITERAL first-occurrence replacement. The quotes inside the
+                # expansions are what make the needle a literal string rather
+                # than a glob — unquoted, a label containing `[` or `*` would be
+                # read as a pattern, which is the very shape this fix is about.
+                case "$changed" in
+                    *"$_rw_old"*)
+                        changed="${changed%%"$_rw_old"*}$_rw_new${changed#*"$_rw_old"}"
                         ;;
                 esac
-                rest="${rest#*](}"
-                target="${rest%%)*}"
-                case "$rest" in
-                    *')'*) rest="${rest#*)}" ;;
-                    *) rest="" ;;
-                esac
-                new_target="$(rewritten_target "$target" "$here_rel" "$mapping")"
-                [ -n "$new_target" ] || new_target="$target"
-                changed="${changed}[$label]($new_target)"
-            done
-            changed="$changed$rest"
+            done <<EOF
+$(scan_links "$line")
+EOF
 
             if [ "$changed" != "$line" ]; then
                 emit_edit "move-concept" "$path" "replace-line" "$n" \

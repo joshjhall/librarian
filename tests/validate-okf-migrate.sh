@@ -155,6 +155,7 @@ run_fragment_test test_retarget_skips_a_leading_url_link "retarget_line scans pa
 run_fragment_test test_fenced_claim_does_not_displace_the_real_index_line "a fenced example never displaces the real claiming line (parity, both runtimes)"
 run_fragment_test test_retarget_line_matches_python_on_adversarial_shapes "retarget_line is byte-identical to its python twin on shapes this bundle lacks"
 run_fragment_test test_bracketed_label_does_not_corrupt_either_index "a literal [ inside a link label corrupts neither index (parity, end-to-end)"
+run_fragment_test test_bracketed_label_in_a_body_file_is_left_alone "a bracketed label in a BODY file reaches the second parser and is left intact"
 run_fragment_test test_claimed_key_lookup_is_exact_not_a_regex "two destinations differing only at a dot each keep their own index line"
 run_fragment_test test_read_index_names_resolves_without_a_preloaded_path "read_index_names resolves (and honors the override) with only the skill dir on sys.path"
 run_fragment_test test_destination_collision_leaves_the_file_put "a destination collision skips the move and never overwrites the incumbent"

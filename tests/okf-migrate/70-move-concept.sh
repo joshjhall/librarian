@@ -1136,6 +1136,92 @@ MOVING-CONCEPT'
         "...and agree on the directory index (including that there is none)"
 }
 
+test_bracketed_label_in_a_body_file_is_left_alone() {
+    local root sh_body py_body
+    if [ "$OKF_HAVE_PY" -ne 1 ]; then
+        skip_test "python3 >= 3.11 unavailable"
+        return 0
+    fi
+    # THE SECOND PARSER, reached only from a BODY file. rewrite_inbound_links'
+    # general per-line rewrite used to re-implement the link walk instead of
+    # calling scan_links, so it did not inherit the bracketed-label fix. Measured
+    # before this fix, on the body line below: bash emitted
+    # `See [see [1](golem/golem-thing.md) for detail.` — one `]` silently eaten
+    # AND the target rewritten — while python's LINK_RE finds no link there and
+    # left the line untouched.
+    #
+    # A BODY file specifically, because the index path never reaches this loop:
+    # an index line matching a claimed value is intercepted earlier and goes
+    # through retarget_line, which was already built on the fixed scan_links.
+    # That is why the index-side fixture above passed while this was broken.
+    #
+    # The SECOND line is the vacuity guard: an ordinary link in the same file
+    # must still be rewritten, or this case would pass against a rewriter that
+    # had stopped rewriting anything at all.
+    root="$(fresh_bundle "$WORKDIR")"
+    write_concept "$root" "MEMORY.md" '# Memory
+
+- [Golem](index-golem.md) — bucket'
+    write_concept "$root" "index-golem.md" '# Golem
+
+- [Thing](golem-thing.md) — the claiming line'
+    write_concept "$root" "golem-thing.md" '---
+type: feedback
+---
+
+MOVING-CONCEPT'
+    write_concept "$root" "other.md" '---
+type: feedback
+---
+
+See [see [1]](golem-thing.md) for detail.
+And an ordinary [Thing](golem-thing.md) link.
+A bad run then a real one: [x [1]](golem-thing.md) and [Real](golem-thing.md).'
+
+    run_moves apply "$root" --transform move-concept --confirm --allow-dirty
+    assert_exit 0 "$OKF_RC" "bash applies cleanly"
+    sh_body="$(command cat "$root/other.md")"
+
+    assert_contains "$sh_body" "[see [1]](golem-thing.md)" \
+        "a bracketed label is not a link to either runtime, so it is left intact"
+    assert_not_contains "$sh_body" "[see [1](" \
+        "...and no closing bracket was eaten"
+    assert_contains "$sh_body" "[Thing](golem/golem-thing.md)" \
+        "an ordinary link in the same file IS still rewritten (vacuity guard)"
+    # THE RESTART IS WHAT THIS PINS: a malformed bracket run must not consume
+    # the genuine link that follows it on the same line. Skipping ahead to the
+    # next `](` instead of restarting from the next `[` would swallow `[Real]`.
+    assert_contains "$sh_body" "[Real](golem/golem-thing.md)" \
+        "a real link AFTER a malformed one on the same line is still rewritten"
+
+    root="$(fresh_bundle "$WORKDIR")"
+    write_concept "$root" "MEMORY.md" '# Memory
+
+- [Golem](index-golem.md) — bucket'
+    write_concept "$root" "index-golem.md" '# Golem
+
+- [Thing](golem-thing.md) — the claiming line'
+    write_concept "$root" "golem-thing.md" '---
+type: feedback
+---
+
+MOVING-CONCEPT'
+    write_concept "$root" "other.md" '---
+type: feedback
+---
+
+See [see [1]](golem-thing.md) for detail.
+And an ordinary [Thing](golem-thing.md) link.
+A bad run then a real one: [x [1]](golem-thing.md) and [Real](golem-thing.md).'
+
+    run_moves_py apply "$root" --transform move-concept --confirm --allow-dirty
+    assert_exit 0 "$OKF_RC" "python applies cleanly"
+    py_body="$(command cat "$root/other.md")"
+
+    assert_equals "$py_body" "$sh_body" \
+        "both runtimes rewrite the body file identically, byte for byte"
+}
+
 test_claimed_key_lookup_is_exact_not_a_regex() {
     local root cfg sh_index sh_index2 py_index py_index2
     if [ "$OKF_HAVE_PY" -ne 1 ]; then
