@@ -5,7 +5,54 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.14.0] - 2026-09-11
+## [0.15.0] - 2026-09-16
+
+### Added
+
+- OKF slice D — the okf-migrate migration engine (#1036)
+- OKF slice H — wire the memory domain into codebase-audit (#1045)
+- Go unpaired-listener arm, and signal.Notify stops mis-filing (#1046)
+- OKF slice J — the move-concept transform (#934) (#1061)
+
+### CI/CD
+
+- Bump github/codeql-action/upload-sarif in the actions group (#1030)
+
+### Changed
+
+- Migrate the memory bundle to top-level `type:` (#991) (#1027)
+- Re-derive the context budget on a 1M-era corpus (#1056) (#1060)
+
+### Documentation
+
+- Record three lessons from #934's review (#934) (#1062)
+
+### Fixed
+
+- Verify a brokered text directive was submitted, not just typed (#1025)
+- Neutralize bidi overrides in md_safe, and correct its comment (#1023)
+- Route workflow apt-get through a hardened installer (#1028)
+- Stage review harnesses under cwd so the Workflow tool accepts them (#1029)
+- Make the delegation rule evaluable at the decision point (#1034)
+- Complete the teardown when a force removal deregisters (#1040)
+- Match grep's line model in every ported scanner (#1049)
+- Check escalation option premises before the operator sees them (#1052)
+- Skip the pre-push suite on a pure branch delete (#1054) (#1055)
+
+### Improved
+
+- Cap tool-result volume entering context (#786) (#1051)
+
+### Miscellaneous
+
+- Bump containers submodule to v4.20.1
+
+### Testing
+
+- Measure the phantom suggestion — Enter cannot submit it (#1031)
+- Guard memory-bundle baselines at pre-commit (#1007) (#1035)
+
+## [0.14.0] - 2026-09-12
 
 ### Added
 
@@ -912,6 +959,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Relocate skill/agent quality gates + fixtures (#12)
 
+[0.15.0]: https://github.com/joshjhall/librarian/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/joshjhall/librarian/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/joshjhall/librarian/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/joshjhall/librarian/compare/v0.11.0...v0.12.0
