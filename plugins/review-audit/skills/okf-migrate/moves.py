@@ -365,7 +365,17 @@ def plan_directory_indexes(
             rendered_lines: list[str] = []
             for new_rel in sorted(by_dir[directory]):
                 base = os.path.basename(new_rel)
-                if "(" + base + ")" in existing_text:
+                # ALREADY-NAMED MEANS A REAL LINK, not a substring. This tested
+                # `(base)` anywhere in the file, so an index whose PROSE
+                # mentions a filename in parentheses — "the concept file is
+                # called (golem-thing.md) by convention", ordinary in a bundle
+                # that documents its own naming — read as already present and
+                # the arriving concept was appended nowhere. It is then named by
+                # no index at all: the memory-orphan this module's header calls
+                # THE WHOLE RISK, reached by the code meant to prevent it.
+                # Measured, and IDENTICALLY in the bash twin, so byte-parity was
+                # blind to it — the same shape as the append-ordering bug above.
+                if "](" + base + ")" in existing_text:
                     continue
                 line = claimed.get(new_rel)
                 rendered_lines.append(

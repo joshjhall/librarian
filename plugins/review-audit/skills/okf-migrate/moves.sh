@@ -512,14 +512,36 @@ EOF
             # ORDER — measured with three concepts, `c1, c2, c3` was written as
             # `c1, c3, c2`. Both runtimes did it identically, so a byte-parity
             # check could not catch it.
-            _at="$(command wc -l <"$root/$dir/index.md" | command tr -d ' ')"
+            # `awk END{print NR}`, NEVER `wc -l`. The insert lands after line
+            # $_at, and python computes that position as `len(read_lines())` —
+            # `splitlines()`, which counts a final line with NO trailing newline.
+            # `wc -l` counts NEWLINES, so on an index whose last line is
+            # unterminated (POSIX permits it; hand-edited files have it) it
+            # returned one less and the block was inserted BEFORE that last
+            # line. Measured: bash wrote the arriving concept above the
+            # incumbent while python wrote it below — a live parity break.
+            # awk agrees with splitlines on all three cases: unterminated,
+            # terminated, and empty.
+            _at="$(command awk 'END { print NR }' "$root/$dir/index.md")"
             _block=""
             _n=0
             while IFS="$(command printf '\t')" read -r _o new_rel || [ -n "$_o" ]; do
                 [ -n "$new_rel" ] || continue
                 case "$new_rel" in "$dir"/*) ;; *) continue ;; esac
                 base="${new_rel##*/}"
-                command grep -F "($base)" "$root/$dir/index.md" >/dev/null 2>&1 && continue
+                # ALREADY-NAMED MEANS A REAL LINK, not a substring. This tested
+                # `($base)` anywhere in the file, so an index whose PROSE
+                # mentions a filename in parentheses — "the concept file is
+                # called (golem-thing.md) by convention", ordinary in a bundle
+                # that documents its own naming — read as already present and
+                # the arriving concept was appended nowhere. It is then named by
+                # no index at all: the memory-orphan this file's header calls
+                # THE WHOLE RISK, reached by the code meant to prevent it.
+                # Measured, and IDENTICALLY in both runtimes, so byte-parity was
+                # blind to it — same shape as the append-ordering bug above.
+                # Requiring the `](` makes it markdown link syntax rather than
+                # any parenthesized text.
+                command grep -F "]($base)" "$root/$dir/index.md" >/dev/null 2>&1 && continue
                 line="$(OKF_K="$new_rel" command awk -F"$(command printf '\t')" \
                     '$1 == ENVIRON["OKF_K"] { sub(/^[^\t]*\t/, ""); print; exit }' "$claimed")"
                 if [ -n "$line" ]; then

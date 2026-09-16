@@ -230,6 +230,159 @@ Body.'
         "the real validator confirms the moved concept is reachable"
 }
 
+test_prose_mentioning_a_filename_does_not_suppress_the_append() {
+    local root sh_index py_index
+    if [ "$OKF_HAVE_PY" -ne 1 ]; then
+        skip_test "python3 >= 3.11 unavailable"
+        return 0
+    fi
+    # THE DEDUPE CHECK COULD ORPHAN THE CONCEPT IT EXISTS TO NAME. "Is this
+    # concept already listed?" was a bare substring test for `(base)` anywhere
+    # in the existing index, so PROSE mentioning a filename in parentheses —
+    # ordinary in a bundle that documents its own naming convention — read as
+    # already present and the arriving concept was appended nowhere. It is then
+    # named by no index at all: the memory-orphan this transform's header calls
+    # THE WHOLE RISK, reached through the code meant to prevent it.
+    #
+    # BOTH RUNTIMES HAD IT, identically, so the whole-tree byte-parity fixtures
+    # were blind — asserted here as CONTENT plus a real validator run, with the
+    # parity comparison only as a secondary check.
+    root="$(fresh_bundle "$WORKDIR")"
+    command mkdir -p "$root/golem"
+    write_concept "$root" "MEMORY.md" '# Memory
+
+- [Golem](index-golem.md) — bucket'
+    write_concept "$root" "index-golem.md" '# Golem
+
+- [Thing](golem-thing.md) — the claiming line'
+    write_concept "$root" "golem-thing.md" '---
+type: feedback
+---
+
+MOVING-CONCEPT'
+    # The decoy: a parenthesized filename that is NOT a markdown link.
+    write_concept "$root" "golem/index.md" '# golem
+
+Naming note: the concept file is called (golem-thing.md) by convention.'
+
+    run_moves apply "$root" --transform move-concept --confirm --allow-dirty
+    assert_exit 0 "$OKF_RC" "bash applies cleanly"
+    sh_index="$(command cat "$root/golem/index.md")"
+
+    assert_contains "$sh_index" "](golem-thing.md)" \
+        "the arriving concept is named by a REAL link despite the prose decoy"
+    assert_contains "$sh_index" "called (golem-thing.md) by convention" \
+        "...and the operator's hand-written prose is preserved, not regenerated"
+    # THE REAL VALIDATOR IS THE TEETH: the failure mode is an orphan, and only
+    # the validator judges reachability the way the bundle's readers do.
+    validator_rows "$root"
+    assert_true "[ '$OKF_LISTED' -gt 0 ]" "the validator actually scanned files"
+    assert_not_contains "$OKF_ROWS" "memory-orphan" \
+        "no memory-orphan row — the concept is reachable"
+
+    root="$(fresh_bundle "$WORKDIR")"
+    command mkdir -p "$root/golem"
+    write_concept "$root" "MEMORY.md" '# Memory
+
+- [Golem](index-golem.md) — bucket'
+    write_concept "$root" "index-golem.md" '# Golem
+
+- [Thing](golem-thing.md) — the claiming line'
+    write_concept "$root" "golem-thing.md" '---
+type: feedback
+---
+
+MOVING-CONCEPT'
+    write_concept "$root" "golem/index.md" '# golem
+
+Naming note: the concept file is called (golem-thing.md) by convention.'
+
+    run_moves_py apply "$root" --transform move-concept --confirm --allow-dirty
+    assert_exit 0 "$OKF_RC" "python applies cleanly"
+    py_index="$(command cat "$root/golem/index.md")"
+
+    assert_equals "$py_index" "$sh_index" \
+        "both runtimes append identically (the defect was shared, not a skew)"
+}
+
+test_existing_index_without_a_trailing_newline_appends_after_it() {
+    local root sh_index py_index
+    if [ "$OKF_HAVE_PY" -ne 1 ]; then
+        skip_test "python3 >= 3.11 unavailable"
+        return 0
+    fi
+    # AN EXISTING INDEX WHOSE LAST LINE IS UNTERMINATED. The insert position was
+    # `wc -l`, which counts NEWLINES, while python computes it from
+    # `splitlines()`, which counts a final unterminated line. POSIX permits the
+    # missing newline and hand-edited files have it, so bash inserted the block
+    # one line early — ABOVE the incumbent entry — while python appended below
+    # it. A live byte-parity break, fixed by counting with `awk END{print NR}`,
+    # which agrees with splitlines on unterminated, terminated and empty files.
+    #
+    # printf WITHOUT a trailing \n on the last line: write_concept always
+    # terminates, so this fixture writes the file directly.
+    root="$(fresh_bundle "$WORKDIR")"
+    command mkdir -p "$root/golem"
+    write_concept "$root" "MEMORY.md" '# Memory
+
+- [Golem](index-golem.md) — bucket'
+    write_concept "$root" "index-golem.md" '# Golem
+
+- [Thing](golem-thing.md) — the claiming line'
+    write_concept "$root" "golem-thing.md" '---
+type: feedback
+---
+
+MOVING-CONCEPT'
+    write_concept "$root" "golem/existing.md" '---
+type: feedback
+---
+
+INCUMBENT'
+    command printf '%s\n%s\n%s' '# golem' '' \
+        '- [Existing](existing.md) — unterminated last line' \
+        >"$root/golem/index.md"
+
+    run_moves apply "$root" --transform move-concept --confirm --allow-dirty
+    assert_exit 0 "$OKF_RC" "bash applies cleanly"
+    sh_index="$(command cat "$root/golem/index.md")"
+
+    # ORDER IS THE ASSERTION, not mere presence: the bug put the arriving line
+    # ABOVE the incumbent, and both lines are present either way.
+    assert_contains "$sh_index" "unterminated last line
+- [Thing](golem-thing.md)" \
+        "the arriving concept is appended AFTER the unterminated last line"
+
+    root="$(fresh_bundle "$WORKDIR")"
+    command mkdir -p "$root/golem"
+    write_concept "$root" "MEMORY.md" '# Memory
+
+- [Golem](index-golem.md) — bucket'
+    write_concept "$root" "index-golem.md" '# Golem
+
+- [Thing](golem-thing.md) — the claiming line'
+    write_concept "$root" "golem-thing.md" '---
+type: feedback
+---
+
+MOVING-CONCEPT'
+    write_concept "$root" "golem/existing.md" '---
+type: feedback
+---
+
+INCUMBENT'
+    command printf '%s\n%s\n%s' '# golem' '' \
+        '- [Existing](existing.md) — unterminated last line' \
+        >"$root/golem/index.md"
+
+    run_moves_py apply "$root" --transform move-concept --confirm --allow-dirty
+    assert_exit 0 "$OKF_RC" "python applies cleanly"
+    py_index="$(command cat "$root/golem/index.md")"
+
+    assert_equals "$py_index" "$sh_index" \
+        "both runtimes agree on the insert position (this WAS a parity break)"
+}
+
 test_appending_three_concepts_keeps_their_order() {
     local root body
     root="$(fresh_bundle "$WORKDIR")"

@@ -139,6 +139,8 @@ run_fragment_test test_migrate_config_readers_survive_unreadable "the config rea
 run_fragment_test test_move_rewrites_every_inbound_link "every inbound link to a moved concept is rewritten — from TWO directories, both link forms (AC3)"
 run_fragment_test test_index_pointer_follows_the_move "the index pointer follows the move — a stale one is a silent un-recall (AC4)"
 run_fragment_test test_move_into_an_existing_directory_index "a move into an EXISTING directory index appends to it — no regeneration, no orphan"
+run_fragment_test test_prose_mentioning_a_filename_does_not_suppress_the_append "prose naming a file in parens is not a link, so it never suppresses the append"
+run_fragment_test test_existing_index_without_a_trailing_newline_appends_after_it "an unterminated last line does not shift the insert position (parity)"
 run_fragment_test test_appending_three_concepts_keeps_their_order "appending 3+ concepts to an existing index preserves sorted order (highest-line-first interleaving)"
 run_fragment_test test_appended_line_keeps_literal_escape_sequences "a literal backslash-n in an appended index line survives, and still repoints"
 run_fragment_test test_backslash_in_a_path_keeps_the_operator_hook "a backslash-bearing path keeps its operator hook (ENVIRON, not awk -v)"
