@@ -158,14 +158,30 @@ pre-push:
     # themselves, or the CI workflows, so editing a SKILL.md / workflow.js / a
     # pinned `uses:` is caught before CI. Skips on a bare host without node
     # (run-all.sh degrades on its own when jq is absent).
+    # `use_stdin` is what makes the delete guard below possible: git passes the
+    # pushed refs on STDIN and nowhere else, so without it the command cannot
+    # tell a deletion from an ordinary push. lefthook buffers a copy per
+    # consumer, so reading it here does not starve another command.
     quality-gates:
       glob:
         - "plugins/**"
         - "tests/**"
         - ".github/workflows/**"
+      use_stdin: true
       skip:
         - run: "! command -v node >/dev/null 2>&1"
-      run: bash tests/run-all.sh
+      # A branch DELETE transfers no objects and changes no file, but lefthook's
+      # `glob:` is computed from `git diff HEAD @{push}` and never looks at the
+      # ref being pushed -- so the glob matches and this ran the whole suite to
+      # delete a ref (~700s, #1054). The guard exits 0 only when EVERY pushed
+      # ref is a deletion, and fails closed otherwise, so an ordinary push (or
+      # an undecidable one) still runs the gate.
+      run: |
+        if bash bin/push-is-pure-delete.sh; then
+          echo "quality-gates: skipped — this push only deletes refs (#1054)"
+          exit 0
+        fi
+        bash tests/run-all.sh
 
     typos:
       skip:

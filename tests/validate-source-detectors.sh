@@ -114,6 +114,6 @@ run_fragment_test test_health_dispatch_order_and_shape "check-code-health: bash 
 run_fragment_test test_health_stdout_git_failure_fails_closed "check-code-health: a hanging git fails CLOSED and leaks nothing (#686)"
 run_fragment_test test_health_stdout_is_output "check-code-health: stdout_is_output exempts prints only, keeps breakpoints (#686/#680 AC3)"
 run_fragment_test test_health_stdout_repo_cleaned_up "check-code-health: the stdout match-repo is not leaked (#686)"
-run_fragment_test test_health_bash_refusals "check-code-health: the three bash $(—) cells stay silent, with the tech-debt-marker control (#842)"
+run_fragment_test test_health_bash_refusals 'check-code-health: the three bash $(—) cells stay silent, with the tech-debt-marker control (#842)'
 
 generate_report
