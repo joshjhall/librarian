@@ -211,6 +211,47 @@ require "that exclusion ignores a # inside a quoted arg (#842)" "$V"
 probe_sed V 'a  b' 's/[[:space:]]+/_/' 'a_b'
 require "[[:space:]] under sed -E" "$V"
 
+# A CONTROL CHARACTER as a sed placeholder, in BRE (#911).
+#
+# `premise-check.sh`'s emit_constraints unescapes a JSON body by first consuming
+# `\\` into a placeholder, so that the later `\n` pass cannot misread the second
+# backslash of an escaped pair plus a following `n` as a newline escape. That
+# ordering bug truncated a constraint mid-token; the placeholder is what fixes
+# it, and the placeholder must be a byte the INPUT cannot contain — an earlier
+# literal token (`@@PCBS@@`) was rewritten when a body happened to contain it.
+#
+# U+0001 satisfies that, but only if sed handles a raw control character as both
+# PATTERN and REPLACEMENT. That had been assumed rather than measured, and it is
+# assumed on the platform where three of #911's four parsing defects lived. This
+# row measures it: the round trip below is emit_constraints' exact shape, and
+# `x\\ny` must come back as `x\ny` — one literal backslash, with the `n` intact.
+# If it comes back as `x` + newline + `y`, the placeholder did not hold and the
+# constraint sweep silently truncates on this host.
+#
+# Deliberately a REQUIREMENT, not an INFO row: unlike `\b`, there is no
+# platform-specific correct answer here. A sed that cannot round-trip a control
+# character breaks the sweep everywhere, so a failure should stop the probe
+# rather than be reported as a dialect difference.
+PH="$(command printf '\001')"
+V=""
+probe_sed_bre() {
+    local __out="$1" input="$2" expected="$3"
+    shift 3
+    local got rc
+    got="$(command printf '%s\n' "$input" | command sed "$@" 2>/dev/null)"
+    rc=$?
+    if [ $rc -ne 0 ]; then
+        printf -v "$__out" '%s' "ERROR"
+    elif [ "$got" = "$expected" ]; then
+        printf -v "$__out" '%s' "SUPPORTED"
+    else
+        printf -v "$__out" '%s' "UNSUPPORTED"
+    fi
+}
+probe_sed_bre V 'x\\ny' 'x\ny' \
+    -e "s/\\\\\\\\/${PH}/g" -e 's/\\n/@NL@/g' -e "s/${PH}/\\\\/g"
+require "control-char placeholder round-trips under sed BRE (#911)" "$V"
+
 # --- INFO: the dialect questions #684 exists to settle ------------------------
 
 hdr "Word boundaries (the #684 question)"
