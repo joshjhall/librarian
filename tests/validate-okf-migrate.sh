@@ -152,6 +152,7 @@ run_fragment_test test_foreign_index_name_works_by_config_alone "a repo whose in
 run_fragment_test test_symlinked_move_destination_is_skipped "a symlinked destination is planned away — no write-through to an external dir"
 run_fragment_test test_symlinked_move_destination_is_skipped_in_python "...and the python runtime agrees, exit code included (parity)"
 run_fragment_test test_retarget_skips_a_leading_url_link "retarget_line scans past a leading URL link to the .md target (parity)"
+run_fragment_test test_fenced_claim_does_not_displace_the_real_index_line "a fenced example never displaces the real claiming line (parity, both runtimes)"
 run_fragment_test test_retarget_line_matches_python_on_adversarial_shapes "retarget_line is byte-identical to its python twin on shapes this bundle lacks"
 run_fragment_test test_read_index_names_resolves_without_a_preloaded_path "read_index_names resolves (and honors the override) with only the skill dir on sys.path"
 run_fragment_test test_destination_collision_leaves_the_file_put "a destination collision skips the move and never overwrites the incumbent"

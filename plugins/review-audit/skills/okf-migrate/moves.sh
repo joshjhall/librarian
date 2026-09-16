@@ -396,6 +396,7 @@ EOF
 plan_directory_indexes() {
     local root="$1" list="$2" mapping="$3" claimed="$4"
     local dirs path here line old_rel new_rel dir base body count target label
+    local _pdi_fence _pdi_t
     : >"$claimed"
     [ -s "$mapping" ] || return 0
 
@@ -407,7 +408,32 @@ plan_directory_indexes() {
             */*) here="${here%/*}" ;;
             *) here="" ;;
         esac
+        _pdi_fence=0
         while IFS= read -r line || [ -n "$line" ]; do
+            # FENCED CODE IS SKIPPED — the guard `index_members` and
+            # `rewrite_inbound_links` already apply, and the python twin applies
+            # at this third site too. Without it a fenced EXAMPLE of an index
+            # line is read as the concept's real claiming line.
+            #
+            # It bites here because only the FIRST claim per new_rel is kept and
+            # the walk is alphabetical, so a documentation file sorting ahead of
+            # the real index displaces it. Measured on a fixture: bash seeded
+            # `golem/index.md` with the fenced example text where python used the
+            # real line.
+            #
+            # And it is not only cosmetic. `rewrite_inbound_links` keys off this
+            # same claimed text to decide whether the genuine index line is being
+            # RELOCATED; seeded wrong, that line is instead rewritten to point
+            # straight at the moved concept, so the concept ends up named by two
+            # indexes — the memory-multi-index state the validator flags.
+            _pdi_t="${line#"${line%%[![:space:]]*}"}"
+            case "$_pdi_t" in
+                '```'* | '~~~'*)
+                    _pdi_fence=$((1 - _pdi_fence))
+                    continue
+                    ;;
+            esac
+            [ "$_pdi_fence" -eq 0 ] || continue
             case "$line" in *']('*) ;; *) continue ;; esac
             while IFS="$(command printf '\t')" read -r label target || [ -n "$label" ]; do
                 [ -n "$target" ] || continue

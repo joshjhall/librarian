@@ -912,6 +912,101 @@ Body.'
         "the leading URL link is carried through untouched, not consumed"
 }
 
+test_fenced_claim_does_not_displace_the_real_index_line() {
+    local root py_index sh_index py_src sh_src
+    if [ "$OKF_HAVE_PY" -ne 1 ]; then
+        skip_test "python3 >= 3.11 unavailable"
+        return 0
+    fi
+    # A FENCED EXAMPLE IN A FILE THAT SORTS AHEAD OF THE REAL INDEX.
+    # plan_directory_indexes keeps only the FIRST line it sees naming each moved
+    # concept and walks alphabetically, so `aaa-doc.md`'s fenced sample line
+    # reaches the claimed map before `index-golem.md`'s genuine one. The python
+    # primary tracks in_fence here (as both runtimes already do in index_members
+    # and rewrite_inbound_links); the bash twin did not.
+    #
+    # Measured before the fix: bash seeded golem/index.md with the FENCED text
+    # while python used the real line — and, because rewrite_inbound_links keys
+    # off that same claimed text to decide the real line is being RELOCATED,
+    # bash also rewrote index-golem.md to point straight at the moved concept
+    # (golem/golem-thing.md) instead of at the sub-index, leaving the concept
+    # named by TWO indexes: the memory-multi-index state the validator flags.
+    #
+    # Asserted as BOTH a byte-parity comparison and an explicit content check,
+    # because the two runtimes agreeing on the WRONG line would satisfy parity
+    # alone.
+    root="$(fresh_bundle "$WORKDIR")"
+    write_concept "$root" "MEMORY.md" '# Memory
+
+- [Golem](index-golem.md) — bucket'
+    write_concept "$root" "index-golem.md" '# Golem
+
+- [Thing](golem-thing.md) — the REAL claiming line'
+    write_concept "$root" "golem-thing.md" '---
+type: feedback
+---
+
+MOVING-CONCEPT'
+    write_concept "$root" "aaa-doc.md" '---
+type: reference
+---
+
+How to write an index line:
+
+```markdown
+- [Thing](golem-thing.md) — FENCED EXAMPLE, not a live pointer
+```'
+
+    run_moves apply "$root" --transform move-concept --confirm --allow-dirty
+    assert_exit 0 "$OKF_RC" "bash applies cleanly"
+    sh_index="$(command cat "$root/golem/index.md")"
+    sh_src="$(command cat "$root/index-golem.md")"
+
+    assert_contains "$sh_index" "the REAL claiming line" \
+        "the generated directory index carries the REAL index line"
+    assert_not_contains "$sh_index" "FENCED EXAMPLE" \
+        "...and never the fenced example that sorted ahead of it"
+    # THE SECONDARY EFFECT, asserted separately: the genuine index line must be
+    # relocated to point at the SUB-INDEX, not rewritten to the concept path.
+    assert_contains "$sh_src" "](golem/index.md)" \
+        "the original index line points at the sub-index (not memory-multi-index)"
+    assert_not_contains "$sh_src" "](golem/golem-thing.md)" \
+        "...rather than straight at the moved concept"
+
+    # ...and the python primary produces the same bytes on the same input.
+    root="$(fresh_bundle "$WORKDIR")"
+    write_concept "$root" "MEMORY.md" '# Memory
+
+- [Golem](index-golem.md) — bucket'
+    write_concept "$root" "index-golem.md" '# Golem
+
+- [Thing](golem-thing.md) — the REAL claiming line'
+    write_concept "$root" "golem-thing.md" '---
+type: feedback
+---
+
+MOVING-CONCEPT'
+    write_concept "$root" "aaa-doc.md" '---
+type: reference
+---
+
+How to write an index line:
+
+```markdown
+- [Thing](golem-thing.md) — FENCED EXAMPLE, not a live pointer
+```'
+
+    run_moves_py apply "$root" --transform move-concept --confirm --allow-dirty
+    assert_exit 0 "$OKF_RC" "python applies cleanly"
+    py_index="$(command cat "$root/golem/index.md")"
+    py_src="$(command cat "$root/index-golem.md")"
+
+    assert_equals "$py_index" "$sh_index" \
+        "both runtimes generate the same directory index, byte for byte"
+    assert_equals "$py_src" "$sh_src" \
+        "...and rewrite the original index line identically"
+}
+
 test_retarget_line_matches_python_on_adversarial_shapes() {
     local sh_out py_out shape
     if [ "$OKF_HAVE_PY" -ne 1 ]; then
