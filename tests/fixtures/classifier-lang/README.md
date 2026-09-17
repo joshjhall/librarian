@@ -18,6 +18,7 @@ Each tree holds three stubs — a `loc_engine.py` carrying the normative
 | Fixture | Arms | Expected finding |
 | --- | --- | --- |
 | `empty-normative/` | assertion 1 | `EXT_LANG` is present but empty, so the anti-vacuity check fails instead of every later check passing over nothing |
+| `missing-normative/` | assertion 1 | `loc_engine.py` absent entirely — the parser's file-not-found branch, a different code path to the same verdict |
 | `no-table/` | assertion 2 | the `source` row is renamed `sources`, so the row does not resolve — without this, assertions 3-5 compare against empty sets and pass |
 | `missing-swift/` | assertion 4 | **this issue's own defect.** `.swift` removed from the source row, everything else correct — the exact state of the tree before #1073 |
 | `contradiction-doc/` | assertion 3 | `.go` is in the `docs` row. **The fail-open direction** — a source language that drops security/correctness/tests on a narrowed cycle |

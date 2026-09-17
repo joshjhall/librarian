@@ -442,6 +442,14 @@ test_selftest_fixtures() {
     assert_contains "$out" "normative EXT_LANG is populated (anti-vacuity) ... FAIL" \
         "empty-normative fixture must fail the normative-table assertion"
 
+    # The sibling path to the same verdict: the normative file is ABSENT, so the
+    # parser takes its os.path.exists false branch rather than its empty-literal
+    # one. Distinct code paths, one assertion — pinned separately so a break in
+    # path resolution cannot hide behind the empty-body fixture (cycle-2 review).
+    out="$(selftest_report missing-normative)"
+    assert_contains "$out" "normative EXT_LANG is populated (anti-vacuity) ... FAIL" \
+        "missing-normative fixture must fail the normative-table assertion"
+
     out="$(selftest_report no-table)"
     assert_contains "$out" "both classifier tables resolve (anti-vacuity) ... FAIL" \
         "no-table fixture must fail the table-resolution assertion"
@@ -576,12 +584,30 @@ test_fixtures_match_generator() {
     command bash "$tmp/.build.sh" >/dev/null 2>&1
 
     # Compare only the generated trees. `.build.sh` and README.md are hand-written
-    # and are not regenerated, so they are excluded rather than expected to match.
+    # and are not regenerated, so they must be excluded rather than expected to
+    # match.
+    #
+    # REMOVED AT THE TOP LEVEL, NOT EXCLUDED BY NAME (found by this PR's own
+    # cycle-2 review, then measured). `diff -r --exclude=GLOB` matches the glob
+    # against the BASENAME at every depth, not just the root: with a drifted
+    # `a/sub/README.md` vs `b/sub/README.md`, `diff -r --exclude='README.md'`
+    # exits 0 and reports nothing. Harmless today — no generated stub is named
+    # README.md — but it would make this gate report a false PASS the moment a
+    # fixture subject were a README, which is precisely the
+    # drift-is-unobservable failure this test exists to close.
+    #
+    # Deleting the two hand-written files from the COPY is unambiguous: it
+    # scopes to the top level by construction, and cannot silently widen.
+    command rm -f "$tmp/.build.sh"
+    local cmp
+    cmp="$(command mktemp -d)"
+    command cp -R "$FIXROOT/." "$cmp/"
+    command rm -f "$cmp/.build.sh" "$cmp/README.md"
+    command rm -f "$tmp/README.md"
+
     local drift
-    drift="$(command diff -r \
-        --exclude='.build.sh' --exclude='README.md' \
-        "$FIXROOT" "$tmp" 2>&1 || true)"
-    command rm -rf "$tmp"
+    drift="$(command diff -r "$cmp" "$tmp" 2>&1 || true)"
+    command rm -rf "$tmp" "$cmp"
 
     assert_output_empty "$drift" \
         "committed fixtures match .build.sh (re-run: bash tests/fixtures/classifier-lang/.build.sh)"

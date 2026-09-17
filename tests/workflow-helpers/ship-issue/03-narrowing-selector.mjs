@@ -284,12 +284,25 @@ export async function run() {
     },
   });
   const swiftNames = swiftOnly.entries.map((e) => e.dim.name).sort();
+  // AC5 names security/correctness/tests, so assert those three BY NAME — the
+  // per-dimension message is what makes a regression say which one vanished.
   for (const dim of ["security", "correctness", "tests"]) {
     ok(
       swiftNames.includes(dim),
       `selectReviewDimensions: swift-only delta selects '${dim}' (#1073)`,
     );
   }
+  // Then pin the FULL set, not just those three (cycle-2 review). A membership
+  // loop cannot see a dimension that wrongly DROPS OUT alongside them:
+  // `decomposition` is delta-local and sizes source files, so a Swift-specific
+  // regression there — the exact analogue of the `.md`/decomposition gap the
+  // docs block above guards — would leave all three checks above green. A
+  // source-classified delta must select every dimension the `a.py` case does.
+  eq(
+    JSON.stringify(swiftNames),
+    JSON.stringify(["correctness", "decomposition", "scope-drift", "security", "tests"]),
+    "selectReviewDimensions: swift-only delta selects the FULL source-delta dimension set (#1073)",
+  );
   // The failure mode this guards is a SILENT one, so pin the two signals that
   // would otherwise let a fully-narrowed-away cycle read as a healthy pass.
   eq(

@@ -93,6 +93,16 @@ fixture clean >/dev/null
 d="$(fixture empty-normative)"
 write_loc "$d/$LOC_REL" ""
 
+# --- missing-normative: loc_engine.py ABSENT ENTIRELY (assertion 1) ----------
+# The OTHER way to reach an empty normative table: `empty-normative` writes a
+# file whose EXT_LANG literal is empty, this one omits the file, so the parser
+# takes its `os.path.exists(...)` false branch instead of its empty-literal one.
+# Both must surface as a failed anti-vacuity check rather than as a silent
+# nothing-to-compare — kept separate for the same reason `no-table` is separate
+# from `empty-normative` on the subject side (cycle-2 review).
+d="$(fixture missing-normative)"
+command rm -f "$d/$LOC_REL"
+
 # --- no-table: the source row heading is renamed (assertion 2) ---------------
 # Renamed rather than deleted: a deleted table and a renamed row are the same
 # defect from the gate's side (the row does not resolve), and renaming keeps the
