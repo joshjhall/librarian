@@ -551,6 +551,62 @@ test_ensure_trusted_dir_runs_both_checks() {
         "A path that fails the trust check only AFTER creation must be refused by the post-check"
 }
 
+test_group_or_world_writable_dir_is_refused() {
+    # THE THIRD AXIS. Ownership and symlink-ness are not sufficient: a directory
+    # we own, that is not a symlink, can still be group- or world-writable — a
+    # /cache volume made under a permissive umask, or a per-corpus subdirectory
+    # inheriting one. A co-tenant with write access can plant `.git/hooks/*`
+    # during the fetch window, and `git checkout` runs hooks automatically. That
+    # is the same local code execution the other two checks exist to prevent,
+    # reached by the axis they do not examine.
+    #
+    # Measured before the fix: a 0777 corpora dir was accepted, exit 0.
+    local ww="$SANDBOX/world-writable"
+    command mkdir -p "$ww"
+    command chmod 777 "$ww"
+    run_fetch "$SANDBOX/m1" "$ww" --dir
+    assert_true "[ \"$RUN_RC\" -ne 0 ]" "A world-writable corpora dir must be refused"
+    assert_contains "$RUN_OUT" "writable" "The refusal must name the mode as the reason"
+
+    local gw="$SANDBOX/group-writable"
+    command mkdir -p "$gw"
+    command chmod 775 "$gw"
+    run_fetch "$SANDBOX/m1" "$gw" --dir
+    assert_true "[ \"$RUN_RC\" -ne 0 ]" "A group-writable corpora dir must be refused too"
+
+    # THE CONTROL, and it is load-bearing: a mode check that refused everything
+    # would satisfy both assertions above while breaking the tool outright.
+    local ok="$SANDBOX/mode-ok"
+    command mkdir -p "$ok"
+    command chmod 755 "$ok"
+    run_fetch "$SANDBOX/m1" "$ok" --dir
+    assert_exit 0 "$RUN_RC" "An 0755 directory must still be accepted"
+    assert_contains "$RUN_OUT" "$ok" "and must be reported as the resolved dir"
+}
+
+test_list_refuses_a_malformed_manifest_row() {
+    # A truncated row (missing the SHA column) used to print
+    # `nosha  absent  ` with a blank SHA and exit 0 — so a broken manifest was
+    # indistinguishable from a healthy one with nothing materialized. The fetch
+    # path already rejects such a row via is_full_sha; the read-only view of the
+    # same manifest must not be the softer of the two.
+    #
+    # Found by sweeping for siblings of the empty-root defect: places where a
+    # missing value is formatted rather than checked.
+    local mf="$SANDBOX/m-trunc" dir="$SANDBOX/c-trunc"
+    command printf '# fixture\nnosha\tfile://%s\n' "$UPSTREAM" >"$mf"
+
+    run_fetch "$mf" "$dir" --list
+    assert_true "[ \"$RUN_RC\" -ne 0 ]" "A malformed manifest row must fail --list, not list quietly"
+    assert_contains "$RUN_OUT" "MALFORMED" "The bad row must be named as malformed"
+
+    # The control: a well-formed manifest must still list cleanly, or this check
+    # would simply break --list.
+    run_fetch "$SANDBOX/m1" "$dir" --list
+    assert_exit 0 "$RUN_RC" "A well-formed manifest must still list successfully"
+    assert_contains "$RUN_OUT" "alpha" "and must still name its corpora"
+}
+
 test_unresolvable_root_never_becomes_the_filesystem_root() {
     # `root="$(resolve_corpora_dir)"` runs its body in a SUBSHELL, so a `die`
     # inside ends that subshell and the assignment quietly receives an empty
@@ -578,15 +634,17 @@ test_unresolvable_root_never_becomes_the_filesystem_root() {
 }
 
 test_refusals_do_not_fall_through_when_sourced() {
-    # `die` EXITS when executed but RETURNS when sourced — which is how consuming
-    # gates load this file. So every refusal needs an explicit `return 1` after
-    # it, or the function prints "refusing to use ..." and then carries on: the
-    # guard announces a refusal and approves in the same breath, which is worse
-    # than no guard because the message reads as evidence the check worked.
+    # THE SUBSHELL ENTRY POINTS ARE THE MECHANISM. `die` always exits; what makes
+    # that safe for a sourcing consumer is that `corpora_present` and
+    # `fetch_corpora` run their bodies in a subshell, so the exit ends the
+    # subshell and arrives as an ordinary non-zero status.
     #
-    # Executed mode cannot catch this (the exit masks it), so it has to be
-    # asserted through a SOURCED call. Found by the helper fixture above; this
-    # covers the two other functions with the same shape.
+    # This replaced a per-call-site `return 1` after each `die`, which was the
+    # first attempt and which an exhaustive sweep showed had been applied to
+    # three of eleven sites. Executed mode cannot catch the fallthrough (the exit
+    # masks it), so the property has to be asserted through a SOURCED call — that
+    # the consumer survives AND gets a failing status AND no work ran past the
+    # refusal.
     local root="$SANDBOX/c-fallthrough" target="$SANDBOX/fallthrough-target"
     command mkdir -p "$root" "$target"
     command ln -s "$target" "$root/alpha"
@@ -886,6 +944,8 @@ run_test test_foreign_owned_corpora_dir_is_refused
 run_test test_symlinked_per_corpus_dir_is_refused
 run_test test_symlinked_per_corpus_dir_refused_even_when_at_the_pin
 run_test test_ensure_trusted_dir_runs_both_checks
+run_test test_group_or_world_writable_dir_is_refused
+run_test test_list_refuses_a_malformed_manifest_row
 run_test test_unresolvable_root_never_becomes_the_filesystem_root
 run_test test_refusals_do_not_fall_through_when_sourced
 run_test test_root_is_rechecked_after_creation

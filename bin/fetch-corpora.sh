@@ -170,7 +170,7 @@ require_runtime() {
 # fail-loud rather than fall-back-elsewhere — a hostile pre-plant is a fact about
 # the host worth surfacing, not something to quietly route around.
 dir_is_trustworthy() {
-    local d="$1" owner
+    local d="$1" owner mode
     # A symlink is refused outright: its target can be swapped after this check,
     # so no amount of inspecting the target makes it safe to write through.
     [ -L "$d" ] && return 1
@@ -195,7 +195,42 @@ dir_is_trustworthy() {
     case "${owner:-x}" in
         *[!0-9]*) return 1 ;;
     esac
-    [ "$owner" = "$(command id -u)" ]
+    [ "$owner" = "$(command id -u)" ] || return 1
+
+    # OWNERSHIP IS NOT ENOUGH — the mode is the third axis (review finding).
+    # A directory we own, that is not a symlink, can still be group- or
+    # world-writable: a /cache volume created under a permissive umask, or a
+    # per-corpus subdirectory inheriting one. A co-tenant with write access can
+    # then plant `.git/hooks/*` during the fetch window, and `git checkout` runs
+    # hooks automatically — the same local code execution the symlink and
+    # ownership checks exist to prevent, reached by the axis they do not examine.
+    #
+    # So a directory that anyone else can write to is refused. The /tmp fallback
+    # is already created 0700; this extends the same floor to /cache/corpora and
+    # to every per-corpus subdirectory, neither of which had one.
+    mode="$(command stat -c %a "$d" 2>/dev/null)"
+    case "${mode:-x}" in
+        *[!0-7]*) mode="$(command stat -f %Lp "$d" 2>/dev/null)" ;;
+    esac
+    case "${mode:-x}" in
+        *[!0-7]*) return 1 ;;
+    esac
+    # Right-most two octal digits are group and other. Zero-pad so a 3-digit
+    # mode and a 4-digit (setuid-bearing) one are read the same way.
+    while [ "${#mode}" -lt 3 ]; do
+        mode="0$mode"
+    done
+    local grp oth
+    grp="${mode%?}"
+    grp="${grp#"${grp%?}"}"
+    oth="${mode#"${mode%?}"}"
+    case "$grp" in
+        2 | 3 | 6 | 7) return 1 ;;
+    esac
+    case "$oth" in
+        2 | 3 | 6 | 7) return 1 ;;
+    esac
+    return 0
 }
 
 # ensure_trusted_dir <path> [mkdir-mode] — create <path> if needed and return
@@ -216,19 +251,15 @@ dir_is_trustworthy() {
 #   - AFTER creation, because the pre-check fires only when the path already
 #     exists; on a first-ever run it does not, leaving a check-then-act window
 #     (CWE-367) an attacker can win.
-# EVERY `die` HERE IS FOLLOWED BY `return 1`, and that is not belt-and-braces.
-# `die` EXITS when the script is executed but RETURNS when it is sourced — which
-# is exactly how consuming gates use this file. Without the explicit return, a
-# sourced call prints the refusal and then falls through to `return 0`: the guard
-# announces that it refuses the directory and approves it in the same breath,
-# which is worse than having no guard, because the message reads as evidence that
-# the check worked. Caught by test_ensure_trusted_dir_runs_both_checks.
+# A `die` here ends the process (or, under a sourced consumer, the subshell that
+# `corpora_present`/`fetch_corpora` wrap around this call) — see the die() and
+# SOURCED_MODE comments above. No per-call-site `return` is needed or wanted.
 ensure_trusted_dir() {
     local path="$1" mode="${2:-}"
 
     if [ -e "$path" ] || [ -L "$path" ]; then
         dir_is_trustworthy "$path" ||
-            die "refusing to use $path — it is a symlink or is not owned by uid $(command id -u)"
+            die "refusing to use $path — it must be a directory owned by uid $(command id -u), not a symlink, and not group/world-writable"
     fi
 
     if [ -n "$mode" ]; then
@@ -262,9 +293,6 @@ resolve_corpora_dir() {
     # invitation to silently put the data somewhere else: a caller that set the
     # variable is telling us where its measurements live, and writing elsewhere
     # would strand them.
-    # `return 1` for the same reason as ensure_trusted_dir's: sourced, `die`
-    # returns, and without this the function would fall through and print
-    # /tmp/corpora as the resolved directory after refusing the requested one.
     if [ -n "${CORPORA_DIR:-}" ]; then
         die "CORPORA_DIR is not writable: $CORPORA_DIR"
     fi
@@ -483,7 +511,7 @@ fetch_one() {
     # refusal. Every path that treats $dir as ours must validate it first.
     if [ -e "$dir" ] || [ -L "$dir" ]; then
         dir_is_trustworthy "$dir" ||
-            die "$name: refusing to use $dir — it is a symlink or is not owned by uid $(command id -u)"
+            die "$name: refusing to use $dir — it must be a directory owned by uid $(command id -u), not a symlink, and not group/world-writable"
     fi
 
     # IDEMPOTENCE (AC2), decided by the SHA rather than by the directory. An
@@ -634,14 +662,28 @@ main() {
     fi
 
     if [ "$want_list" -eq 1 ]; then
-        local n
+        local n n_sha list_bad=0
         for n in $(manifest_names); do
+            n_sha="$(manifest_field "$n" 3)"
+            # A MALFORMED ROW MUST NOT READ AS AN ORDINARY LISTING. A truncated
+            # entry (missing the SHA column) previously printed
+            # `nosha  absent  ` with a blank SHA and exited 0, so a broken
+            # manifest looked exactly like a healthy one with nothing fetched.
+            # The fetch path already rejects such a row via is_full_sha; --list
+            # is the read-only view of the same manifest and must not be the
+            # softer of the two.
+            if ! is_full_sha "$n_sha"; then
+                command printf '%-14s %-8s %s\n' "$n" "MALFORMED" "sha='$n_sha'" >&2
+                list_bad=1
+                continue
+            fi
             if corpora_present "$n" "$root"; then
-                command printf '%-14s %-8s %s\n' "$n" "present" "$(manifest_field "$n" 3)"
+                command printf '%-14s %-8s %s\n' "$n" "present" "$n_sha"
             else
-                command printf '%-14s %-8s %s\n' "$n" "absent" "$(manifest_field "$n" 3)"
+                command printf '%-14s %-8s %s\n' "$n" "absent" "$n_sha"
             fi
         done
+        [ "$list_bad" -eq 0 ] || die "manifest has malformed entries (see above)"
         return 0
     fi
 
