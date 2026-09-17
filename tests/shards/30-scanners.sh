@@ -181,6 +181,17 @@ run_stage "review-route.sh extension table" bash "$SCRIPT_DIR/lint-review-route-
 # protocol — and both were ungated, which is how `.swift` went missing from the
 # one copy that decides whether a file is reviewed at all.
 run_stage "Prose classifier extension tables" bash "$SCRIPT_DIR/lint-classifier-lang.sh"
+# The guard-of-the-guard over the five stages above (#1078). Each builds its
+# whole report from an embedded python3 analyzer captured under `set -e`, so an
+# analyzer crash aborted the gate BEFORE generate_report — red, but with a bare
+# traceback in place of the assertion that names itself. This runs each real gate
+# against a crashing python3 stub and asserts the crash surfaces as a named row
+# carrying the analyzer's stderr. Placed here, beside its subjects. Measured
+# 2026-09-17 at 6.1s — it runs each of the five gates twice (crash case plus
+# positive control), so it costs roughly two full passes of them. Small against
+# this leg's total, but not free: re-measure all three legs before adding
+# another heavy gate here, per this shard's header.
+run_stage "Analyzer-crash guards on lint gates" bash "$SCRIPT_DIR/validate-analyzer-guards.sh"
 run_stage "check-* deterministic coverage tool" bash "$SCRIPT_DIR/validate-patterns-coverage.sh"
 run_stage "Coverage-corpus completeness" bash "$SCRIPT_DIR/validate-coverage-corpus.sh"
 run_stage "Coverage runner resolution + fail-loud" bash "$SCRIPT_DIR/validate-coverage-runner.sh"
