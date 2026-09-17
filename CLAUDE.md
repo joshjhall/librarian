@@ -330,7 +330,26 @@ just test         # run the full local test suite (tests/run-all.sh; mirrors CI)
 just lint         # dprint + taplo + rumdl + ruff (check + format) + manifests
 just fmt          # format JSON/YAML/TOML/markdown/Python
 just install-hooks
+
+bin/fetch-corpora.sh          # materialize the pinned design-review corpora
+bin/fetch-corpora.sh --list   # which are present, and at which pin
 ```
+
+**Corpora are pinned and fetched deliberately — never by the test suite**
+(#1075). The design-review scanners (#1067) cannot be measured against this repo,
+which ships no UI code, so their precision figures come from external projects
+pinned to a full 40-char SHA in `tests/corpora.manifest` and materialized by
+`bin/fetch-corpora.sh` onto `librarian-corpora:/cache/corpora` (falling back to
+`/tmp/corpora` on a host with no container). Three things to know: the fetcher
+**verifies `HEAD` equals the pin** rather than trusting the fetch, because a
+fetch that landed on a branch tip looks exactly like success; `just test` and the
+pre-push hook **must never fetch**, so both shipped gates are offline; and
+publishing a measurement means adding a `<!-- corpus: <name> <sha> -->` line,
+which `tests/lint-measurement-citations.sh` fails closed against the manifest.
+The reserved 77 sentinel belongs to the corpus-*consuming* gates
+(#1069/#1071/#1072/#1074), which key it on `corpora_present` — not to these two,
+which need no corpus and would be inert if they skipped. Full rationale:
+`tests/ARCHITECTURE.md` § Pinned external corpora.
 
 **Capture the suite's output — never pipe it** (#854). `bash tests/run-all.sh |
 tail -45` exits **0 on a red suite**: a pipeline reports its *last* command's

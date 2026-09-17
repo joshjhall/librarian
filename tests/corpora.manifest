@@ -1,0 +1,93 @@
+# Pinned test corpora for the design-review scanners (issue #1075, epic #1067).
+#
+# WHY THIS FILE EXISTS. librarian ships no UI code, so the accessibility / i18n /
+# UX scanners of #1067 cannot be validated against this repo. They must measure
+# precision and recall against real external projects — and a rate is not
+# reproducible without a pinned commit. Upstream repos move: a corpus re-cloned
+# at HEAD six months from now measures a DIFFERENT codebase, while the earlier
+# precision figure sits in docs/verification/ still reading as evidence.
+#
+# That is the ground-truth-drift version of a shape this repo keeps filing: a
+# number that reads as evidence while the thing it measured changed underneath
+# it. The pin is what stops it; tests/lint-measurement-citations.sh is what keeps
+# the pin honest, by failing closed when a published measurement cites a corpus
+# or a SHA this file does not back.
+#
+# EXPLICIT AND ORDERED, NEVER A GLOB — the same discipline as
+# tests/lib/fragments.sh and the workflow.src/ manifests, for the same reason: a
+# glob lets an entry drift in unnoticed, and an explicit list is a reviewable
+# artifact. Adding a corpus is a deliberate diff that says why.
+#
+# ---------------------------------------------------------------------------
+# FORMAT — one record per corpus, fields separated by a single TAB:
+#
+#   name <TAB> url <TAB> sha <TAB> license <TAB> fallback <TAB> why
+#
+#   name      short slug; the directory under $CORPORA_DIR and the token a
+#             measurement cites. [a-z0-9-] only.
+#   url       clone URL, https only (no credentials, no ssh — this is fetched on
+#             CI-less developer machines).
+#   sha       FULL 40-character commit SHA. A short SHA is rejected by the gate:
+#             abbreviations are not stable identifiers, and git will happily
+#             resolve a 7-char prefix to a different object as a repo grows.
+#   license   SPDX identifier, verified against the repo's own metadata. See
+#             "License is a real gate" below.
+#   fallback  what to do when the pin becomes unreachable (force-push, history
+#             rewrite, repo deletion). Either `tag:<name>` or `vendor:<note>`.
+#   why       one line: why THIS commit.
+#
+# Blank lines and #-initial lines are ignored.
+# ---------------------------------------------------------------------------
+#
+# LICENSE IS A REAL GATE, NOT A FORMALITY. Nothing here is redistributed — the
+# corpora are fetched at measurement time, never vendored into this repo — but
+# the license is recorded per entry anyway, and a candidate whose terms make even
+# local automated analysis doubtful is replaced rather than rationalized. Every
+# entry below is permissive (MIT or MPL-2.0); that is an outcome of applying the
+# gate, not a coincidence.
+#
+# ---------------------------------------------------------------------------
+# WHAT WAS VERIFIED BEFORE PINNING, AND WHAT DID NOT SURVIVE IT
+#
+# #1067's candidate list was written by an assistant with a knowledge cutoff and
+# says so. Each candidate was checked against the live API before being pinned.
+# Three did not survive contact, and the rejections are recorded HERE so the next
+# person does not spend the same hour re-deriving them:
+#
+#   w3c/wai-bad-demo  -- REJECTED, twice over. The "Before and After
+#     Demonstration" repo is EMPTY: three files (README.md, CODE_OF_CONDUCT.md,
+#     w3c.json), zero fixtures. It also carries NO license. #1067 called this the
+#     "cleanest possible A/B" because it pairs an inaccessible and an accessible
+#     version of one site — that pairing is genuinely valuable and is worth
+#     re-sourcing from the WAI website repo, but it is NOT at this URL and the
+#     slice that wants it should find it rather than inherit a dead pin.
+#
+#   mastodon/mastodon -- REPLACED as the i18n corpus. AGPL-3.0, and 405 MB.
+#     excalidraw/excalidraw is MIT, an eighth the size, and confirmed carrying 59
+#     locale files — it fills the "i18n'd project" role with none of the license
+#     question. (element-hq/element-web was checked too: AGPL-3.0 and 598 MB.)
+#
+#   dequelabs/axe-core @ develop -- RE-PINNED. The develop tip moved the same day
+#     it was checked, which is precisely the drift this file exists to stop.
+#     Pinned at release tag v4.13.0 instead: a tag is a better pin because it is
+#     what upstream itself treats as stable, and it gives the fallback something
+#     real to name.
+#
+# DELIBERATELY DEFERRED: shadcn-ui/ui (MIT, 70 MB) as a second near-clean
+# negative control. radix-ui/primitives already fills that role at a third the
+# size; if #1069's measurement shows one control is not enough, add it there with
+# the numbers that justified it.
+#
+# Fetch cost measured on this recipe (shallow + blobless): axe-core materializes
+# at 22 MB, against a GitHub-reported repository size of 23 MB. #1075 measured
+# the shallow-vs-full ratio separately on librarian itself — 20 MB against 115 MB
+# — so the saving is largest on repos with deep history; these five land around
+# 100 MB total either way, not gigabytes. That is what makes a named volume the
+# right home rather than something to re-fetch per run.
+# ---------------------------------------------------------------------------
+
+jsx-a11y	https://github.com/jsx-eslint/eslint-plugin-jsx-a11y.git	8f75961d965e47afb88854d324bd32fafde7acfe	MIT	vendor:__tests__/src/rules fixtures are small and MIT — vendor them if this pin dies	Labeled ground truth: JSX fixtures mapped to expected violations per rule. Main tip at time of pinning.
+axe-core	https://github.com/dequelabs/axe-core.git	1cc54b900413660610180d631feb73c9e74f4dc9	MPL-2.0	tag:v4.13.0	Labeled ground truth: HTML fixtures with expected results. Release tag v4.13.0, not the develop tip — develop moved the day it was checked.
+radix	https://github.com/radix-ui/primitives.git	f7ecd5ab16f5e1e820eb5786a1419a98a2d594ae	MIT	vendor:no vendored fallback — re-pin to a later main commit	Near-clean negative control: accessibility-first primitives. If a scanner lights this up, the scanner is wrong.
+excalidraw	https://github.com/excalidraw/excalidraw.git	a2ec2889babf7d2295469c6d90ebe77fae57df84	MIT	tag:v0.18.1	i18n'd corpus for #1071 (59 locale files). Release tag v0.18.1 — MIT replacement for AGPL Mastodon.
+netnewswire	https://github.com/Ranchero-Software/NetNewsWire.git	ae64ffe1792dfd25f943643c2cf90e81476bd06a	MIT	tag:iOS-7.1.3-7206	Apple arm for #1074: mature, accessibility-conscious SwiftUI/UIKit. Release tag iOS-7.1.3-7206.

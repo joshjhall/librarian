@@ -234,3 +234,21 @@ run_stage "coverage-driver listener start attempt" bash "$SCRIPT_DIR/validate-co
 # new gate, and at this size neither placement can reorder the matrix.
 run_stage "apt hardening (workflow routing)" bash "$SCRIPT_DIR/lint-apt-hardening.sh"
 run_stage "apt-install.sh behavior" bash "$SCRIPT_DIR/validate-apt-install.sh"
+
+# Pinned test corpora (#1075). Same two-gate split as the apt pair directly
+# above, for the same reason: the lint checks a PROPERTY of the committed files
+# (every published measurement cites a manifest SHA), the validate suite checks
+# that the fetch script's SHA verification actually works. One gate doing both
+# would pass on a tree where the script had been emptied.
+#
+# BOTH ARE OFFLINE AND CORPUS-INDEPENDENT, which is what lets them live in the
+# suite at all (#1075 AC8 — `just test` and pre-push must never fetch). Neither
+# may exit 77 for absent corpora: they need none, so keying them on one would
+# make them inert, the #538/#571 shape. The 77 sentinel belongs to the
+# corpus-CONSUMING gates that #1069/#1071/#1072/#1074 will ship, which key it on
+# fetch-corpora.sh's corpora_present helper.
+#
+# ~1s each, so the three-way leg balance this shard's header warns about is
+# undisturbed.
+run_stage "Measurement corpus citations" bash "$SCRIPT_DIR/lint-measurement-citations.sh"
+run_stage "fetch-corpora.sh behavior" bash "$SCRIPT_DIR/validate-fetch-corpora.sh"
