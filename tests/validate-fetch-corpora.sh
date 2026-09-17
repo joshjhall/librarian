@@ -504,6 +504,42 @@ test_symlinked_per_corpus_dir_refused_even_when_at_the_pin() {
         "The idempotence fast path must NOT run before the trust check"
 }
 
+test_corpora_present_rejects_an_untrustworthy_tree() {
+    # THE PREDICATE ITSELF must refuse a tree it cannot vouch for — not only the
+    # fetch path. Found by walking fetch_one's control flow after cycle 2, which
+    # showed `--list` (and therefore any consuming gate) calling corpora_present
+    # with no trust check at all.
+    #
+    # Measured before the fix: `--list` reported a symlinked tree at the public
+    # pin as `present`. A consuming gate keying its 77 sentinel on this predicate
+    # would then measure against an attacker's tree while believing it held the
+    # pin — the wrong-answer-reads-as-evidence failure this slice exists to
+    # prevent, arriving through the predicate rather than the fetch.
+    local root="$SANDBOX/c-pred" real="$SANDBOX/pred-real"
+    command mkdir -p "$root"
+    run_fetch "$SANDBOX/m1" "$SANDBOX/stage-pred" alpha
+    assert_exit 0 "$RUN_RC" "setup: need a real pinned checkout"
+    command mv "$SANDBOX/stage-pred/alpha" "$real"
+    command ln -s "$real" "$root/alpha"
+
+    # --list is the read-only consumer of the predicate.
+    run_fetch "$SANDBOX/m1" "$root" --list
+    assert_exit 0 "$RUN_RC" "--list must still succeed"
+    assert_contains "$RUN_OUT" "absent" \
+        "A symlinked tree at the pin must read ABSENT, never present"
+    assert_not_contains "$RUN_OUT" "present" \
+        "corpora_present must not vouch for a tree it cannot trust"
+
+    # And directly, which is how a consuming gate calls it.
+    local probe="$SANDBOX/pred-probe.sh"
+    command printf '#!/usr/bin/env bash\n. "%s"\nif corpora_present alpha "%s"; then echo PRESENT; else echo ABSENT; fi\necho SURVIVED\n' \
+        "$FETCHER" "$root" >"$probe"
+    local out
+    out="$(command env CORPORA_MANIFEST="$SANDBOX/m1" bash "$probe" 2>&1)"
+    assert_contains "$out" "ABSENT" "The predicate must answer false for an untrusted tree"
+    assert_contains "$out" "SURVIVED" "and must answer, not abort — it is a predicate"
+}
+
 test_foreign_owned_per_corpus_dir_is_refused() {
     # dir_is_trustworthy has TWO branches — symlink and ownership — and the
     # per-corpus call site previously exercised only the symlink one. Since the
@@ -702,6 +738,7 @@ run_test test_symlinked_corpora_dir_is_refused
 run_test test_foreign_owned_corpora_dir_is_refused
 run_test test_symlinked_per_corpus_dir_is_refused
 run_test test_symlinked_per_corpus_dir_refused_even_when_at_the_pin
+run_test test_corpora_present_rejects_an_untrustworthy_tree
 run_test test_foreign_owned_per_corpus_dir_is_refused
 run_test test_trust_check_refuses_when_stat_is_unusable
 run_test test_owned_corpora_dir_is_accepted

@@ -350,6 +350,21 @@ verify_head() {
 # calls to decide whether to skip must be safe to call in any state; if it could
 # abort, the consumer would die at the exact moment it was trying to report a
 # clean skip.
+#
+# AN UNTRUSTWORTHY TREE READS AS ABSENT, and that belongs HERE rather than only
+# at the fetch call site. This predicate is the one thing consuming gates import,
+# and `--list` calls it too — so without the check, a pre-planted symlink whose
+# HEAD happens to equal the public pin is reported `present`, and a consumer
+# measures against an attacker's tree while believing it holds the pin. That is
+# the same wrong-answer-reads-as-evidence failure the whole slice exists to
+# prevent, arriving through the predicate instead of the fetch.
+#
+# It also keeps `verify_head`'s `git rev-parse` out of a foreign repository,
+# which reads that repo's config.
+#
+# FALSE, not fatal: this is a predicate, and "I will not vouch for this tree" is
+# an answer, not a crash. fetch_one still fails LOUD on the same condition — a
+# refusal there is actionable, where a silent skip here is correct.
 corpora_present() {
     local name="$1" dir="${2:-}" sha
     [ -f "$MANIFEST" ] || return 1
@@ -360,6 +375,7 @@ corpora_present() {
     sha="$(manifest_field "$name" 3)" || return 1
     [ -n "$sha" ] || return 1
     [ -d "$dir/$name/.git" ] || return 1
+    dir_is_trustworthy "$dir/$name" || return 1
     verify_head "$dir/$name" "$sha"
 }
 
