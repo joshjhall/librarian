@@ -360,6 +360,74 @@ It returns **false** rather than dying: "I will not vouch for this tree" is a
 legitimate answer from a predicate, and `fetch_one` still fails loud on the same
 condition, where a refusal is actionable rather than a silent skip.
 
+### The refactor shipped with the bug it existed to prevent
+
+`ensure_trusted_dir` printed *"refusing to use X"* and then **returned success**.
+
+`die` exited when the script was executed but **returned** when sourced — which
+is how consuming gates load this file — so a sourced caller received a refusal
+message and a green return: the guard announcing a refusal and approving in the
+same breath. That is worse than no guard, because the message reads as evidence
+the check ran.
+
+It was caught by the fixture written *for the refactor itself*, asserting the
+helper's behavior directly rather than through a call site. All 28 pre-existing
+assertions passed with the fallthrough present, so "the tests still pass" would
+have shipped it.
+
+### Then the sweep, and the root cause
+
+Three sites were fixed by hand. An exhaustive sweep of every `die` call then
+found **eight more**, including `checkout failed` falling through to the SHA
+verification and a timed-out fetch falling through to checkout.
+
+Patching eleven sites is the method that had already failed four times on the
+trust invariant, so the cause was removed instead: **`die` now always exits**,
+and sourced-mode safety moved to the entry points. `corpora_present` and
+`fetch_corpora` run their bodies in a **subshell**, where an exit ends the
+subshell and yields a status to the consumer rather than killing their shell.
+One place to get right, and a new `die` call site cannot reintroduce the
+fallthrough.
+
+`SOURCED_MODE` survives for exactly one purpose — deciding whether the tail
+dispatch runs `main` — and its comment now says so, rather than describing the
+returning `die` that no longer exists.
+
+### And that refactor exposed the seventh
+
+```text
+fetch-corpora: materializing into
+fetch-corpora: axe-core: cannot create /axe-core
+```
+
+`root="$(resolve_corpora_dir)"` runs its body in a subshell, so a `die` inside
+ends *that* subshell and the assignment quietly receives an **empty string**.
+`set -e` does not fire, because the assignment itself succeeded. `main` then
+built paths at the filesystem root.
+
+Every existing assertion passed with this present — they all supply a usable
+directory — and it was found by probing the sourced entry points by hand, not by
+a test going red. The fixture asserts the *consequences* (no blank destination,
+no path built at `/`) rather than an exit code, because an exit code alone cannot
+distinguish this from any other failure.
+
+### The running count
+
+| # | Defect | Found by |
+| --- | --- | --- |
+| 1 | CWE-377 symlink pre-plant at the corpora root | cycle 1 |
+| 2 | Per-corpus guard placed after the fast path | cycle 2 |
+| 3 | `corpora_present` vouched for a planted tree | author, control-flow walk |
+| 4 | Post-mkdir re-check missing on the sibling call site | cycle 3 |
+| 5 | Refusal returned success when sourced | author, via the refactor's own fixture |
+| 6 | Eight more sourced-mode fallthrough sites | author, exhaustive `die` sweep |
+| 7 | Unresolvable root became the filesystem root | author, sourced-mode probe |
+
+Four of the seven were found by the author only *after* a review cycle taught the
+question to ask. That is the argument for the cycles: not that the reviewers
+catch everything, but that each finding names a *class*, and sweeping the class
+finds siblings the reviewer never saw.
+
 ### On the cycle cap
 
 `maxCycles: 3` was passed to the harness on an assumption; the documented default
@@ -375,7 +443,7 @@ eyeballed judgement.
 
 ```text
 $ bash tests/lint-measurement-citations.sh   # 16 passed, 0 failed
-$ bash tests/validate-fetch-corpora.sh       # 27 passed, 0 failed
+$ bash tests/validate-fetch-corpora.sh       # 31 passed, 0 failed
 $ bash tests/validate-shards.sh              # 15 passed — both gates claimed by exactly one shard
 $ bash tests/lint-shell-portability.sh       # 2762 passed, 0 failed (bash-3.2 + BSD, AC9)
 $ bash tests/lint-shellcheck.sh              # 346 passed, 0 failed

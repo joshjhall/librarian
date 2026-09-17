@@ -78,12 +78,16 @@ NOT_OUR_REF='upload-pack: not our ref'
 
 # SOURCED_MODE — true when this file was `.`-sourced rather than executed.
 #
-# This distinction is load-bearing for `die` below. A consuming gate
-# (#1069/#1071/#1072/#1074) sources this file for `corpora_present` alone, and in
-# a sourced context `exit` terminates the CALLER'S shell, not a subprocess. So an
-# unconditional `exit` in a helper turns "I could not answer" into "your gate
-# died at load" — the consumer never reaches its own 77 sentinel, and a suite
-# that should have reported `[SKIP] … did not run` instead dies with no verdict.
+# Used for ONE thing: deciding whether the tail dispatch runs `main`. A consuming
+# gate (#1069/#1071/#1072/#1074) sources this file for `corpora_present`, and
+# must get functions rather than a fetch.
+#
+# It is deliberately NOT consulted by `die` any more. Making `die` return when
+# sourced looked like the way to keep a consumer's shell alive, and instead made
+# all ~17 of its call sites places where execution continues past a failure —
+# invisibly, and only in the mode consumers actually use. The sourced-mode safety
+# lives in the subshell entry points (`corpora_present`, `fetch_corpora`)
+# instead: one place, and a new `die` call site cannot get it wrong.
 #
 # Detected once here, at load, because $0 and BASH_SOURCE are only reliably
 # comparable before any function reassigns them.
@@ -93,18 +97,32 @@ else
     SOURCED_MODE=1
 fi
 
-# die <message> — fail loud. Exits when executed; RETURNS when sourced, so a
-# consumer's shell survives to report its own verdict.
+# die <message> — fail loud. ALWAYS exits; never returns.
+#
+# THE RETURNING VARIANT WAS A TRAP, AND IT COST FIVE DEFECTS' WORTH OF LESSON.
+# `die` previously returned when sourced so a consumer's shell would survive.
+# That made every one of its ~17 call sites a place where execution CONTINUES
+# past a failure — silently, and only in sourced mode, which is the mode
+# consuming gates use and the one no executed-mode test can observe. Three sites
+# were fixed by hand with an explicit `return 1`; an exhaustive sweep then found
+# eight more, including `checkout failed` falling through to the SHA
+# verification and a timed-out fetch falling through to checkout.
+#
+# Patching each site is the method that had already failed four times on the
+# trust invariant. So the dual nature is removed instead: `die` exits,
+# unconditionally, and the SOURCED-MODE SAFETY MOVES TO THE ENTRY POINTS —
+# `corpora_present` and `fetch_corpora` run their work in a SUBSHELL, where an
+# exit ends the subshell and returns a status to the consumer rather than
+# killing their shell. One place to get right, and a new call site cannot
+# reintroduce the fallthrough.
 die() {
     command printf 'fetch-corpora: %s\n' "$*" >&2
-    [ "$SOURCED_MODE" -eq 1 ] && return 1
     exit 1
 }
 
 usage_die() {
     command printf 'fetch-corpora: %s\n' "$*" >&2
     command printf 'Usage: fetch-corpora.sh [--list|--dir] [name...]\n' >&2
-    [ "$SOURCED_MODE" -eq 1 ] && return 2
     exit 2
 }
 
@@ -209,10 +227,8 @@ ensure_trusted_dir() {
     local path="$1" mode="${2:-}"
 
     if [ -e "$path" ] || [ -L "$path" ]; then
-        dir_is_trustworthy "$path" || {
+        dir_is_trustworthy "$path" ||
             die "refusing to use $path — it is a symlink or is not owned by uid $(command id -u)"
-            return 1
-        }
     fi
 
     if [ -n "$mode" ]; then
@@ -221,10 +237,8 @@ ensure_trusted_dir() {
         command mkdir -p "$path" 2>/dev/null || return 1
     fi
 
-    dir_is_trustworthy "$path" || {
+    dir_is_trustworthy "$path" ||
         die "$path became untrustworthy after creation — refusing to use it"
-        return 1
-    }
     return 0
 }
 
@@ -253,7 +267,6 @@ resolve_corpora_dir() {
     # /tmp/corpora as the resolved directory after refusing the requested one.
     if [ -n "${CORPORA_DIR:-}" ]; then
         die "CORPORA_DIR is not writable: $CORPORA_DIR"
-        return 1
     fi
 
     # 0700 on the fallback: a mode that lets another user write into our corpora
@@ -407,19 +420,29 @@ verify_head() {
 # FALSE, not fatal: this is a predicate, and "I will not vouch for this tree" is
 # an answer, not a crash. fetch_one still fails LOUD on the same condition — a
 # refusal there is actionable, where a silent skip here is correct.
-corpora_present() {
-    local name="$1" dir="${2:-}" sha
-    [ -f "$MANIFEST" ] || return 1
+# THE SUBSHELL IS THE SOURCED-MODE SAFETY, and it is why `die` can exit
+# unconditionally. Everything below runs inside ( ), so a `die` anywhere in the
+# call tree — including resolve_corpora_dir's — ends the SUBSHELL and yields a
+# non-zero status here, rather than killing the consumer's shell. The consumer
+# gets a clean false and lives to report its own 77.
+#
+# `2>/dev/null` because a refusal is diagnostics, not this predicate's answer:
+# the answer is the status. A consumer deciding whether to skip should not have
+# a warning about a hostile /tmp printed into the middle of its test output.
+corpora_present() (
+    name="$1"
+    dir="${2:-}"
+    [ -f "$MANIFEST" ] || exit 1
     if [ -z "$dir" ]; then
-        dir="$(resolve_corpora_dir 2>/dev/null)" || return 1
-        [ -n "$dir" ] || return 1
+        dir="$(resolve_corpora_dir 2>/dev/null)" || exit 1
+        [ -n "$dir" ] || exit 1
     fi
-    sha="$(manifest_field "$name" 3)" || return 1
-    [ -n "$sha" ] || return 1
-    [ -d "$dir/$name/.git" ] || return 1
-    dir_is_trustworthy "$dir/$name" || return 1
+    sha="$(manifest_field "$name" 3)" || exit 1
+    [ -n "$sha" ] || exit 1
+    [ -d "$dir/$name/.git" ] || exit 1
+    dir_is_trustworthy "$dir/$name" || exit 1
     verify_head "$dir/$name" "$sha"
-}
+) 2>/dev/null
 
 # --- fetch ------------------------------------------------------------------
 # fetch_one <name> <dir>
@@ -459,10 +482,8 @@ fetch_one() {
     # Measured before this move — `ok  1cc54b9 (already at pin)`, exit 0, no
     # refusal. Every path that treats $dir as ours must validate it first.
     if [ -e "$dir" ] || [ -L "$dir" ]; then
-        dir_is_trustworthy "$dir" || {
+        dir_is_trustworthy "$dir" ||
             die "$name: refusing to use $dir — it is a symlink or is not owned by uid $(command id -u)"
-            return 1
-        }
     fi
 
     # IDEMPOTENCE (AC2), decided by the SHA rather than by the directory. An
@@ -595,7 +616,17 @@ main() {
     require_runtime || return $?
     [ -f "$MANIFEST" ] || die "manifest not found: $MANIFEST"
 
-    root="$(resolve_corpora_dir)"
+    # A COMMAND SUBSTITUTION SWALLOWS THE DIE. `$( )` runs its body in a
+    # subshell, so `resolve_corpora_dir`'s exit ends THAT subshell and the
+    # assignment simply gets an empty string — `set -e` does not fire, because the
+    # assignment itself succeeded. Without these two guards `main` continued with
+    # root="" and went on to build paths like "/axe-core", i.e. operating at the
+    # filesystem root. Observed directly while probing the sourced-mode entry
+    # points; the emptiness is the whole signal, so it is checked explicitly.
+    root="$(resolve_corpora_dir)" ||
+        die "could not resolve a corpora directory"
+    [ -n "$root" ] ||
+        die "could not resolve a corpora directory (empty result)"
 
     if [ "$want_dir" -eq 1 ]; then
         command printf '%s\n' "$root"
@@ -631,6 +662,19 @@ main() {
 
     command printf 'fetch-corpora: done\n'
 }
+
+# fetch_corpora <args...> — the SOURCED entry point for a fetch.
+#
+# Same subshell contract as corpora_present: a `die` anywhere inside ends the
+# subshell and returns a status, so a consumer that wants to materialize a corpus
+# can do so without risking its own shell. Executed runs go through `main`
+# directly, where die's exit IS the intended behavior.
+#
+# Diagnostics are NOT suppressed here (unlike the predicate): a caller asking for
+# a fetch wants to know why it failed.
+fetch_corpora() (
+    main "$@"
+)
 
 # Sourced (to reuse corpora_present) vs executed. When sourced, define the
 # functions and stop — a consuming gate wants the predicate, not a fetch.

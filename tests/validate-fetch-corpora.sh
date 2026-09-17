@@ -551,6 +551,32 @@ test_ensure_trusted_dir_runs_both_checks() {
         "A path that fails the trust check only AFTER creation must be refused by the post-check"
 }
 
+test_unresolvable_root_never_becomes_the_filesystem_root() {
+    # `root="$(resolve_corpora_dir)"` runs its body in a SUBSHELL, so a `die`
+    # inside ends that subshell and the assignment quietly receives an empty
+    # string — `set -e` does not fire, because the assignment succeeded. main()
+    # then built paths like "/axe-core" and reported `materializing into `
+    # (blank), i.e. it was operating at the filesystem root.
+    #
+    # Observed directly while probing the sourced entry points, not by a test
+    # failing: every existing assertion passed with this present, because they
+    # all supply a usable directory.
+    local log="$SANDBOX/emptyroot.log"
+    command env CORPORA_MANIFEST="$SANDBOX/m1" CORPORA_DIR=/proc/nope/emptyroot \
+        bash "$FETCHER" alpha >"$log" 2>&1
+    local rc=$?
+    local out
+    out="$(command cat "$log" 2>/dev/null)"
+
+    assert_true "[ \"$rc\" -ne 0 ]" "An unresolvable corpora dir must fail"
+    assert_contains "$out" "could not resolve" "and must say so explicitly"
+    # The decisive consequences: no blank destination, and no path built at /.
+    assert_not_contains "$out" "materializing into " \
+        "It must never announce materializing into an EMPTY directory"
+    assert_not_contains "$out" "/alpha" \
+        "and must never build a corpus path at the filesystem root"
+}
+
 test_refusals_do_not_fall_through_when_sourced() {
     # `die` EXITS when executed but RETURNS when sourced — which is how consuming
     # gates load this file. So every refusal needs an explicit `return 1` after
@@ -565,12 +591,18 @@ test_refusals_do_not_fall_through_when_sourced() {
     command mkdir -p "$root" "$target"
     command ln -s "$target" "$root/alpha"
 
+    # Calls the documented SOURCED entry point, `fetch_corpora`, not the internal
+    # fetch_one. The entry points are the subshell boundary that makes `die`'s
+    # unconditional exit safe for a consumer; an internal helper exits, by
+    # design, and a consumer is not meant to call it directly.
     local probe="$SANDBOX/fallthrough-probe.sh"
-    command printf '#!/usr/bin/env bash\n. "%s"\nif fetch_one alpha "%s"; then echo RETURNED_OK; else echo RETURNED_FAIL; fi\n' \
-        "$FETCHER" "$root" >"$probe"
+    command printf '#!/usr/bin/env bash\n. "%s"\nif fetch_corpora alpha; then echo RETURNED_OK; else echo RETURNED_FAIL; fi\necho CONSUMER_ALIVE\n' \
+        "$FETCHER" >"$probe"
 
     local out
-    out="$(command env CORPORA_MANIFEST="$SANDBOX/m1" bash "$probe" 2>&1)"
+    out="$(command env CORPORA_MANIFEST="$SANDBOX/m1" CORPORA_DIR="$root" bash "$probe" 2>&1)"
+    assert_contains "$out" "CONSUMER_ALIVE" \
+        "A refusal must not kill the consumer's shell — that is what the subshell buys"
     assert_contains "$out" "refusing to use" "The refusal must be printed"
     assert_contains "$out" "RETURNED_FAIL" \
         "and the function must RETURN non-zero — not print a refusal and continue"
@@ -854,6 +886,7 @@ run_test test_foreign_owned_corpora_dir_is_refused
 run_test test_symlinked_per_corpus_dir_is_refused
 run_test test_symlinked_per_corpus_dir_refused_even_when_at_the_pin
 run_test test_ensure_trusted_dir_runs_both_checks
+run_test test_unresolvable_root_never_becomes_the_filesystem_root
 run_test test_refusals_do_not_fall_through_when_sourced
 run_test test_root_is_rechecked_after_creation
 run_test test_corpora_present_rejects_an_untrustworthy_tree
