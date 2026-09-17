@@ -230,6 +230,72 @@ dir_is_trustworthy() {
     case "$oth" in
         2 | 3 | 6 | 7) return 1 ;;
     esac
+
+    # THE FOURTH AXIS: THE PATH, NOT ONLY THE LEAF. A directory can be ours,
+    # non-symlink and 0755 while sitting inside a world-writable parent — and on
+    # a writable parent a co-tenant can rename() our directory away and put
+    # something else at the same path. Checking only the leaf answers a question
+    # about an inode; what this script needs is a question about a PATH, which it
+    # will re-traverse on every later git call.
+    #
+    # Each ancestor is therefore held to the same mode rule. Ownership is NOT
+    # required of ancestors: /cache and /tmp are legitimately root-owned, and
+    # demanding our uid there would refuse every real deployment. Non-writability
+    # by others is the property that actually matters — it is what stops the
+    # rename.
+    #
+    # Recursion terminates at "/" or when the path stops shrinking, so a relative
+    # or unusual path cannot loop. The leaf itself is skipped (already checked
+    # above, and with the stricter ownership rule).
+    local parent="$d"
+    while :; do
+        parent="${parent%/*}"
+        [ -n "$parent" ] || parent="/"
+        _path_component_is_safe "$parent" || return 1
+        [ "$parent" != "/" ] || break
+    done
+    return 0
+}
+
+# _path_component_is_safe <dir> — an ANCESTOR is acceptable when no other user
+# can write to it. Deliberately weaker than dir_is_trustworthy: ancestors like
+# /cache, /tmp and / are root-owned by design, so requiring our uid would refuse
+# every real deployment while buying nothing — an ancestor we do not own but
+# nobody else can write to cannot be used to swap our directory.
+#
+# A sticky world-writable ancestor (/tmp, mode 1777) is ACCEPTED: the sticky bit
+# is precisely the kernel's guarantee that only an entry's owner may rename or
+# remove it, which is the property this check is about. Without that exemption
+# the /tmp fallback — the documented bare-host path — would refuse itself.
+_path_component_is_safe() {
+    local p="$1" mode grp oth
+    [ -d "$p" ] || return 1
+
+    mode="$(command stat -c %a "$p" 2>/dev/null)"
+    case "${mode:-x}" in
+        *[!0-7]*) mode="$(command stat -f %Lp "$p" 2>/dev/null)" ;;
+    esac
+    case "${mode:-x}" in
+        *[!0-7]*) return 1 ;;
+    esac
+    while [ "${#mode}" -lt 4 ]; do
+        mode="0$mode"
+    done
+
+    # Sticky (the 1 bit of the leading digit) makes group/other write safe.
+    case "${mode%???}" in
+        1 | 3 | 5 | 7) return 0 ;;
+    esac
+
+    grp="${mode%?}"
+    grp="${grp#"${grp%?}"}"
+    oth="${mode#"${mode%?}"}"
+    case "$grp" in
+        2 | 3 | 6 | 7) return 1 ;;
+    esac
+    case "$oth" in
+        2 | 3 | 6 | 7) return 1 ;;
+    esac
     return 0
 }
 

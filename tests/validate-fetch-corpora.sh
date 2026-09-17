@@ -584,6 +584,91 @@ test_group_or_world_writable_dir_is_refused() {
     assert_contains "$RUN_OUT" "$ok" "and must be reported as the resolved dir"
 }
 
+test_writable_ancestor_is_refused() {
+    # THE FOURTH AXIS, found by asking what symlink+ownership+mode still miss.
+    # A directory can be ours, non-symlink and 0755 while sitting inside a
+    # world-writable parent — and on a writable parent a co-tenant can rename()
+    # our directory away and put something else at the same path. Checking only
+    # the leaf answers a question about an inode; this script needs a question
+    # about a PATH, which every later git call re-traverses.
+    #
+    # Measured before the fix: a 0755 dir under a 0777 parent was accepted.
+    local parent="$SANDBOX/ww-parent"
+    command mkdir -p "$parent/corpora"
+    command chmod 777 "$parent"
+    command chmod 755 "$parent/corpora"
+
+    run_fetch "$SANDBOX/m1" "$parent/corpora" --dir
+    assert_true "[ \"$RUN_RC\" -ne 0 ]" \
+        "A safe directory under a world-writable ANCESTOR must be refused"
+
+    # THE CONTROL: tighten the parent and the same leaf must be accepted, or the
+    # check is refusing for some other reason.
+    command chmod 755 "$parent"
+    run_fetch "$SANDBOX/m1" "$parent/corpora" --dir
+    assert_exit 0 "$RUN_RC" "With the ancestor tightened, the same leaf must be accepted"
+}
+
+test_sticky_ancestor_is_accepted() {
+    # THE EXEMPTION THAT KEEPS THE /tmp FALLBACK ALIVE. /tmp is mode 1777 —
+    # world-writable AND sticky — and the sticky bit is exactly the kernel's
+    # guarantee that only an entry's owner may rename or remove it, which is the
+    # property the ancestor rule is about. Without this exemption the documented
+    # bare-host fallback path would refuse itself, and the tool would be unusable
+    # on the hosts it was written for.
+    #
+    # Asserted against real /tmp rather than a fixture, because the claim is
+    # about the actual deployment path.
+    if [ ! -d /tmp ]; then
+        skip_test "no /tmp on this host"
+        return 0
+    fi
+    local tmp_mode
+    tmp_mode="$(command stat -c %a /tmp 2>/dev/null)" ||
+        tmp_mode="$(command stat -f %Lp /tmp 2>/dev/null)"
+    case "$tmp_mode" in
+        1777 | 41777) ;;
+        *)
+            skip_test "/tmp is $tmp_mode, not the sticky 1777 this case is about"
+            return 0
+            ;;
+    esac
+
+    local d="/tmp/corpora-sticky-probe.$$"
+    command mkdir -p "$d"
+    run_fetch "$SANDBOX/m1" "$d" --dir
+    local rc="$RUN_RC"
+    command rm -rf "$d"
+    assert_exit 0 "$rc" \
+        "A directory directly under sticky /tmp must be accepted — the fallback depends on it"
+}
+
+test_mode_check_handles_four_digit_modes() {
+    # THE OCTAL PARSE IS HAND-ROLLED, so its edges need pinning. A setuid/setgid/
+    # sticky directory reports a FOUR-digit mode, and a parse that read fixed
+    # positions rather than the last two digits would compare the wrong ones —
+    # silently, and in the permissive direction for exactly the modes that are
+    # unusual enough to be interesting.
+    #
+    # The decisive pair: 1755 must pass (sticky, but group/other are r-x) while
+    # 1777 must fail (sticky AND world-writable — the mode /tmp itself carries,
+    # and the one most likely to be handed to this script by mistake).
+    local d
+    for d in 1755 2755 0755 0700; do
+        command mkdir -p "$SANDBOX/mode-$d"
+        command chmod "$d" "$SANDBOX/mode-$d"
+        run_fetch "$SANDBOX/m1" "$SANDBOX/mode-$d" --dir
+        assert_exit 0 "$RUN_RC" "mode $d grants no group/other write — must be accepted"
+    done
+
+    for d in 1777 2775 0770 0707; do
+        command mkdir -p "$SANDBOX/badmode-$d"
+        command chmod "$d" "$SANDBOX/badmode-$d"
+        run_fetch "$SANDBOX/m1" "$SANDBOX/badmode-$d" --dir
+        assert_true "[ \"$RUN_RC\" -ne 0 ]" "mode $d is group/world-writable — must be refused"
+    done
+}
+
 test_list_refuses_a_malformed_manifest_row() {
     # A truncated row (missing the SHA column) used to print
     # `nosha  absent  ` with a blank SHA and exit 0 — so a broken manifest was
@@ -945,6 +1030,9 @@ run_test test_symlinked_per_corpus_dir_is_refused
 run_test test_symlinked_per_corpus_dir_refused_even_when_at_the_pin
 run_test test_ensure_trusted_dir_runs_both_checks
 run_test test_group_or_world_writable_dir_is_refused
+run_test test_writable_ancestor_is_refused
+run_test test_sticky_ancestor_is_accepted
+run_test test_mode_check_handles_four_digit_modes
 run_test test_list_refuses_a_malformed_manifest_row
 run_test test_unresolvable_root_never_becomes_the_filesystem_root
 run_test test_refusals_do_not_fall_through_when_sourced
