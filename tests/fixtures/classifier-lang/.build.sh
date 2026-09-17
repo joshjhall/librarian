@@ -101,7 +101,13 @@ write_loc "$d/$LOC_REL" ""
 # nothing-to-compare — kept separate for the same reason `no-table` is separate
 # from `empty-normative` on the subject side (cycle-2 review).
 d="$(fixture missing-normative)"
-command rm -f "$d/$LOC_REL"
+# Remove the DIRECTORY, not just the file. `rm -f` on the file alone leaves an
+# empty `check-decomposition/`, and git does not track empty directories — so
+# the committed fixture would lack it while a fresh `.build.sh` run creates it,
+# and test_fixtures_match_generator reports drift on a clean checkout. Caught by
+# CI, which checks out fresh; a local run cannot see it, because the directory
+# is already there from the previous build.
+command rm -rf "$(command dirname "$d/$LOC_REL")"
 
 # --- no-table: the source row heading is renamed (assertion 2) ---------------
 # Renamed rather than deleted: a deleted table and a renamed row are the same
@@ -131,7 +137,8 @@ command rm -f "$d/$CR_REL.bak"
 # `no-table` above covers the row-unresolvable branch on the FIRST subject; the
 # two below cover the `os.path.exists` false branch and the second subject.
 d="$(fixture no-table-missing-file)"
-command rm -f "$d/$CR_REL"
+# Same empty-directory hazard as missing-normative above — remove the dir.
+command rm -rf "$(command dirname "$d/$CR_REL")"
 
 d="$(fixture no-table-second-subject)"
 command sed -i.bak 's/^| Source /| Sources /' "$d/$OP_REL"
@@ -185,5 +192,32 @@ write_protocol "$d/$OP_REL" "$GOOD_PROTO_SOURCE" "$GOOD_DOCS, \`.go\`"
 
 d="$(fixture second-subject-undeclared)"
 write_protocol "$d/$OP_REL" "$GOOD_PROTO_SOURCE, \`.lua\`" "$GOOD_DOCS"
+
+# PRUNE EMPTY DIRECTORIES — the generator's output must be exactly what git can
+# store, or the freshness check reports drift forever on a clean checkout.
+#
+# Git tracks FILES, not directories: an empty dir cannot be committed, so it
+# exists after a local rebuild and is absent after a fresh clone, and
+# `diff -r` calls that a difference. The two "missing file" fixtures create
+# exactly this — removing the file (or its dir) can leave an empty ancestor.
+#
+# Found by CI, which checks out fresh; a local run CANNOT see it, because the
+# directory is already present from the previous build. Pruning here is the
+# general fix: it makes the generator idempotent with respect to git's storage
+# model rather than requiring each `rm` site to reason about its own ancestors.
+#
+# PORTABLE BY CONSTRUCTION: `rmdir` on every directory, deepest first.
+#
+# The obvious spelling is `find -type d -empty -delete`, and it is avoided on
+# purpose — neither `-empty` nor `-delete` is POSIX, and per CLAUDE.md's runtime
+# policy this tree targets BSD find on macOS. `rmdir` is POSIX, refuses a
+# NON-empty directory (so it cannot damage a real fixture), and `-depth` gives
+# the bottom-up order that lets a parent emptied by its child's removal go in
+# the same pass. `|| true` absorbs the expected "Directory not empty".
+#
+# No `| grep -q` anywhere near this: `grep -q` exits on its first match, the
+# upstream writer takes SIGPIPE, and under `pipefail` a pass that DID remove
+# something would report failure — the inversion this repo has been bitten by.
+command find "$HERE" -depth -type d -exec rmdir {} \; 2>/dev/null || true
 
 command printf 'fixtures rebuilt under %s\n' "$HERE"
