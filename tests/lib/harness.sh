@@ -97,9 +97,20 @@ _fail() {
         TEST_STATUS="failed"
     fi
     printf '      %s%s%s\n' "${_C_RED}" "$message" "${_C_RESET}"
-    local line
-    for line in "$@"; do
-        printf '        %s\n' "$line"
+    # Each detail argument may itself be MULTI-LINE — an analyzer traceback, a
+    # captured report, a multi-row evidence block. Indent every physical line,
+    # not just the argument's first (#1078). A bare `printf '        %s\n'` per
+    # argument prefixes only the first line and leaves the rest flush-left at
+    # column 0, which for a Python traceback means the `ExceptionType: message`
+    # line — the one a reader actually needs — renders indistinguishably from
+    # output that leaked to the terminal instead of being carried as evidence.
+    local detail line
+    for detail in "$@"; do
+        while IFS= read -r line; do
+            printf '        %s\n' "$line"
+        done <<EOF
+$detail
+EOF
     done
 }
 

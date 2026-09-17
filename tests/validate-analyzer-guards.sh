@@ -41,11 +41,23 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 REAL_BASH="$(command -v bash)"
 
-# The stub's stderr line. Asserted in the gate output to prove two things at
-# once: that the analyzer's stderr genuinely reaches the report (issue #1078
-# AC2 — a crash row with no cause is useless), and that the stub was actually
-# REACHED rather than bypassed by a PATH reset.
-STUB_STDERR="ANALYZER-STUB-TRACEBACK: deliberate crash"
+# The stub's stderr. Asserted in the gate output to prove two things at once:
+# that the analyzer's stderr genuinely reaches the report (issue #1078 AC2 — a
+# crash row with no cause is useless), and that the stub was actually REACHED
+# rather than bypassed by a PATH reset.
+#
+# MULTI-LINE ON PURPOSE, shaped like a real Python traceback. A single-line
+# message cannot observe the defect this fixture exists to catch: _fail receives
+# the whole report as ONE argument, and a per-argument printf indents only its
+# first physical line, leaving the rest — including the closing
+# `ExceptionType: message`, the line a reader actually needs — flush-left at
+# column 0, exactly the shape the indent assertion below calls "on the terminal
+# rather than in the report". Every real analyzer crash is multi-line; a
+# one-line stub made that assertion pass trivially while the realistic case was
+# broken. The LAST line is what the assertion keys on, since it is the one a
+# first-line-only indent gets wrong.
+STUB_STDERR_FIRST="Traceback (most recent call last):"
+STUB_STDERR_LAST="AnalyzerStubError: deliberate crash"
 STUB_RC=3
 
 # The substring every guard's failure row must carry. Deliberately not imported
@@ -106,7 +118,14 @@ make_stub_dir() {
         # A bare `--version` / `-c` probe must ALSO crash. A stub that answered
         # probes successfully and failed only the real invocation would leave the
         # fixture silent on any gate that version-gates its runtime first.
-        command printf 'printf "%%s\\n" "%s" >&2\n' "$STUB_STDERR"
+        #
+        # Four lines with the interior two INDENTED, mimicking a real traceback:
+        # the assertion below must distinguish _fail's own 8-space evidence
+        # indent from indentation the analyzer itself emitted.
+        command printf 'printf "%%s\\n" "%s" >&2\n' "$STUB_STDERR_FIRST"
+        command printf 'printf "%%s\\n" "  File \\"<stdin>\\", line 42, in <module>" >&2\n'
+        command printf 'printf "%%s\\n" "    raise AnalyzerStubError(1)" >&2\n'
+        command printf 'printf "%%s\\n" "%s" >&2\n' "$STUB_STDERR_LAST"
         command printf 'exit %s\n' "$STUB_RC"
     } >"$_dir/bin/python3"
     command chmod +x "$_dir/bin/python3"
@@ -177,7 +196,7 @@ test_stub_python3_is_what_runs() {
         PATH="$dir/bin" "$REAL_BASH" -c 'command python3 --version' 2>&1)" || rc=$?
     assert_true "[ $rc -eq $STUB_RC ]" \
         "the stub python3 is what resolves on the scrubbed stub PATH (exit $STUB_RC)"
-    assert_contains "$out" "$STUB_STDERR" \
+    assert_contains "$out" "$STUB_STDERR_LAST" \
         "the stub's stderr is what a caller sees"
 }
 
@@ -213,14 +232,23 @@ assert_gate_reports_the_crash() {
     #    Asserted as an INDENTED _fail detail line, not as a bare substring of
     #    the output. run_gate captures the gate with `2>&1`, so the stub's stderr
     #    reaches GATE_OUT whether or not the REPORT carried it — a bare
-    #    `assert_contains "$GATE_OUT" "$STUB_STDERR"` passes either way. Found by
-    #    mutation: dropping the `2>&1` from a gate's heredoc opener (the exact
-    #    regression AC2 is about, which makes the evidence read "(no output
+    #    `assert_contains "$GATE_OUT" "$STUB_STDERR_FIRST"` passes either way.
+    #    Found by mutation: dropping the `2>&1` from a gate's heredoc opener (the
+    #    exact regression AC2 is about, which makes the evidence read "(no output
     #    captured)") left that spelling green. _fail indents detail lines by
     #    eight spaces, and an unguarded leak is column-0, so the indent is what
     #    distinguishes "in the report" from "on the terminal".
-    assert_contains "$GATE_OUT" "        $STUB_STDERR" \
+    assert_contains "$GATE_OUT" "        $STUB_STDERR_FIRST" \
         "$gate: the crash row carries the analyzer's stderr as evidence (as a report detail line, not a bare leak)"
+
+    #    The LAST line of the traceback, also indented. This is the assertion the
+    #    first-line-only indent bug fails: _fail receives the whole multi-line
+    #    report as ONE argument, and indenting per-argument rather than per-line
+    #    leaves everything after the first line at column 0 — including this one,
+    #    which carries the exception type and message. Asserting only the first
+    #    line cannot see that, which is how the bug survived the original fixture.
+    assert_contains "$GATE_OUT" "        $STUB_STDERR_LAST" \
+        "$gate: EVERY line of a multi-line traceback is carried as evidence, not just the first"
 
     #    The paired negative: the placeholder the guard emits when it captured
     #    nothing. Its presence means the rc guard fired but the evidence was
