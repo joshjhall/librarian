@@ -20,6 +20,8 @@ Each tree holds three stubs — a `loc_engine.py` carrying the normative
 | `empty-normative/` | assertion 1 | `EXT_LANG` is present but empty, so the anti-vacuity check fails instead of every later check passing over nothing |
 | `missing-normative/` | assertion 1 | `loc_engine.py` absent entirely — the parser's file-not-found branch, a different code path to the same verdict |
 | `no-table/` | assertion 2 | the `source` row is renamed `sources`, so the row does not resolve — without this, assertions 3-5 compare against empty sets and pass |
+| `no-table-missing-file/` | assertion 2 | `code-reviewer.md` absent entirely — the analyzer's `os.path.exists` branch, distinct from an unresolvable row |
+| `no-table-second-subject/` | assertion 2 | the **second** subject's row is renamed — the per-subject proof for the resolution check |
 | `missing-swift/` | assertion 4 | **this issue's own defect.** `.swift` removed from the source row, everything else correct — the exact state of the tree before #1073 |
 | `contradiction-doc/` | assertion 3 | `.go` is in the `docs` row. **The fail-open direction** — a source language that drops security/correctness/tests on a narrowed cycle |
 | `contradiction-inverse/` | assertion 3 | `.md` is in the `source` row. The **safe** direction, which ADR 0002 forbids just the same |
@@ -52,6 +54,29 @@ on the copy someone remembered*, recreated inside the gate written to end it.
 The two subjects also spell their doc row differently (`docs` vs `Doc`), so a
 row-name error affecting only the second tuple would be invisible to a
 source-row tamper.
+
+## The coverage rule these fixtures follow
+
+Three consecutive review cycles each found the same class of hole: an assertion
+proven only for the code path, or only for the subject, that whoever wrote it
+happened to think of. Rather than patch a third instance, the rule is now
+uniform — **every assertion that can fire per-subject carries both proofs**:
+
+| Assertion | File-absent branch | Second-subject proof |
+| --- | --- | --- |
+| 1 — normative populated | `missing-normative/` | n/a (one shared normative file) |
+| 2 — tables resolve | `no-table-missing-file/` | `no-table-second-subject/` |
+| 3 — no contradiction | n/a (needs a row to contradict) | `second-subject-contradiction/` |
+| 4 — coverage | n/a (needs a row to omit from) | `second-subject/` |
+| 5 — declared | n/a (needs a row to declare) | `second-subject-undeclared/` |
+
+The `n/a` cells are structural, not gaps: assertions 3-5 read the *contents* of
+a row, so a fixture with no file at all arms assertion 2 instead and never
+reaches them. Adding a per-assertion "missing file" fixture there would pin the
+same behavior three more times.
+
+When adding an assertion, fill its row of this table — that is what keeps the
+next hole from being found by a reviewer instead of by the suite.
 
 ## Generator freshness
 

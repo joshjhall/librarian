@@ -112,6 +112,31 @@ write_reviewer "$d/$CR_REL" "$GOOD_SOURCE" "$GOOD_DOCS"
 command sed -i.bak 's/^| source /| sources /' "$d/$CR_REL"
 command rm -f "$d/$CR_REL.bak"
 
+# --- no-table-missing-file / no-table-second-subject (assertion 2) -----------
+# COMPLETING THE MATRIX, not patching a third instance (cycle-3 review). Three
+# consecutive cycles each found the same class — a self-test proving an
+# assertion only for the path or the subject someone happened to think of — so
+# the remedy is to make the coverage rule uniform rather than add one more
+# fixture and wait for cycle 4 to find the next hole.
+#
+# Every assertion that can fire per-subject now has BOTH proofs:
+#
+#   assertion   missing-file branch      second-subject proof
+#   1           missing-normative        (n/a - one shared normative file)
+#   2           no-table-missing-file    no-table-second-subject   <- these
+#   3           (n/a - needs a row)      second-subject-contradiction
+#   4           (n/a - needs a row)      second-subject
+#   5           (n/a - needs a row)      second-subject-undeclared
+#
+# `no-table` above covers the row-unresolvable branch on the FIRST subject; the
+# two below cover the `os.path.exists` false branch and the second subject.
+d="$(fixture no-table-missing-file)"
+command rm -f "$d/$CR_REL"
+
+d="$(fixture no-table-second-subject)"
+command sed -i.bak 's/^| Source /| Sources /' "$d/$OP_REL"
+command rm -f "$d/$OP_REL.bak"
+
 # --- missing-swift: THIS ISSUE'S OWN DEFECT (assertion 4) --------------------
 d="$(fixture missing-swift)"
 write_reviewer "$d/$CR_REL" \

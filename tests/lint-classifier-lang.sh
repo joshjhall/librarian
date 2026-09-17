@@ -454,6 +454,22 @@ test_selftest_fixtures() {
     assert_contains "$out" "both classifier tables resolve (anti-vacuity) ... FAIL" \
         "no-table fixture must fail the table-resolution assertion"
 
+    # Assertion 2's other two paths. `no-table` covers a row that does not
+    # resolve on the FIRST subject; these cover the file-absent branch and the
+    # second subject — the same two proofs every other per-subject assertion
+    # now carries. See the matrix comment in .build.sh (cycle-3 review).
+    out="$(selftest_report no-table-missing-file)"
+    assert_contains "$out" "both classifier tables resolve (anti-vacuity) ... FAIL" \
+        "no-table-missing-file must fail — the os.path.exists branch is live"
+    assert_contains "$out" "NOTABLE code-reviewer" \
+        "the file-absent branch must name the subject it could not read"
+
+    out="$(selftest_report no-table-second-subject)"
+    assert_contains "$out" "both classifier tables resolve (anti-vacuity) ... FAIL" \
+        "no-table-second-subject must fail — assertion 2 reads the SECOND subject"
+    assert_contains "$out" "NOTABLE orchestration-protocol" \
+        "assertion 2 must name the second subject, not the first"
+
     # THE FIXTURE FOR THIS ISSUE'S OWN DEFECT. `.swift` removed from the source
     # row, everything else correct — the exact state of the tree before #1073.
     # If this fixture ever passes, the gate has stopped detecting the bug it was
