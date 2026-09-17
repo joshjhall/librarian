@@ -647,4 +647,88 @@ test_fixtures_match_generator() {
 
 run_test test_fixtures_match_generator "committed fixtures are in sync with their generator"
 
+# --- ...and that freshness check must itself be proven to fire ---------------
+#
+# The sixth assertion needed the same proof as the other five, and did not have
+# it (cycle-5 review). The five classifier assertions each have a committed
+# negative fixture; test_fixtures_match_generator had only its own green result,
+# which establishes the fixtures are currently in sync — NOT that the check
+# would notice if they were not. A detector that never fires is green too.
+#
+# The gap was invisible to a fixture-by-fixture audit because it is not a missing
+# fixture: it is a missing proof for the one assertion that takes no fixture at
+# all. Modelled directly on test_stale_artifact_is_detected in
+# tests/lint-workflow-js-generated.sh — the same committed-generated-artifact
+# shape this check's own comment already cites as its precedent.
+#
+# Sandboxed: the drift is introduced in a COPY, never in the committed tree, so
+# a failure here cannot leave the real fixtures dirty.
+test_freshness_check_detects_drift() {
+    # RECURSION GUARD, and it needs its OWN variable rather than the
+    # CLASSIFIER_LANG_ROOT test the other self-tests use. That test compares the
+    # root against $REPO_ROOT, and the sandbox copy below runs with
+    # CLASSIFIER_LANG_ROOT unset — so it defaults to the sandbox's own repo root,
+    # the two are equal, and the guard does NOT fire: the copy re-runs this test,
+    # builds another sandbox, and recurses until something kills it (measured —
+    # it hangs, it does not error). An explicit inherited marker is unambiguous.
+    if [ -n "${CLASSIFIER_LANG_DRIFT_SELFTEST:-}" ]; then
+        skip_test "inside the drift self-test sandbox — does not recurse"
+        return 0
+    fi
+    if [ "$CLASSIFIER_LANG_ROOT" != "$REPO_ROOT" ]; then
+        skip_test "already under a fixture root — drift self-test does not recurse"
+        return 0
+    fi
+
+    local sandbox
+    sandbox="$(command mktemp -d)" || {
+        skip_test "mktemp unavailable — cannot mutate in a sandbox"
+        return 0
+    }
+    command mkdir -p "$sandbox/tests"
+    command cp "$SCRIPT_DIR/$(command basename "${BASH_SOURCE[0]}")" "$sandbox/tests/"
+    command cp -R "$SCRIPT_DIR/lib" "$sandbox/tests/lib"
+    command cp -R "$FIXROOT" "$sandbox/tests/fixtures-tmp"
+    command mkdir -p "$sandbox/tests/fixtures"
+    command mv "$sandbox/tests/fixtures-tmp" "$sandbox/tests/fixtures/classifier-lang"
+
+    local gate
+    gate="$sandbox/tests/$(command basename "${BASH_SOURCE[0]}")"
+    local rc out
+
+    # BASELINE — the copy must check clean BEFORE the mutation. Without this, the
+    # failure below could come from a bad copy or a missing path and still read
+    # as the check working, which is the very confusion this test exists to end.
+    rc=0
+    out="$(CLASSIFIER_LANG_DRIFT_SELFTEST=1 command bash "$gate" 2>&1)" || rc=$?
+    assert_contains "$out" "committed fixtures are in sync with their generator ... PASS" \
+        "sandbox baseline: the copied fixtures check clean before mutation"
+
+    # MUTATE one committed fixture so it no longer matches what .build.sh emits.
+    command printf '\n| drift | `.zzz` |\n' \
+        >>"$sandbox/tests/fixtures/classifier-lang/clean/plugins/dev-core/agents/code-reviewer.md"
+
+    rc=0
+    out="$(CLASSIFIER_LANG_DRIFT_SELFTEST=1 command bash "$gate" 2>&1)" || rc=$?
+    assert_true "[ $rc -ne 0 ]" "a drifted fixture makes the gate exit non-zero"
+    assert_contains "$out" "committed fixtures are in sync with their generator ... FAIL" \
+        "a drifted fixture FAILS the freshness check"
+    # The recipe is what a reader acts on, so assert it survives — a failure that
+    # does not say how to fix it costs the next person the diagnosis.
+    assert_contains "$out" "re-run: bash tests/fixtures/classifier-lang/.build.sh" \
+        "the freshness failure names the re-run recipe"
+
+    # REGENERATING CLEARS IT — proving the failure was drift, not a sandbox the
+    # edit broke permanently.
+    command bash "$sandbox/tests/fixtures/classifier-lang/.build.sh" >/dev/null 2>&1
+    rc=0
+    out="$(CLASSIFIER_LANG_DRIFT_SELFTEST=1 command bash "$gate" 2>&1)" || rc=$?
+    assert_contains "$out" "committed fixtures are in sync with their generator ... PASS" \
+        "regenerating after the edit restores a clean freshness check"
+
+    command rm -rf "$sandbox"
+}
+
+run_test test_freshness_check_detects_drift "self-test: the freshness check fires on real drift"
+
 generate_report
