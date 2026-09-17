@@ -263,6 +263,15 @@ export async function run() {
   // reaches the three dimensions. AC5 of #1073 requires exactly this pairing —
   // "assert the dimensions actually selected; a unit test over the table alone
   // would pass while the routing stayed broken."
+  //
+  // THE PAIRING NARROWS THE CROSS-ARTIFACT GAP; IT DOES NOT CLOSE IT — the same
+  // caveat the `docs` block above carries, stated here so the stronger-looking
+  // two-part check does not read as more than it is. The two halves are checked
+  // INDEPENDENTLY: that the row lists `.swift`, and that the selector routes a
+  // manifest hand-built with `types: ["source"]`. Nothing here derives the
+  // classification FROM the prose table the way the agent does at runtime, so an
+  // agent that misreads a syntactically-correct row is still not caught. That
+  // residue is inherent to unit-testing an LLM-read table.
   ok(
     /^\|\s*source\s*\|.*`\.swift`/m.test(reviewerAgent),
     "code-reviewer.md Step 2 classifies .swift as source (#1073)",

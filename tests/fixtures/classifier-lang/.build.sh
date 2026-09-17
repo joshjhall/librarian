@@ -125,10 +125,30 @@ d="$(fixture undeclared-source)"
 write_reviewer "$d/$CR_REL" "$GOOD_SOURCE, \`.lua\`" "$GOOD_DOCS"
 
 # --- second-subject: the SECOND file is tampered, the first is correct -------
-# Proves the gate does not stop after SUBJECTS[0].
+# Proves assertion 4 does not stop after SUBJECTS[0].
 d="$(fixture second-subject)"
 write_protocol "$d/$OP_REL" \
     '`.py`, `.js`, `.jsx`, `.mjs`, `.cjs`, `.ts`, `.tsx`, `.rs`, `.go`, `.sh`, `.bash`, `.rb`, `.java`, `.kt`, `.c`, `.cpp`, `.h`' \
     "$GOOD_DOCS"
+
+# --- second-subject-contradiction / -undeclared ------------------------------
+# The SAME per-subject proof for assertions 3 and 5, which `second-subject`
+# above establishes only for assertion 4 (found by this PR's own review).
+#
+# Without these, assertions 3 and 5 are proven to fire against code-reviewer.md
+# and NOTHING proves they fire against orchestration-protocol.md — precisely the
+# "enforced on the copy someone remembered" shape this whole issue is about,
+# reappearing inside the gate written to end it.
+#
+# The two subjects spell their doc row DIFFERENTLY (`docs` vs `Doc`), so this is
+# not a theoretical asymmetry: a typo in the second tuple's row name would make
+# `table_row_exts` return None for it. Assertion 2 would catch a wholly
+# unresolvable row, but a row name that resolves to the WRONG row would not be
+# caught by anything else — a doc-row tamper is what exercises that path.
+d="$(fixture second-subject-contradiction)"
+write_protocol "$d/$OP_REL" "$GOOD_PROTO_SOURCE" "$GOOD_DOCS, \`.go\`"
+
+d="$(fixture second-subject-undeclared)"
+write_protocol "$d/$OP_REL" "$GOOD_PROTO_SOURCE, \`.lua\`" "$GOOD_DOCS"
 
 command printf 'fixtures rebuilt under %s\n' "$HERE"

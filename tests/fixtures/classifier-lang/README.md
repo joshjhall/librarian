@@ -24,6 +24,8 @@ Each tree holds three stubs — a `loc_engine.py` carrying the normative
 | `contradiction-inverse/` | assertion 3 | `.md` is in the `source` row. The **safe** direction, which ADR 0002 forbids just the same |
 | `undeclared-source/` | assertion 5 | `.lua` is in the source row, absent from `EXT_LANG`, and absent from `UNSEGMENTED_SOURCE` — nothing states whether it is a deliberate coarsening or drift |
 | `second-subject/` | assertion 4 | `.swift` removed from **`orchestration-protocol.md` only**, with `code-reviewer.md` left correct |
+| `second-subject-contradiction/` | assertion 3 | `.go` in the **second** subject's doc row — the same per-subject proof for the contradiction check |
+| `second-subject-undeclared/` | assertion 5 | `.lua` in the **second** subject's source row — the same per-subject proof for the declaration check |
 | `clean/` | the whole gate | **positive** — must PASS, and must reach the no-contradiction assertion |
 
 Three of these are worth extra words.
@@ -34,12 +36,31 @@ detecting the bug it was written for — a stronger statement than "the gate is
 green today", and the reason it is a committed tree rather than an inline
 mutation.
 
-**`second-subject/` exists because every other fixture tampers with
-`code-reviewer.md`.** All five assertions would be satisfied by a gate that read
-only `SUBJECTS[0]` and stopped — and `orchestration-protocol.md` was an ungated
-copy of the same lexical fact until this issue, which is exactly the hole being
-closed. A fixture that tampers only with the second file is what makes "both
+**The three `second-subject*` fixtures exist because every other fixture tampers
+with `code-reviewer.md`.** All five assertions would be satisfied by a gate that
+read only `SUBJECTS[0]` and stopped — and `orchestration-protocol.md` was an
+ungated copy of the same lexical fact until this issue, which is exactly the hole
+being closed. Fixtures that tamper only with the second file are what make "both
 subjects are really read" a tested claim rather than an intended one.
+
+There are **three** of them, one per subject-sensitive assertion (3, 4 and 5),
+and that is deliberate rather than completionism. The first version of this set
+had only the assertion-4 fixture, which left assertions 3 and 5 proven against
+the first subject and nothing at all against the second — *the rule enforced only
+on the copy someone remembered*, recreated inside the gate written to end it.
+The two subjects also spell their doc row differently (`docs` vs `Doc`), so a
+row-name error affecting only the second tuple would be invisible to a
+source-row tamper.
+
+## Generator freshness
+
+`.build.sh` is not run by the suite, so the committed trees could drift from what
+it would now produce — edit the generator, forget to re-run it, and the fixtures
+keep proving something it no longer says, with every test green. The gate's
+`test_fixtures_match_generator` closes that window: it regenerates into a temp
+dir and diffs. Note it copies the script out first and runs it **there** —
+pointing the generator at this directory would regenerate in place and erase the
+very drift it is checking for.
 
 **`clean/` is the one positive, and its inversion is the point.** Every other
 fixture proves an assertion *can* fail; this one proves a correct pair of tables

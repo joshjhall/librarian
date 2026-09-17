@@ -500,6 +500,32 @@ test_selftest_fixtures() {
     assert_contains "$out" "MISSING orchestration-protocol .swift" \
         "second-subject fixture must name the SECOND subject, not the first"
 
+    # ASSERTIONS 3 AND 5 NEED THE SAME PER-SUBJECT PROOF (found by this PR's own
+    # review). The fixture above establishes the second subject is really read by
+    # assertion 4 only; without the two below, 3 and 5 are proven to fire against
+    # code-reviewer.md and nothing proves they fire against the second file —
+    # the "enforced on the copy someone remembered" shape this issue exists to
+    # end, recreated inside the gate that ends it.
+    #
+    # Not redundant with `second-subject`: the two subjects spell their doc row
+    # differently (`docs` vs `Doc`), so a row-name error affecting only the
+    # second tuple would be invisible to a source-row tamper.
+    out="$(selftest_report second-subject-contradiction)"
+    assert_contains "$out" "no classifier row contradicts the normative table ... FAIL" \
+        "second-subject-contradiction must fail — assertion 3 reads the SECOND subject"
+    assert_contains "$out" "CONTRADICTION orchestration-protocol .go" \
+        "assertion 3 must name the second subject and the offending extension"
+    assert_contains "$out" "FAIL-OPEN (source classified doc" \
+        "assertion 3 must name the direction on the second subject too"
+
+    out="$(selftest_report second-subject-undeclared)"
+    assert_contains "$out" "every ungoverned source extension is declared ... FAIL" \
+        "second-subject-undeclared must fail — assertion 5 reads the SECOND subject"
+    assert_contains "$out" "UNDECLARED orchestration-protocol .lua" \
+        "assertion 5 must name the second subject and the offending extension"
+    assert_contains "$out" "no classifier row contradicts the normative table ... PASS" \
+        "second-subject-undeclared must arm ONLY the declaration assertion"
+
     # THE ONE POSITIVE FIXTURE — it must PASS, where every other arms a failure.
     # That inversion is the point: it pins that a CORRECT pair of tables produces
     # no finding, so a gate that simply failed everything could not satisfy the
@@ -513,5 +539,54 @@ test_selftest_fixtures() {
 }
 
 run_test test_selftest_fixtures "self-test: each assertion fires on its fixture"
+
+# --- The fixtures match their generator --------------------------------------
+#
+# `.build.sh` regenerates every committed tree from hardcoded GOOD_SOURCE /
+# GOOD_DOCS / NORMATIVE_BODY strings and is deliberately NOT run by the suite.
+# That leaves a drift window (found by this PR's own review): edit the generator,
+# forget to re-run it, and the committed fixtures keep proving something the
+# generator no longer says — with every test green, because the gate only ever
+# compares the fixtures ON DISK against its own logic.
+#
+# Same shape, and same remedy, as lint-workflow-js-generated.sh: a committed
+# artifact whose freshness is checked locally. Regenerate into a temp dir and
+# diff. The failure names the recipe, because "fixtures are stale" is only
+# actionable with the command that fixes it.
+test_fixtures_match_generator() {
+    if [ "$CLASSIFIER_LANG_ROOT" != "$REPO_ROOT" ]; then
+        skip_test "already under a fixture root — generator check does not recurse"
+        return 0
+    fi
+    if [ ! -x "$FIXROOT/.build.sh" ] && [ ! -f "$FIXROOT/.build.sh" ]; then
+        # FAIL LOUD rather than skip: a missing generator is not an unavailable
+        # linter, it is a deleted file the README still points at.
+        assert_equals "present" "missing" "fixtures/.build.sh exists"
+        return 0
+    fi
+
+    local tmp
+    tmp="$(command mktemp -d)"
+    # The generator derives its output root from its OWN location, so copy it
+    # into the temp tree and run it there — pointing it at $FIXROOT would
+    # regenerate the committed fixtures in place, which is the one thing a
+    # freshness check must never do (it would make drift unobservable by
+    # erasing it: dry-run-against-real-data).
+    command cp "$FIXROOT/.build.sh" "$tmp/.build.sh"
+    command bash "$tmp/.build.sh" >/dev/null 2>&1
+
+    # Compare only the generated trees. `.build.sh` and README.md are hand-written
+    # and are not regenerated, so they are excluded rather than expected to match.
+    local drift
+    drift="$(command diff -r \
+        --exclude='.build.sh' --exclude='README.md' \
+        "$FIXROOT" "$tmp" 2>&1 || true)"
+    command rm -rf "$tmp"
+
+    assert_output_empty "$drift" \
+        "committed fixtures match .build.sh (re-run: bash tests/fixtures/classifier-lang/.build.sh)"
+}
+
+run_test test_fixtures_match_generator "committed fixtures are in sync with their generator"
 
 generate_report
