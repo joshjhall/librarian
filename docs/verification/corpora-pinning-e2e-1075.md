@@ -251,11 +251,86 @@ filesystem dump). The fallback chain therefore validates stat's **output** as
 all-digits rather than trusting its exit status, so a wrong-platform answer is
 unusable instead of merely unlikely.
 
+### The trust check needed to be one level lower
+
+Found by re-reading the fix rather than by a reviewer. `resolve_corpora_dir`
+vets the corpora **root**, but `fetch_one` then creates `$root/$name` — and
+*that* is the directory git inits, fetches and checks out in, so that is where
+`.git/hooks/*` would run.
+
+Vetting only the parent is sufficient when the parent is `0700` and ours, which
+is true of the `/tmp` fallback by construction. It is **not** sufficient on the
+`/cache/corpora` volume, whose mode this script does not control (measured here:
+`755`, so on a host where it were group- or world-writable a hostile per-corpus
+child could be planted under a perfectly trustworthy root). The check now runs at
+both levels, which removes the dependence on the parent's mode entirely.
+
+`test_symlinked_per_corpus_dir_is_refused` pins it, and deleting the check makes
+that fixture fail — so it is load-bearing rather than decorative.
+
+### Cycle 2: the fix for the CWE-377 finding did not work
+
+The second review cycle returned **two blocking findings, both defects in the
+cycle-1 fix itself**. This is the part worth reading: a fix that looks right,
+carries a comment stating what it achieves, and ships with a passing fixture can
+still achieve nothing.
+
+**The per-corpus trust check never ran on the common path.** It was placed
+*after* the `corpora_present` idempotence fast path. That predicate asks only
+"is there a `.git` here whose `HEAD` equals the pin" — and the manifest's
+URL+SHA pairs are **public**, so an attacker clones the real commit into a tree
+they own and symlinks `$root/$name` at it. The SHA matches, the fast path returns
+0, and the guard is skipped entirely.
+
+Reproduced before the fix, against the real axe-core pin:
+
+```text
+$ CORPORA_DIR=/tmp/attack/root bin/fetch-corpora.sh axe-core
+  axe-core       ok       1cc54b9 (already at pin)
+fetch-corpora: done                                     # exit 0, no refusal
+```
+
+and after moving the check above the early return:
+
+```text
+fetch-corpora: axe-core: refusing to use /tmp/attack/root/axe-core
+  — it is a symlink or is not owned by uid 501          # exit 1
+```
+
+The ordering is the entire fix. Note why the existing fixture missed it:
+`test_symlinked_per_corpus_dir_is_refused` plants an **empty** symlinked
+directory, which fails `corpora_present` and therefore reaches the check by the
+slow path no matter where the check sits. Only a symlink that is genuinely **at
+the pin** distinguishes "checked before the fast path" from "checked after it" —
+which is what `test_symlinked_per_corpus_dir_refused_even_when_at_the_pin` now
+constructs, and it is the *only* fixture that fails when the ordering is
+reverted.
+
+**A "control" that controlled nothing.** The URL-policy test's third block was
+commented as the accepting-direction control and asserted
+`assert_file_exists "$at_mf"` — it proved a `printf` succeeded and never invoked
+the checker. A rejection-only set passes equally well against a checker that
+refuses everything, so the accepting direction has to be *run*, not described. It
+now probes `valid_corpus_url` directly across five URLs and asserts both
+verdicts.
+
+Two deferrable findings were also taken: the check-then-act window between the
+existence test and `mkdir -p` is closed by re-checking after creation (`mkdir -p`
+through a pre-planted symlink succeeds silently), and
+`test_foreign_owned_per_corpus_dir_is_refused` brings the child call site to
+parity with the root's two-branch coverage.
+
+**What this says about the cycle-1 report above.** Its mutation table is
+accurate — those five mutants really were caught — and it was still not enough,
+because mutation testing only probes paths a fixture already enters. Both cycle-2
+blockers lived on paths no fixture reached: one behind an early return, one
+behind an assertion that never called the subject.
+
 ### Result
 
 ```text
 $ bash tests/lint-measurement-citations.sh   # 16 passed, 0 failed
-$ bash tests/validate-fetch-corpora.sh       # 23 passed, 0 failed
+$ bash tests/validate-fetch-corpora.sh       # 26 passed, 0 failed
 $ bash tests/validate-shards.sh              # 15 passed — both gates claimed by exactly one shard
 $ bash tests/lint-shell-portability.sh       # 2762 passed, 0 failed (bash-3.2 + BSD, AC9)
 $ bash tests/lint-shellcheck.sh              # 346 passed, 0 failed

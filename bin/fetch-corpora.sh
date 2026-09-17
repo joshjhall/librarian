@@ -383,6 +383,28 @@ fetch_one() {
 
     dir="$root/$name"
 
+    # THE SAME TRUST CHECK, ONE LEVEL DOWN — AND IT MUST PRECEDE EVERY OTHER USE
+    # OF $dir, INCLUDING THE FAST PATH BELOW.
+    #
+    # resolve_corpora_dir vets the corpora ROOT, but this is the directory git
+    # inits, fetches and checks out in — and `git checkout` runs .git/hooks/*.
+    # Vetting only the parent is sufficient when the parent is 0700 and ours (the
+    # /tmp fallback) and NOT sufficient on a shared /cache volume whose mode this
+    # script does not control.
+    #
+    # THE ORDER IS THE WHOLE FIX. Placed after the corpora_present early return —
+    # where it first landed — this check never runs on the common re-run case,
+    # because corpora_present asks only "is there a .git here whose HEAD equals
+    # the pin". The manifest's URL+SHA pairs are public, so an attacker clones the
+    # real commit into a tree they own and symlinks $root/$name at it: the SHA
+    # matches, the fast path returns 0, and the guard is skipped entirely.
+    # Measured before this move — `ok  1cc54b9 (already at pin)`, exit 0, no
+    # refusal. Every path that treats $dir as ours must validate it first.
+    if [ -e "$dir" ] || [ -L "$dir" ]; then
+        dir_is_trustworthy "$dir" ||
+            die "$name: refusing to use $dir — it is a symlink or is not owned by uid $(command id -u)"
+    fi
+
     # IDEMPOTENCE (AC2), decided by the SHA rather than by the directory. An
     # existence test would call a half-fetched or wrongly-checked-out tree
     # "present" and skip the repair.
@@ -392,6 +414,20 @@ fetch_one() {
     fi
 
     command mkdir -p "$dir" 2>/dev/null || die "$name: cannot create $dir"
+
+    # RE-CHECK AFTER CREATION, closing the check-then-act window (CWE-367). The
+    # guard above only fires when $dir already exists; when it does not, control
+    # falls straight to `mkdir -p`, and `mkdir -p` on a path that resolves
+    # through a symlink to an existing directory SUCCEEDS SILENTLY. So an
+    # attacker who can write into the corpora root and wins the race between the
+    # existence test and the mkdir plants a symlink the first check never saw.
+    #
+    # Cheap to close and worth closing even though the window is narrow (it needs
+    # a co-resident attacker who can already write into a directory owned by this
+    # uid): this re-check runs immediately before `git init`/`fetch`/`checkout`,
+    # which is the operation that executes .git/hooks/*.
+    dir_is_trustworthy "$dir" ||
+        die "$name: $dir became untrustworthy after creation — refusing to run git in it"
 
     if [ ! -d "$dir/.git" ]; then
         command git -C "$dir" init -q 2>/dev/null || die "$name: git init failed in $dir"

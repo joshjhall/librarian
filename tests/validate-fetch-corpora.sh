@@ -305,14 +305,37 @@ test_manifest_url_policy_is_enforced() {
     assert_not_contains "$RUN_OUT" "sekrit" \
         "The credential must never be echoed — the refusal must precede any logging of the URL"
 
-    # The control: a `@` in the PATH is legitimate and must not be refused, or
-    # the check would reject ordinary URLs (e.g. a scoped npm-style path).
-    local at_mf="$SANDBOX/m-at"
-    command printf '# fixture\nalpha\tfile://%s\t%s\tMIT\ttag:none\tfixture\n' \
-        "$UPSTREAM" "$FIRST_SHA" >"$at_mf"
-    # file:// is what the rest of this offline suite uses, so assert the policy
-    # does not break it -- covered by every other passing case here.
-    assert_file_exists "$at_mf" "control fixture written"
+    # THE CONTROL, actually exercised. An earlier version of this block wrote a
+    # fixture file and asserted only that the file existed — which proves a
+    # printf succeeded and nothing about valid_corpus_url. A rejection-only test
+    # set passes just as well against a checker that refuses everything, so the
+    # accepting direction has to be run, not described.
+    #
+    # `@` is tested in the PATH rather than the authority, because that is the
+    # boundary: the check must reject credentials before the host and accept a
+    # `@` after it (a scoped path segment is ordinary).
+    local probe="$SANDBOX/urlprobe.sh"
+    command printf '#!/usr/bin/env bash\n. "%s"\nfor u in "$@"; do if valid_corpus_url "$u"; then echo "OK $u"; else echo "NO $u"; fi; done\n' \
+        "$FETCHER" >"$probe"
+
+    local verdicts
+    verdicts="$(command env CORPORA_MANIFEST="$SANDBOX/m1" bash "$probe" \
+        'https://example.invalid/a/@scope/b.git' \
+        'https://example.invalid/a.git' \
+        "file://$UPSTREAM" \
+        'https://u:sekrit@example.invalid/a.git' \
+        'ssh://git@example.invalid/a.git' 2>&1)"
+
+    assert_contains "$verdicts" "OK https://example.invalid/a/@scope/b.git" \
+        "A '@' in the PATH is legitimate and must be ACCEPTED"
+    assert_contains "$verdicts" "OK https://example.invalid/a.git" \
+        "An ordinary https URL must be accepted"
+    assert_contains "$verdicts" "OK file://" \
+        "file:// must be accepted — the offline suite depends on it (AC8)"
+    assert_contains "$verdicts" "NO https://u:sekrit@example.invalid/a.git" \
+        "Credentials in the authority must be rejected"
+    assert_contains "$verdicts" "NO ssh://git@example.invalid/a.git" \
+        "An ssh remote must be rejected"
 }
 
 test_empty_manifest_fails_loudly() {
@@ -422,6 +445,96 @@ test_foreign_owned_corpora_dir_is_refused() {
     out="$(command cat "$log" 2>/dev/null)"
     assert_contains "$out" "refusing to use /tmp" \
         "A corpora dir owned by another uid must be refused"
+}
+
+test_symlinked_per_corpus_dir_is_refused() {
+    # The trust check ONE LEVEL DOWN. resolve_corpora_dir vets the corpora root,
+    # but $root/$name is the tree git actually inits, fetches and checks out in —
+    # and checkout runs .git/hooks/*. Vetting only the parent is enough when the
+    # parent is 0700 and ours, and NOT enough on a shared /cache volume whose
+    # mode this script does not control. A trustworthy root with a hostile child
+    # is the case that distinguishes the two.
+    local root="$SANDBOX/c-child" target="$SANDBOX/child-target"
+    command mkdir -p "$root" "$target"
+    command ln -s "$target" "$root/alpha"
+
+    run_fetch "$SANDBOX/m1" "$root" alpha
+    assert_true "[ \"$RUN_RC\" -ne 0 ]" \
+        "A symlinked per-corpus directory must be refused even under a trusted root"
+    assert_contains "$RUN_OUT" "refusing to use" "The refusal must be explicit"
+}
+
+test_symlinked_per_corpus_dir_refused_even_when_at_the_pin() {
+    # THE BYPASS THE FIRST VERSION OF THIS GUARD MISSED, and the reason its
+    # placement is load-bearing rather than stylistic.
+    #
+    # corpora_present asks only "is there a .git here whose HEAD equals the pin".
+    # The manifest's URL+SHA pairs are PUBLIC, so an attacker can clone the real
+    # commit into a tree they own and symlink $root/$name at it. The SHA then
+    # matches, the idempotence fast path returns 0, and a trust check placed
+    # after it never runs — measured, before the fix: `ok (already at pin)`,
+    # exit 0, no refusal.
+    #
+    # This is the distinguishing case: test_symlinked_per_corpus_dir_is_refused
+    # above plants an EMPTY symlinked directory, which fails corpora_present and
+    # therefore reaches the check by the slow path regardless of ordering. Only a
+    # symlink that is genuinely AT THE PIN separates "checked before the fast
+    # path" from "checked after it".
+    local root="$SANDBOX/c-pinned-sym" real="$SANDBOX/pinned-real"
+
+    # Build a legitimate checkout at the pin, exactly as an attacker could.
+    command mkdir -p "$root"
+    run_fetch "$SANDBOX/m1" "$SANDBOX/stage-pinned" alpha
+    assert_exit 0 "$RUN_RC" "setup: a real pinned checkout must exist to symlink at"
+    command mv "$SANDBOX/stage-pinned/alpha" "$real"
+    command ln -s "$real" "$root/alpha"
+
+    # Sanity: the planted tree really is at the pin, so this test cannot pass
+    # merely because the SHA failed to match.
+    local planted
+    planted="$(git_q -C "$root/alpha" rev-parse HEAD 2>/dev/null)"
+    assert_equals "$FIRST_SHA" "$planted" \
+        "setup: the symlinked tree must BE at the pin, or the bypass is not reproduced"
+
+    run_fetch "$SANDBOX/m1" "$root" alpha
+    assert_true "[ \"$RUN_RC\" -ne 0 ]" \
+        "A symlinked corpus dir must be refused even when its HEAD matches the pin"
+    assert_contains "$RUN_OUT" "refusing to use" "The refusal must be explicit"
+    assert_not_contains "$RUN_OUT" "already at pin" \
+        "The idempotence fast path must NOT run before the trust check"
+}
+
+test_foreign_owned_per_corpus_dir_is_refused() {
+    # dir_is_trustworthy has TWO branches — symlink and ownership — and the
+    # per-corpus call site previously exercised only the symlink one. Since the
+    # function is shared, a regression confined to the ownership branch would
+    # pass every other fixture at this call site. The root-level guard has both
+    # arms covered; this brings the child level to parity.
+    #
+    # The stat stub is the portable way to force the ownership branch without
+    # needing a second uid. BASH_ENV must be scrubbed or the stub is discarded —
+    # see test_trust_check_refuses_when_stat_is_unusable.
+    local stub="$SANDBOX/stubbin-owner"
+    command mkdir -p "$stub"
+    # Report a uid that is definitely not ours, exercising the ownership branch
+    # rather than the indeterminate one.
+    command printf '#!/usr/bin/env bash\necho 999999\n' >"$stub/stat"
+    command chmod +x "$stub/stat"
+
+    local root="$SANDBOX/c-foreign-child"
+    command mkdir -p "$root/alpha"
+
+    local log="$SANDBOX/foreign-child.log"
+    command env -uBASH_ENV PATH="$stub:$PATH" \
+        CORPORA_MANIFEST="$SANDBOX/m1" CORPORA_DIR="$root" \
+        bash --noprofile --norc "$FETCHER" alpha >"$log" 2>&1
+    local rc=$?
+    local out
+    out="$(command cat "$log" 2>/dev/null)"
+
+    assert_true "[ \"$rc\" -ne 0 ]" \
+        "A per-corpus dir owned by another uid must be refused"
+    assert_contains "$out" "refusing to use" "The refusal must be explicit"
 }
 
 test_trust_check_refuses_when_stat_is_unusable() {
@@ -587,6 +700,9 @@ run_test test_unknown_corpus_name_is_an_error
 run_test test_explicit_unwritable_corpora_dir_fails_loudly
 run_test test_symlinked_corpora_dir_is_refused
 run_test test_foreign_owned_corpora_dir_is_refused
+run_test test_symlinked_per_corpus_dir_is_refused
+run_test test_symlinked_per_corpus_dir_refused_even_when_at_the_pin
+run_test test_foreign_owned_per_corpus_dir_is_refused
 run_test test_trust_check_refuses_when_stat_is_unusable
 run_test test_owned_corpora_dir_is_accepted
 run_test test_sourcing_survives_a_missing_manifest
