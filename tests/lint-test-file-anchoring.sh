@@ -386,7 +386,21 @@ print("LANGS\t%s" % " ".join(sorted(set(s[1] for s in sites))))
 PYEOF
 }
 
-ANCHOR_REPORT="$(scan_root "$REPO_ROOT")"
+# The analyzer's exit status is captured rather than left to `set -e` (#1078).
+# Under `set -euo pipefail`, `VAR="$(cmd)"` propagates the inner status, so an
+# uncaught exception inside scan_root's program would abort the script AT THIS
+# LINE — before any run_test and before the trailing generate_report. The
+# operator would get a bare traceback instead of the structured report, in a
+# suite whose whole design principle is that a failure names itself. `2>&1` is
+# load-bearing: without it the traceback is discarded and the crash row reports a
+# failure with no cause.
+#
+# Only THIS call site is guarded. scan_root's five self-test callers below pass
+# `2>/dev/null || true` deliberately — they run the parser against deliberately
+# broken fixtures and read the verdict, so a non-zero status there is the
+# expected outcome rather than a defect.
+ANCHOR_REPORT_RC=0
+ANCHOR_REPORT="$(scan_root "$REPO_ROOT" 2>&1)" || ANCHOR_REPORT_RC=$?
 
 rows() { command printf '%s\n' "$ANCHOR_REPORT" | command grep "^$1	" || true; }
 field() { command printf '%s\n' "$ANCHOR_REPORT" | command grep "^$1	" | command cut -f2- || true; }
@@ -395,6 +409,22 @@ field() { command printf '%s\n' "$ANCHOR_REPORT" | command grep "^$1	" | command
 # These exist so a broken parser cannot read as a clean tree. Without them, a
 # typo in any discovery regex reports zero defects — identical output to a
 # perfectly anchored repo.
+
+# The analyzer produced a report at all (#1078). Dispatched FIRST so a crash is
+# the first row an operator reads: every assertion after this one interrogates a
+# report that was never produced, so their verdicts carry no information.
+#
+# A crash is a FAILURE, not a skip. The python3-ABSENT branch above correctly
+# exits the reserved 77 sentinel — an unavailable linter is a different claim
+# from a broken one, and conflating them would let a crashing analyzer render as
+# "[SKIP] ... did not run" and stop failing the suite.
+test_analyzer_ran_to_completion() {
+    if [ "$ANCHOR_REPORT_RC" -ne 0 ]; then
+        _fail "the python3 analyzer crashed (exit $ANCHOR_REPORT_RC) — this gate checked NOTHING" \
+            "Fix the analyzer, not the subject: the assertions below read a report that was never produced." \
+            "${ANCHOR_REPORT:-(no output captured)}"
+    fi
+}
 
 # The walk found the copies. Measured 2026-09-03: 10 definitions. The floor is
 # the count, not an exact match, so an 11th copy landing is covered (AC 4)
@@ -687,6 +717,7 @@ FIXTURE_UNKNOWN
     esac
 }
 
+run_test test_analyzer_ran_to_completion "The python3 analyzer ran to completion (#1078)"
 run_test test_definitions_are_discovered "Every is_test_file definition is discovered from the filesystem"
 run_test test_all_three_languages_are_covered "All three languages (bash, awk, python) are represented"
 run_test test_no_definition_is_unclassifiable "No definition's name arms are unclassifiable (investigate, never assume)"

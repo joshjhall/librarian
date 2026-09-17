@@ -105,8 +105,17 @@ fi
 #   CONTRADICTION <detail>   — assertion 3 violation
 #   UNGOVERNED <detail>      — assertion 4 violation
 #   UNDECLARED <detail>      — assertion 5 violation
+#
+# The analyzer's exit status is captured rather than left to `set -e` (#1078).
+# Under `set -euo pipefail`, `VAR="$(cmd)"` propagates the inner status, so an
+# uncaught exception in the program below would abort the script AT THIS LINE —
+# before any run_test and before the trailing generate_report. The operator would
+# get a bare traceback instead of the structured report, in a suite whose whole
+# design principle is that a failure names itself. `2>&1` is load-bearing: without
+# it the traceback is discarded and the crash row reports a failure with no cause.
+ROUTE_REPORT_RC=0
 ROUTE_REPORT="$(
-    command python3 - "$REVIEW_ROUTE_LANG_ROOT" <<'PY'
+    command python3 - "$REVIEW_ROUTE_LANG_ROOT" <<'PY' 2>&1
 import os
 import re
 import sys
@@ -320,11 +329,27 @@ for ext in sorted(arms.get("doc", ())):
         "diff cheap" % ext
     )
 PY
-)"
+)" || ROUTE_REPORT_RC=$?
 
 # report_lines TAG — echo the report rows carrying TAG, or nothing.
 report_lines() {
     command printf '%s\n' "$ROUTE_REPORT" | command grep -E "^$1( |$)" || true
+}
+
+# The analyzer produced a report at all (#1078). Dispatched FIRST so a crash is
+# the first row an operator reads: every assertion after this one interrogates a
+# report that was never produced, so their verdicts carry no information.
+#
+# A crash is a FAILURE, not a skip. The python3-ABSENT branch above correctly
+# exits the reserved 77 sentinel — an unavailable linter is a different claim
+# from a broken one, and conflating them would let a crashing analyzer render as
+# "[SKIP] ... did not run" and stop failing the suite.
+test_analyzer_ran_to_completion() {
+    if [ "$ROUTE_REPORT_RC" -ne 0 ]; then
+        _fail "the python3 analyzer crashed (exit $ROUTE_REPORT_RC) — this gate checked NOTHING" \
+            "Fix the analyzer, not the subject: the assertions below read a report that was never produced." \
+            "${ROUTE_REPORT:-(no output captured)}"
+    fi
 }
 
 # --- Assertion 1: anti-vacuity, the normative table --------------------------
@@ -401,6 +426,7 @@ test_doc_arm_declared() {
         "every doc-arm extension is markdown in EXT_LANG or declared ungoverned"
 }
 
+run_test test_analyzer_ran_to_completion "The python3 analyzer ran to completion (#1078)"
 run_test test_normative_table_populated "normative EXT_LANG is populated (anti-vacuity)"
 run_test test_classify_resolves "classify() resolves (anti-vacuity)"
 run_test test_classify_arms_non_empty "each classify() arm dispatches on something"

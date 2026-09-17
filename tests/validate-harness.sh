@@ -697,6 +697,100 @@ test_assert_file_defines_failure_names_the_near_miss() {
     command rm -rf "$d"
 }
 
+# --- _fail's multi-line detail rendering (#1078) -----------------------------
+#
+# _fail indents each detail argument by eight spaces, and the gates added in
+# #1078 rely on that indent as a LOAD-BEARING signal: a crashed analyzer's
+# traceback is carried as evidence inside the report, and column-0 output means
+# it leaked to the terminal instead. That distinction only holds if EVERY
+# physical line of a multi-line argument is indented, which is what these pin.
+#
+# They belong here rather than only in validate-analyzer-guards.sh because _fail
+# is the primitive ~94 suites share, while that fixture exercises exactly one
+# shape (a 4-line traceback) through a real gate subprocess. These are the fast,
+# direct regression tests for the properties the code's own comments claim.
+
+# A multi-line argument is indented on every line, not just the first. This is
+# the #1078 defect itself: `printf '        %s\n' "$arg"` prefixes only line one
+# and leaves the rest — including a traceback's `ExceptionType: message` — at
+# column 0.
+test_fail_indents_every_line_of_a_multiline_detail() {
+    local out
+    out="$(capture_assert _fail "msg" $'first\nsecond\nthird')"
+    assert_contains "$out" "        first" "_fail: the first line of a multi-line detail is indented"
+    assert_contains "$out" "        second" "_fail: an INTERIOR line of a multi-line detail is indented"
+    assert_contains "$out" "        third" "_fail: the LAST line of a multi-line detail is indented"
+    # The discriminator: no detail line may sit at column 0. A line starting with
+    # a non-space that is not the FAIL header or the 6-space message would mean
+    # the per-line indent was skipped for that line.
+    assert_not_contains "$out" $'\nsecond' "_fail: no interior line is left flush-left at column 0"
+    assert_not_contains "$out" $'\nthird' "_fail: no trailing line is left flush-left at column 0"
+}
+
+# Indentation the CALLER's content already carried is preserved on top of the
+# eight-space evidence indent — a traceback's own structure must survive.
+test_fail_preserves_content_indentation() {
+    local out
+    out="$(capture_assert _fail "msg" $'Traceback:\n  File "x", line 1\n    raise E()')"
+    assert_contains "$out" '          File "x", line 1' \
+        "_fail: content indentation is preserved on top of the evidence indent"
+}
+
+# Single-line details must render exactly as before the #1078 rewrite — this is
+# what ~94 existing suites depend on, and the property a rewrite most easily
+# breaks.
+test_fail_single_line_detail_is_unchanged() {
+    local out
+    out="$(capture_assert _fail "msg" "plain detail")"
+    assert_contains "$out" "        plain detail" "_fail: a single-line detail is indented once"
+    assert_not_contains "$out" "        plain detail
+        plain detail" "_fail: a single-line detail is not duplicated"
+}
+
+# An empty-string argument printed one blank indented line before the rewrite
+# and must still. Pinned because the natural line-walking implementations
+# disagree about the empty case — some emit nothing at all.
+test_fail_empty_detail_still_prints_one_blank_line() {
+    local out lines
+    out="$(capture_assert _fail "msg" "")"
+    lines="$(command printf '%s\n' "$out" | command grep -c '^        $' || true)"
+    assert_equals "1" "$lines" "_fail: an empty detail still prints exactly one blank indented line"
+}
+
+# Trailing newlines must not become trailing blank lines. The heredoc supplies
+# its own terminator, so an un-stripped `$'a\nb\n'` would read as three lines —
+# and a SINGLE `${detail%$'\n'}` strips only one, leaving the raw-file-read case
+# (several trailing newlines) still broken.
+test_fail_trailing_newlines_do_not_add_blank_lines() {
+    local out blanks
+    out="$(capture_assert _fail "msg" $'alpha\nbeta\n\n\n')"
+    assert_contains "$out" "        beta" "_fail: content before the trailing newlines survives"
+    blanks="$(command printf '%s\n' "$out" | command grep -c '^        $' || true)"
+    assert_equals "0" "$blanks" "_fail: trailing newlines add no blank evidence lines"
+}
+
+# Evidence is DATA, never shell source. The heredoc is unquoted so `$detail`
+# expands, but nothing expands the data itself and `read -r` keeps backslashes
+# literal — so a report containing backticks or $(...) prints verbatim rather
+# than executing. Worth pinning: a future rewrite reaching for `echo -e` or an
+# eval-based split would silently break it.
+test_fail_detail_is_data_not_shell() {
+    local out
+    out="$(capture_assert _fail "msg" 'a `id` b $(id) c ${HOME} d \e')"
+    assert_contains "$out" 'a `id` b $(id) c ${HOME} d \e' \
+        "_fail: backticks, \$(...), \${...} and backslashes are printed verbatim"
+}
+
+# A literal `EOF` line inside the evidence must not terminate the heredoc early
+# and truncate the report — the delimiter is only recognized on its own line,
+# and the data is fed through an expansion rather than typed into the script.
+test_fail_literal_eof_line_does_not_truncate() {
+    local out
+    out="$(capture_assert _fail "msg" $'before\nEOF\nafter')"
+    assert_contains "$out" "        after" \
+        "_fail: a literal EOF line in the evidence does not truncate the report"
+}
+
 # --- Run all tests ----------------------------------------------------------
 
 run_test test_assert_true_whitespace_is_message "assert_true: whitespace last-arg is the message"
@@ -754,5 +848,13 @@ run_test test_assert_file_defines_value_form_tolerates_continuation "assert_file
 run_test test_assert_file_defines_value_form_excludes_comments "assert_file_defines: the value form still excludes comments"
 run_test test_assert_file_defines_missing_file_fails "assert_file_defines: a missing file fails"
 run_test test_assert_file_defines_failure_names_the_near_miss "assert_file_defines: the failure names the commented near-miss"
+
+run_test test_fail_indents_every_line_of_a_multiline_detail "_fail: every line of a multi-line detail is indented (#1078)"
+run_test test_fail_preserves_content_indentation "_fail: the detail's own indentation is preserved (#1078)"
+run_test test_fail_single_line_detail_is_unchanged "_fail: a single-line detail renders as before (#1078)"
+run_test test_fail_empty_detail_still_prints_one_blank_line "_fail: an empty detail still prints one blank line (#1078)"
+run_test test_fail_trailing_newlines_do_not_add_blank_lines "_fail: trailing newlines add no blank lines (#1078)"
+run_test test_fail_detail_is_data_not_shell "_fail: evidence is data, not shell (#1078)"
+run_test test_fail_literal_eof_line_does_not_truncate "_fail: a literal EOF line does not truncate the report (#1078)"
 
 generate_report
