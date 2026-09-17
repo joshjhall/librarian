@@ -45,12 +45,26 @@ is the **post-hoc** yardstick, not a precondition to compute here.
 
 | Classification | Extensions / Patterns                                                                   |
 | -------------- | --------------------------------------------------------------------------------------- |
-| Source         | `.py`, `.js`, `.ts`, `.go`, `.rs`, `.rb`, `.java`, `.kt`, `.sh`, `.c`, `.cpp`, `.h`     |
+| Source         | `.py`, `.js`, `.jsx`, `.mjs`, `.cjs`, `.ts`, `.tsx`, `.rs`, `.go`, `.sh`, `.bash`, `.swift`, `.rb`, `.java`, `.kt`, `.c`, `.cpp`, `.h` |
 | Test           | `test_*`, `*_test.*`, `*.test.*`, `*.spec.*`, `tests/`, `spec/`, `__tests__/`           |
 | Config         | `.json`, `.yaml`, `.yml`, `.toml`, `.ini`, `.env*`, `Makefile`, `Dockerfile`            |
 | Doc            | `.md`, `.rst`, `.txt`, `README*`, `CHANGELOG*`, `docs/`                                 |
 | AI Config      | `.claude/`, `CLAUDE.md`, `**/CLAUDE.md`, skill/agent `.md` files, `.claude.json`, hooks |
 | Memory bundle  | `.md` under the resolved memory-bundle root (`$OKF_BUNDLE_ROOT` -> `$MEMORY_BUNDLE_ROOT` -> `.claude/memory`) |
+
+**The `Source` row is governed by ADR 0002** (`../../docs/adr/0002-scanner-language-support.md`)
+and gated by `tests/lint-classifier-lang.sh`, which holds it to the same
+subset-not-contradiction rule as `code-reviewer.md`'s Step 2 table and
+`review-route.sh`'s `classify()`: it may cover FEWER extensions than the
+normative `EXT_LANG` in `check-decomposition/loc_engine.py`, never contradict it.
+The row matters because Step 3 routes `Source files` to code-health, security,
+architecture, lifecycle and decomposition — an extension missing here is not
+reviewed less, it drops out of that routing entirely.
+
+`.rb`, `.java`, `.kt`, `.c`, `.cpp` and `.h` are deliberately broader than
+`EXT_LANG`, which models a language only once something can segment it; this row
+decides only whether a file is source at all. The gate carries them as an
+explicit declaration.
 
 **Memory bundle takes precedence over AI Config and Doc.** A bundle file matches
 all three patterns — it is `.md` (Doc) living under `.claude/` (AI Config) — so

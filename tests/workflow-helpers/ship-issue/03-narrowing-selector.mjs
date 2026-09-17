@@ -249,6 +249,73 @@ export async function run() {
     );
   }
 
+  // #1073 — THE SAME CROSS-ARTIFACT GAP, one level down. The loop above pins
+  // that each relevant-type NAME exists as a row; it says nothing about which
+  // EXTENSIONS that row lists. `.swift` was absent from the `source` row while
+  // `source` itself was present, so the check above passed and a Swift-only
+  // delta still classified as NO type at all — matching nothing in
+  // DIMENSION_RELEVANT_TYPES, and since narrowing is not a partial cycle
+  // (no dimensionsSkipped, no budgetExhausted), returning `clean` having
+  // reviewed no Swift.
+  //
+  // tests/lint-classifier-lang.sh gates the table's vocabulary against the
+  // normative EXT_LANG. This asserts the OTHER end: that a Swift delta actually
+  // reaches the three dimensions. AC5 of #1073 requires exactly this pairing —
+  // "assert the dimensions actually selected; a unit test over the table alone
+  // would pass while the routing stayed broken."
+  //
+  // THE PAIRING NARROWS THE CROSS-ARTIFACT GAP; IT DOES NOT CLOSE IT — the same
+  // caveat the `docs` block above carries, stated here so the stronger-looking
+  // two-part check does not read as more than it is. The two halves are checked
+  // INDEPENDENTLY: that the row lists `.swift`, and that the selector routes a
+  // manifest hand-built with `types: ["source"]`. Nothing here derives the
+  // classification FROM the prose table the way the agent does at runtime, so an
+  // agent that misreads a syntactically-correct row is still not caught. That
+  // residue is inherent to unit-testing an LLM-read table.
+  ok(
+    /^\|\s*source\s*\|.*`\.swift`/m.test(reviewerAgent),
+    "code-reviewer.md Step 2 classifies .swift as source (#1073)",
+  );
+
+  const swiftOnly = call({
+    deltaFiles: ["Sources/App/Model.swift"],
+    manifest: {
+      classifications: [{ file: "Sources/App/Model.swift", types: ["source"] }],
+    },
+  });
+  const swiftNames = swiftOnly.entries.map((e) => e.dim.name).sort();
+  // AC5 names security/correctness/tests, so assert those three BY NAME — the
+  // per-dimension message is what makes a regression say which one vanished.
+  for (const dim of ["security", "correctness", "tests"]) {
+    ok(
+      swiftNames.includes(dim),
+      `selectReviewDimensions: swift-only delta selects '${dim}' (#1073)`,
+    );
+  }
+  // Then pin the FULL set, not just those three (cycle-2 review). A membership
+  // loop cannot see a dimension that wrongly DROPS OUT alongside them:
+  // `decomposition` is delta-local and sizes source files, so a Swift-specific
+  // regression there — the exact analogue of the `.md`/decomposition gap the
+  // docs block above guards — would leave all three checks above green. A
+  // source-classified delta must select every dimension the `a.py` case does.
+  eq(
+    JSON.stringify(swiftNames),
+    JSON.stringify(["correctness", "decomposition", "scope-drift", "security", "tests"]),
+    "selectReviewDimensions: swift-only delta selects the FULL source-delta dimension set (#1073)",
+  );
+  // The failure mode this guards is a SILENT one, so pin the two signals that
+  // would otherwise let a fully-narrowed-away cycle read as a healthy pass.
+  eq(
+    swiftOnly.dimensionsSkipped.length,
+    0,
+    "selectReviewDimensions: swift-only delta records no skipped dimension (#1073)",
+  );
+  eq(
+    swiftOnly.budgetExhausted,
+    false,
+    "selectReviewDimensions: swift-only delta does not force budget_exhausted (#1073)",
+  );
+
   const docsOnly = call({
     deltaFiles: ["docs/guide.md"],
     manifest: { classifications: [{ file: "docs/guide.md", types: ["docs"] }] },
