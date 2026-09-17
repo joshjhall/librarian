@@ -22,6 +22,7 @@ Each tree holds three stubs — a `loc_engine.py` carrying the normative
 | `no-table/` | assertion 2 | the `source` row is renamed `sources`, so the row does not resolve — without this, assertions 3-5 compare against empty sets and pass |
 | `no-table-missing-file/` | assertion 2 | `code-reviewer.md` absent entirely — the analyzer's `os.path.exists` branch, distinct from an unresolvable row |
 | `no-table-second-subject/` | assertion 2 | the **second** subject's row is renamed — the per-subject proof for the resolution check |
+| `empty-row/` | assertion 2 | the row **resolves but lists nothing** — the per-row count branch, which the `no-table*` fixtures cannot reach |
 | `missing-swift/` | assertion 4 | **this issue's own defect.** `.swift` removed from the source row, everything else correct — the exact state of the tree before #1073 |
 | `contradiction-doc/` | assertion 3 | `.go` is in the `docs` row. **The fail-open direction** — a source language that drops security/correctness/tests on a narrowed cycle |
 | `contradiction-inverse/` | assertion 3 | `.md` is in the `source` row. The **safe** direction, which ADR 0002 forbids just the same |
@@ -62,13 +63,19 @@ proven only for the code path, or only for the subject, that whoever wrote it
 happened to think of. Rather than patch a third instance, the rule is now
 uniform — **every assertion that can fire per-subject carries both proofs**:
 
-| Assertion | File-absent branch | Second-subject proof |
-| --- | --- | --- |
-| 1 — normative populated | `missing-normative/` | n/a (one shared normative file) |
-| 2 — tables resolve | `no-table-missing-file/` | `no-table-second-subject/` |
-| 3 — no contradiction | n/a (needs a row to contradict) | `second-subject-contradiction/` |
-| 4 — coverage | n/a (needs a row to omit from) | `second-subject/` |
-| 5 — declared | n/a (needs a row to declare) | `second-subject-undeclared/` |
+| Assertion | Content branch | File-absent branch | Second-subject proof |
+| --- | --- | --- | --- |
+| 1 — normative populated | `empty-normative/` | `missing-normative/` | n/a (one shared normative file) |
+| 2 — tables resolve | `no-table/` (unresolvable) + `empty-row/` (resolves, empty) | `no-table-missing-file/` | `no-table-second-subject/` |
+| 3 — no contradiction | `contradiction-doc/`, `contradiction-inverse/` | n/a (needs a row to contradict) | `second-subject-contradiction/` |
+| 4 — coverage | `missing-swift/` | n/a (needs a row to omit from) | `second-subject/` |
+| 5 — declared | `undeclared-source/` | n/a (needs a row to declare) | `second-subject-undeclared/` |
+
+Assertion 2's content column has **two** entries because it has two branches
+that a single fixture cannot both reach: a row that does not resolve is reported
+as `NOTABLE` and never reaches the per-row count, while a row that resolves and
+is empty reaches the count and nothing else. Cycle 4 found the second one
+unfixtured.
 
 The `n/a` cells are structural, not gaps: assertions 3-5 read the *contents* of
 a row, so a fixture with no file at all arms assertion 2 instead and never

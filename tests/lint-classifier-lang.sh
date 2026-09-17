@@ -470,6 +470,22 @@ test_selftest_fixtures() {
     assert_contains "$out" "NOTABLE orchestration-protocol" \
         "assertion 2 must name the second subject, not the first"
 
+    # Assertion 2's THIRD path: the row resolves and is EMPTY. Distinct from the
+    # two above, which report NOTABLE because the row does not resolve at all —
+    # this one reaches the per-row count check instead, the branch that had no
+    # fixture until cycle 4 found it. A detector with no fixture passes silently,
+    # which is the class this gate's own header calls out.
+    out="$(selftest_report empty-row)"
+    assert_contains "$out" "each classifier row lists something ... FAIL" \
+        "empty-row must fail the per-row count assertion"
+    assert_contains "$out" "row lists at least one extension (got 0)" \
+        "empty-row must fail on the COUNT, naming zero"
+    # Narrowness: the row still parses, so assertion 2's resolution half must
+    # PASS. If this flipped, the fixture would be re-testing no-table rather
+    # than the branch it was added for.
+    assert_contains "$out" "both classifier tables resolve (anti-vacuity) ... PASS" \
+        "empty-row's row RESOLVES — it arms the count branch, not the NOTABLE one"
+
     # THE FIXTURE FOR THIS ISSUE'S OWN DEFECT. `.swift` removed from the source
     # row, everything else correct — the exact state of the tree before #1073.
     # If this fixture ever passes, the gate has stopped detecting the bug it was

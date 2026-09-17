@@ -144,6 +144,19 @@ d="$(fixture no-table-second-subject)"
 command sed -i.bak 's/^| Source /| Sources /' "$d/$OP_REL"
 command rm -f "$d/$OP_REL.bak"
 
+# --- empty-row: the row RESOLVES but lists nothing (assertion 2) -------------
+# The third distinct path into assertion 2, and the one its `nonempty="no"`
+# branch exists for (cycle-4 review). `no-table*` cover a row that does not
+# resolve at all — a DIFFERENT branch, reported as NOTABLE. A row that resolves
+# and is empty is what happens when someone empties a cell or reshapes the
+# extensions out of it, and nothing proved the gate notices.
+#
+# Prose with no backticked token, not an empty cell: the row must still parse as
+# a table row (so `table_row_exts` returns a set rather than None), which is
+# exactly the resolves-but-empty condition.
+d="$(fixture empty-row)"
+write_reviewer "$d/$CR_REL" 'see loc_engine.py' "$GOOD_DOCS"
+
 # --- missing-swift: THIS ISSUE'S OWN DEFECT (assertion 4) --------------------
 d="$(fixture missing-swift)"
 write_reviewer "$d/$CR_REL" \
