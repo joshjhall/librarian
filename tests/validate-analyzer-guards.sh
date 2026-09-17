@@ -250,6 +250,14 @@ assert_gate_reports_the_crash() {
     assert_contains "$GATE_OUT" "        $STUB_STDERR_LAST" \
         "$gate: EVERY line of a multi-line traceback is carried as evidence, not just the first"
 
+    #    An INTERIOR line too, with the analyzer's OWN indentation intact beneath
+    #    _fail's eight. First-and-last alone would leave the middle unasserted
+    #    while the stub comment claims the interior lines are what distinguish
+    #    the two indents — and this is the pair that proves the distinction:
+    #    ten spaces here (8 + the traceback's 2) against eight above.
+    assert_contains "$GATE_OUT" '          File "<stdin>", line 42, in <module>' \
+        "$gate: an interior traceback line keeps its own indentation under the evidence indent"
+
     #    The paired negative: the placeholder the guard emits when it captured
     #    nothing. Its presence means the rc guard fired but the evidence was
     #    discarded, which is AC2 unmet even though the row above exists.

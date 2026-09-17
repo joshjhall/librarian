@@ -104,8 +104,23 @@ _fail() {
     # column 0, which for a Python traceback means the `ExceptionType: message`
     # line — the one a reader actually needs — renders indistinguishably from
     # output that leaked to the terminal instead of being carried as evidence.
+    # A detail ending in newlines must NOT gain trailing blank lines: the
+    # heredoc appends its own terminator, so `$'a\nb\n'` would read as three
+    # lines. Strip them in a LOOP, not with a single `${detail%$'\n'}` — the
+    # single form removes exactly one, and the raw-file-read case this guards
+    # against is precisely the one that ends in several. (Most callers pass a
+    # `$( )` capture, which bash has already stripped entirely — but this helper
+    # is shared by ~94 suites and one of them will eventually read a file.)
+    #
+    # The heredoc is unquoted so `$detail` expands, which is the point; `read -r`
+    # keeps backslashes literal, and no further expansion happens to the DATA,
+    # so evidence containing backticks or `$(...)` is printed verbatim. Every
+    # property named in this comment is pinned by a test in
+    # tests/validate-harness.sh — including the empty-detail and literal-`EOF`
+    # cases, which are the two a rewrite of this loop most easily breaks.
     local detail line
     for detail in "$@"; do
+        while [ "${detail%$'\n'}" != "$detail" ]; do detail="${detail%$'\n'}"; done
         while IFS= read -r line; do
             printf '        %s\n' "$line"
         done <<EOF
