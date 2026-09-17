@@ -84,6 +84,12 @@ _notes.md
 *.backup
 *.old
 
+# Pinned design-review test corpora (#1075) when materialized in-tree — the
+# normal home is the librarian-corpora volume at /cache/corpora, or /tmp/corpora
+# on a host with no container, but CORPORA_DIR can point anywhere. These are
+# fetched, never vendored: tests/corpora.manifest holds the pins.
+corpora/
+
 # ============================================================================
 # PYTHON (pre-scan tool bytecode / caches)
 # ============================================================================

@@ -63,6 +63,13 @@ services:
       # first-startup hook, so the knowledge-graph index lives on this volume
       # (out of the git tree, droppable to force a clean re-index).
       - librarian-codegraph:/cache/codegraph
+      # pinned design-review test corpora (#1075), materialized by
+      # bin/fetch-corpora.sh at the SHAs in tests/corpora.manifest. Named volume
+      # for the same reasons as codegraph above: it survives container rebuilds
+      # (these are ~100M of shallow clones, not something to re-fetch per run)
+      # and can be dropped to force a clean re-fetch. Determinism comes from the
+      # committed SHA pin, not from wiping the working copy.
+      - librarian-corpora:/cache/corpora
     tmpfs:
       # 1Password cache is kept in memory. No uid=/gid= for the same reason — this
       # path is under /cache, so fix_cache_permissions aligns it to the runtime user.
@@ -103,3 +110,8 @@ volumes:
   # codegraph knowledge-graph index, mounted at /cache/codegraph. Named volume so
   # it survives container rebuilds and can be dropped to force a clean re-index.
   librarian-codegraph:
+  # Pinned test corpora for the design-review scanners (#1075), mounted at
+  # /cache/corpora. Named volume so it survives container rebuilds and can be
+  # dropped to force a clean re-fetch. The /cache prefix is load-bearing —
+  # fix_cache_permissions aligns paths under it to the runtime user.
+  librarian-corpora:

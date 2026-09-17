@@ -136,6 +136,60 @@ future behavioral gates (e.g. running a `patterns.sh` against a known-bad
 fixture and asserting the exact findings). Revisit LLM-in-the-loop only if a
 class of regression appears that no deterministic gate can catch.
 
+## Pinned external corpora
+
+Most gates here test this repo against itself. The design-review scanners of
+[#1067](https://github.com/joshjhall/librarian/issues/1067) (accessibility, i18n,
+UX) cannot: **librarian ships no UI code**, so their precision and recall must be
+measured against real external projects. That introduces a failure this suite has
+nowhere else — **ground-truth drift**. Upstream repos move, so a corpus re-cloned
+at `HEAD` six months later measures a different codebase while the earlier
+precision figure sits in `docs/verification/` still reading as evidence.
+
+[#1075](https://github.com/joshjhall/librarian/issues/1075) pins that down with
+three pieces:
+
+| Piece | File | Role |
+| --- | --- | --- |
+| Manifest | `tests/corpora.manifest` | One record per corpus: URL, **full 40-char SHA**, license, why-this-SHA, fallback. Explicit and ordered, never a glob — same discipline as `lib/fragments.sh`. |
+| Fetcher | `bin/fetch-corpora.sh` | Materializes into `${CORPORA_DIR:-/cache/corpora}` (falling back to `/tmp/corpora`), shallow + blobless, then **verifies `HEAD` equals the pin**. |
+| Gates | `lint-measurement-citations.sh`, `validate-fetch-corpora.sh` | The citation property, and the fetcher's behavior. |
+
+Three properties are easy to get wrong, and each is deliberate:
+
+- **Verify the checkout, never trust the fetch.** A fetch that silently landed on
+  a branch tip looks identical to success — same exit 0, same directory, same
+  files — and everything measured against it is wrong with nothing reporting it.
+  `verify_head` is the acceptance criterion, not a defensive extra.
+- **The suite never fetches.** `just test` and the pre-push hook must not touch
+  the network; corpora are materialized deliberately by an operator. Both gates
+  are offline: the citation gate compares two committed files, and the behavior
+  suite builds a real git repo in a sandbox and fetches it over `file://`.
+- **These two gates must NOT skip when corpora are absent.** The reserved 77
+  sentinel belongs to the corpus-*consuming* gates that #1069/#1071/#1072/#1074
+  will ship — those genuinely cannot run without a corpus. These two need none,
+  so keying them on one would make them inert, which is the #538/#571 shape
+  (silence reads as a pass) introduced by the change meant to prevent it. A
+  consuming gate keys its 77 on `fetch-corpora.sh`'s `corpora_present` helper,
+  which answers *present at the pin*, not *directory exists*.
+
+Publishing a measurement means adding one line to its document:
+
+```text
+<!-- corpus: <name> <40-char-sha> -->
+```
+
+`lint-measurement-citations.sh` fails closed when that names a corpus the
+manifest does not carry, or a SHA that disagrees with it. The marker is
+exact-match by construction, so it has no false-positive rate — and it is
+deliberately narrow, because `docs/verification/**` is exempt from the prose
+budget and `lint-command-refs.sh` for a reason: those files are dated
+transcripts, and a general rule over them would pressure someone to edit a
+session log to satisfy a linter.
+
+Corpus verification, including the candidates that did not survive it, is in
+`docs/verification/corpora-pinning-e2e-1075.md`.
+
 ## Conventions for new validators
 
 - **Location.** New gates live in `tests/` as `*.sh` (or `*.mjs` for node-only,
