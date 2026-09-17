@@ -180,19 +180,62 @@ dir_is_trustworthy() {
     [ "$owner" = "$(command id -u)" ]
 }
 
+# ensure_trusted_dir <path> [mkdir-mode] — create <path> if needed and return
+# only when it is ours; die otherwise.
+#
+# WHY THIS EXISTS RATHER THAN MORE CALL-SITE CHECKS. The trust invariant was
+# fixed four times, at four sites, in three review cycles — root pre-check,
+# per-corpus, the shared predicate, and root post-mkdir — and each correct fix
+# left a sibling exposed. That is the signal to stop patching knobs and make the
+# unsafe operation unreachable instead: a caller cannot obtain a directory from
+# this function without both checks having run, so a NEW call site inherits them
+# rather than having to remember them.
+#
+# BOTH checks are required and neither is redundant:
+#   - BEFORE creation, because `mkdir -p` against a pre-planted symlink succeeds
+#     silently and afterwards "we made it" and "it was already there" are
+#     indistinguishable.
+#   - AFTER creation, because the pre-check fires only when the path already
+#     exists; on a first-ever run it does not, leaving a check-then-act window
+#     (CWE-367) an attacker can win.
+# EVERY `die` HERE IS FOLLOWED BY `return 1`, and that is not belt-and-braces.
+# `die` EXITS when the script is executed but RETURNS when it is sourced — which
+# is exactly how consuming gates use this file. Without the explicit return, a
+# sourced call prints the refusal and then falls through to `return 0`: the guard
+# announces that it refuses the directory and approves it in the same breath,
+# which is worse than having no guard, because the message reads as evidence that
+# the check worked. Caught by test_ensure_trusted_dir_runs_both_checks.
+ensure_trusted_dir() {
+    local path="$1" mode="${2:-}"
+
+    if [ -e "$path" ] || [ -L "$path" ]; then
+        dir_is_trustworthy "$path" || {
+            die "refusing to use $path — it is a symlink or is not owned by uid $(command id -u)"
+            return 1
+        }
+    fi
+
+    if [ -n "$mode" ]; then
+        command mkdir -m "$mode" -p "$path" 2>/dev/null || return 1
+    else
+        command mkdir -p "$path" 2>/dev/null || return 1
+    fi
+
+    dir_is_trustworthy "$path" || {
+        die "$path became untrustworthy after creation — refusing to use it"
+        return 1
+    }
+    return 0
+}
+
 resolve_corpora_dir() {
     local want probe
     want="${CORPORA_DIR:-/cache/corpora}"
 
-    # Check BEFORE mkdir -p: once mkdir has succeeded against a pre-planted
-    # symlink, the distinction between "we made it" and "it was already there"
-    # is gone.
-    if [ -e "$want" ] || [ -L "$want" ]; then
-        dir_is_trustworthy "$want" ||
-            die "refusing to use $want — it exists but is a symlink or is not owned by uid $(command id -u)"
-    fi
-
-    if command mkdir -p "$want" 2>/dev/null; then
+    # Both trust checks live in ensure_trusted_dir, so this function cannot
+    # obtain an unvetted path — see that function's header for why the invariant
+    # moved there instead of being repeated here.
+    if ensure_trusted_dir "$want"; then
         probe="$want/.write-probe.$$"
         if : >"$probe" 2>/dev/null; then
             command rm -f "$probe" 2>/dev/null
@@ -205,20 +248,19 @@ resolve_corpora_dir() {
     # invitation to silently put the data somewhere else: a caller that set the
     # variable is telling us where its measurements live, and writing elsewhere
     # would strand them.
+    # `return 1` for the same reason as ensure_trusted_dir's: sourced, `die`
+    # returns, and without this the function would fall through and print
+    # /tmp/corpora as the resolved directory after refusing the requested one.
     if [ -n "${CORPORA_DIR:-}" ]; then
         die "CORPORA_DIR is not writable: $CORPORA_DIR"
+        return 1
     fi
 
-    # Same trust check on the fallback — this is the predictable path, so it is
-    # the one most worth pre-planting.
-    if [ -e /tmp/corpora ] || [ -L /tmp/corpora ]; then
-        dir_is_trustworthy /tmp/corpora ||
-            die "refusing to use /tmp/corpora — it exists but is a symlink or is not owned by uid $(command id -u)"
-    fi
-    # 0700 on creation: a mode that lets another user write into our corpora
-    # tree reintroduces the tampering this check exists to prevent, just one
-    # step later. Harmless on the container path, load-bearing on a shared host.
-    command mkdir -m 0700 -p /tmp/corpora 2>/dev/null ||
+    # 0700 on the fallback: a mode that lets another user write into our corpora
+    # tree reintroduces the tampering these checks exist to prevent, one step
+    # later. Harmless on the container path, load-bearing on a shared host — and
+    # this is the predictable path, so the one most worth pre-planting.
+    ensure_trusted_dir /tmp/corpora 0700 ||
         die "neither /cache/corpora nor /tmp/corpora is writable"
     command printf '%s\n' "/tmp/corpora"
 }
@@ -417,8 +459,10 @@ fetch_one() {
     # Measured before this move — `ok  1cc54b9 (already at pin)`, exit 0, no
     # refusal. Every path that treats $dir as ours must validate it first.
     if [ -e "$dir" ] || [ -L "$dir" ]; then
-        dir_is_trustworthy "$dir" ||
+        dir_is_trustworthy "$dir" || {
             die "$name: refusing to use $dir — it is a symlink or is not owned by uid $(command id -u)"
+            return 1
+        }
     fi
 
     # IDEMPOTENCE (AC2), decided by the SHA rather than by the directory. An
@@ -429,21 +473,10 @@ fetch_one() {
         return 0
     fi
 
-    command mkdir -p "$dir" 2>/dev/null || die "$name: cannot create $dir"
-
-    # RE-CHECK AFTER CREATION, closing the check-then-act window (CWE-367). The
-    # guard above only fires when $dir already exists; when it does not, control
-    # falls straight to `mkdir -p`, and `mkdir -p` on a path that resolves
-    # through a symlink to an existing directory SUCCEEDS SILENTLY. So an
-    # attacker who can write into the corpora root and wins the race between the
-    # existence test and the mkdir plants a symlink the first check never saw.
-    #
-    # Cheap to close and worth closing even though the window is narrow (it needs
-    # a co-resident attacker who can already write into a directory owned by this
-    # uid): this re-check runs immediately before `git init`/`fetch`/`checkout`,
-    # which is the operation that executes .git/hooks/*.
-    dir_is_trustworthy "$dir" ||
-        die "$name: $dir became untrustworthy after creation — refusing to run git in it"
+    # Creation + both trust checks, via the one helper — so the tree git is about
+    # to init, fetch and checkout in (which runs .git/hooks/*) cannot be reached
+    # unvetted.
+    ensure_trusted_dir "$dir" || die "$name: cannot create $dir"
 
     if [ ! -d "$dir/.git" ]; then
         command git -C "$dir" init -q 2>/dev/null || die "$name: git init failed in $dir"
@@ -523,6 +556,13 @@ fetch_one() {
 valid_corpus_name() {
     [ -n "$1" ] || return 1
     case "$1" in
+        # A leading hyphen is rejected so this validator and the CLI describe the
+        # SAME reachable set. main()'s option loop matches `-*` first, so a
+        # hyphen-initial name could never reach here anyway — accepting it would
+        # mean the manifest could hold a slug that is permanently unselectable,
+        # and the contributor who added one would get "unknown option" rather
+        # than a naming-convention error.
+        -*) return 1 ;;
         *[!a-z0-9-]*) return 1 ;;
     esac
     return 0

@@ -57,6 +57,29 @@ source "$SCRIPT_DIR/lib/harness.sh"
 MANIFEST="${CORPORA_MANIFEST:-$REPO_ROOT/tests/corpora.manifest}"
 DOCS_DIR="${CITATION_DOCS_DIR:-$REPO_ROOT/docs/verification}"
 
+# ONE DEFINITION OF "VALID SHA" AND "VALID URL", NOT THREE.
+#
+# bin/fetch-corpora.sh owns those rules (is_full_sha, valid_corpus_url). This
+# gate used to re-implement both inline, and validate-fetch-corpora.sh probes a
+# third copy. All three agreed — until one of them was tightened, at which point
+# the gate would go on enforcing a stale rule while believing it enforced the
+# current one, with nothing failing to say so. That is the same
+# two-classifiers-one-threshold shape this repo has filed before, so the
+# predicates are sourced rather than copied.
+#
+# Sourcing is safe and does NOT fetch: the fetcher detects sourced mode, defines
+# functions, and stops (pinned by test_sourcing_does_not_fetch). Its own
+# CORPORA_MANIFEST default is irrelevant here — this gate passes the manifest
+# path explicitly to every predicate.
+FETCHER="$REPO_ROOT/bin/fetch-corpora.sh"
+if [ ! -f "$FETCHER" ]; then
+    command printf 'lint-measurement-citations: %s not found — cannot resolve the canonical SHA/URL rules.\n' \
+        "$FETCHER" >&2
+    exit 77
+fi
+# shellcheck source=bin/fetch-corpora.sh
+. "$FETCHER"
+
 test_suite "Measurement corpus citations (#1075)"
 
 # --- shared helpers ---------------------------------------------------------
@@ -95,15 +118,9 @@ manifest_short_shas() {
         case "$name" in
             '' | '#'*) continue ;;
         esac
-        case "$sha" in
-            *[!0-9a-f]*)
-                command printf '%s:%s\n' "$name" "$sha"
-                continue
-                ;;
-        esac
-        if [ "${#sha}" -ne 40 ]; then
-            command printf '%s:%s\n' "$name" "$sha"
-        fi
+        # is_full_sha is the FETCHER'S definition, sourced above rather than
+        # re-implemented — see the sourcing note near the top of this file.
+        is_full_sha "$sha" || command printf '%s:%s\n' "$name" "$sha"
     done <"$mf"
 }
 
@@ -257,22 +274,24 @@ test_manifest_urls_are_https_without_credentials() {
     # would pass the fetcher's own check. This is the gate that makes the
     # allowance safe — the fetcher's comment claims this coverage exists, so it
     # must actually exist.
-    local bad name url rest authority
+    local bad name url rest
     bad=""
     while IFS=$'\t' read -r name url rest || [ -n "$name" ]; do
         case "$name" in
             '' | '#'*) continue ;;
         esac
+        # valid_corpus_url is the fetcher's definition (sourced above), so this
+        # gate cannot drift from it. It deliberately allows file:// — that is
+        # what lets the offline behavior suite use a local remote (AC8) — which
+        # is precisely why the COMMITTED manifest needs the stricter https check
+        # below rather than relying on the fetcher's alone.
+        valid_corpus_url "$url" || {
+            bad="$bad$name:$url "
+            continue
+        }
         case "$url" in
-            https://*) rest="${url#https://}" ;;
-            *)
-                bad="$bad$name:$url "
-                continue
-                ;;
-        esac
-        authority="${rest%%/*}"
-        case "$authority" in
-            *@*) bad="$bad$name:credentials-in-url " ;;
+            https://*) ;;
+            *) bad="$bad$name:not-https " ;;
         esac
     done <"$MANIFEST"
     assert_output_empty "$bad" \

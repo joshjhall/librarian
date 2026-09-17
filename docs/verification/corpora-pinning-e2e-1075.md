@@ -326,11 +326,56 @@ because mutation testing only probes paths a fixture already enters. Both cycle-
 blockers lived on paths no fixture reached: one behind an early return, one
 behind an assertion that never called the subject.
 
+### The third instance, and the structural fix
+
+Cycle 2 asked, in effect, *are there other paths that reach a git operation
+without the guard?* Answering it properly — walking every call site rather than
+the one the reviewer named — found a **third** instance, this time not on the
+fetch path at all.
+
+`corpora_present` had no trust check. That is the one function consuming gates
+import, and `--list` calls it too, so a symlink pre-planted at the **public**
+pinned SHA reported `present`:
+
+```text
+$ CORPORA_DIR=/tmp/attack/root bin/fetch-corpora.sh --list
+  axe-core       present  1cc54b900413660610180d631feb73c9e74f4dc9
+```
+
+A consuming gate keying its 77 sentinel on that predicate would measure an
+attacker's tree while believing it held the pin — the same
+wrong-answer-reads-as-evidence failure, arriving through the predicate rather
+than the fetch.
+
+Three instances of one class is the signal to stop patching call sites. The
+guard now lives **inside `corpora_present`**, so every caller inherits it:
+
+| # | Call site | Found by |
+| --- | --- | --- |
+| 1 | `resolve_corpora_dir` (the corpora root) | cycle 1 review |
+| 2 | `fetch_one` (the per-corpus dir) | author, re-reading the cycle-1 fix |
+| 3 | `corpora_present` (the shared predicate) | author, exhaustive control-flow walk |
+
+It returns **false** rather than dying: "I will not vouch for this tree" is a
+legitimate answer from a predicate, and `fetch_one` still fails loud on the same
+condition, where a refusal is actionable rather than a silent skip.
+
+### On the cycle cap
+
+`maxCycles: 3` was passed to the harness on an assumption; the documented default
+is **5**, and `ship-protocol.md` records why 3 was measured as wrong in both
+directions — across a 26-cycle batch, the single `blocking` security finding
+arrived in **cycle 4**. Given that cycles 1 and 2 each returned real blocking
+defects here, stopping at three because that number was typed would have been the
+worst available reason. The stop decision belongs to
+`scripts/review-convergence.sh`, which is what this run uses rather than an
+eyeballed judgement.
+
 ### Result
 
 ```text
 $ bash tests/lint-measurement-citations.sh   # 16 passed, 0 failed
-$ bash tests/validate-fetch-corpora.sh       # 26 passed, 0 failed
+$ bash tests/validate-fetch-corpora.sh       # 27 passed, 0 failed
 $ bash tests/validate-shards.sh              # 15 passed — both gates claimed by exactly one shard
 $ bash tests/lint-shell-portability.sh       # 2762 passed, 0 failed (bash-3.2 + BSD, AC9)
 $ bash tests/lint-shellcheck.sh              # 346 passed, 0 failed

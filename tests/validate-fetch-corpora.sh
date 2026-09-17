@@ -504,6 +504,121 @@ test_symlinked_per_corpus_dir_refused_even_when_at_the_pin() {
         "The idempotence fast path must NOT run before the trust check"
 }
 
+test_ensure_trusted_dir_runs_both_checks() {
+    # THE STRUCTURAL PROPERTY, asserted on the helper directly.
+    #
+    # The trust invariant was fixed four times at four sites across three review
+    # cycles, and each correct fix left a sibling exposed. ensure_trusted_dir is
+    # the response: creation and BOTH checks in one place, so a caller cannot
+    # obtain an unvetted directory and a NEW call site inherits the checks rather
+    # than having to remember them.
+    #
+    # That claim is only worth making if the helper really runs both. Asserted
+    # here against the helper itself, not through a caller, so a future
+    # refactor that drops one check fails here rather than at whichever call
+    # site happens to have a fixture.
+    local probe="$SANDBOX/helper-probe.sh"
+    command printf '#!/usr/bin/env bash\n. "%s"\nif ensure_trusted_dir "$1"; then echo OK; else echo NO; fi\n' \
+        "$FETCHER" >"$probe"
+
+    # 1. A fresh path: created and accepted.
+    local fresh="$SANDBOX/helper-fresh"
+    local out
+    out="$(command env CORPORA_MANIFEST="$SANDBOX/m1" bash "$probe" "$fresh" 2>&1)"
+    assert_contains "$out" "OK" "A fresh path must be created and accepted"
+    assert_true "[ -d \"$fresh\" ]" "and must actually exist afterwards"
+
+    # 2. A pre-existing symlink: refused by the PRE-creation check.
+    local target="$SANDBOX/helper-target" link="$SANDBOX/helper-link"
+    command mkdir -p "$target"
+    command ln -s "$target" "$link"
+    out="$(command env CORPORA_MANIFEST="$SANDBOX/m1" bash "$probe" "$link" 2>&1)"
+    assert_contains "$out" "refusing to use" "A pre-existing symlink must be refused"
+    assert_not_contains "$out" "OK" "and must not be accepted"
+
+    # 3. A fresh path under a stat stub reporting a foreign uid: the PRE-check
+    #    cannot fire (nothing exists yet), so only the POST-creation check can
+    #    produce the refusal. This is what distinguishes "both checks" from
+    #    "the first check".
+    local stub="$SANDBOX/stubbin-helper"
+    command mkdir -p "$stub"
+    command printf '#!/usr/bin/env bash\necho 999999\n' >"$stub/stat"
+    command chmod +x "$stub/stat"
+    local fresh2="$SANDBOX/helper-fresh-2"
+    out="$(command env -uBASH_ENV PATH="$stub:$PATH" CORPORA_MANIFEST="$SANDBOX/m1" \
+        bash --noprofile --norc "$probe" "$fresh2" 2>&1)"
+    assert_contains "$out" "after creation" \
+        "A path that fails the trust check only AFTER creation must be refused by the post-check"
+}
+
+test_refusals_do_not_fall_through_when_sourced() {
+    # `die` EXITS when executed but RETURNS when sourced — which is how consuming
+    # gates load this file. So every refusal needs an explicit `return 1` after
+    # it, or the function prints "refusing to use ..." and then carries on: the
+    # guard announces a refusal and approves in the same breath, which is worse
+    # than no guard because the message reads as evidence the check worked.
+    #
+    # Executed mode cannot catch this (the exit masks it), so it has to be
+    # asserted through a SOURCED call. Found by the helper fixture above; this
+    # covers the two other functions with the same shape.
+    local root="$SANDBOX/c-fallthrough" target="$SANDBOX/fallthrough-target"
+    command mkdir -p "$root" "$target"
+    command ln -s "$target" "$root/alpha"
+
+    local probe="$SANDBOX/fallthrough-probe.sh"
+    command printf '#!/usr/bin/env bash\n. "%s"\nif fetch_one alpha "%s"; then echo RETURNED_OK; else echo RETURNED_FAIL; fi\n' \
+        "$FETCHER" "$root" >"$probe"
+
+    local out
+    out="$(command env CORPORA_MANIFEST="$SANDBOX/m1" bash "$probe" 2>&1)"
+    assert_contains "$out" "refusing to use" "The refusal must be printed"
+    assert_contains "$out" "RETURNED_FAIL" \
+        "and the function must RETURN non-zero — not print a refusal and continue"
+    assert_not_contains "$out" "RETURNED_OK" "A refused directory must never yield success"
+    # The decisive consequence: no fetch may have been attempted past the refusal.
+    assert_not_contains "$out" "fetch    " "No fetch may run after a refusal"
+}
+
+test_root_is_rechecked_after_creation() {
+    # THE SIBLING CALL SITE. fetch_one re-checks dir_is_trustworthy immediately
+    # after `mkdir -p`; resolve_corpora_dir first shipped without that re-check,
+    # which is the harden-one-knob-leave-the-sibling-exposed shape.
+    #
+    # The window matters because the PRE-check fires only when the path already
+    # exists. On a first-ever run it does not, so control falls straight to
+    # `mkdir -p` — which succeeds SILENTLY through a symlink planted in the race,
+    # and the probe write succeeds through it too. The downstream per-corpus
+    # checks cannot save it: a freshly created $root/$name inside a compromised
+    # root is owned by us and passes, while the attacker owns the parent.
+    #
+    # Racing the real window is not reproducible in a test, so the assertion is
+    # that the post-creation check EXISTS AND FIRES: a stat stub reporting a
+    # foreign uid makes every dir_is_trustworthy call fail, including the one
+    # after mkdir. A non-existent CORPORA_DIR skips the pre-check entirely, so
+    # only the post-check can produce the refusal.
+    local stub="$SANDBOX/stubbin-root"
+    command mkdir -p "$stub"
+    command printf '#!/usr/bin/env bash\necho 999999\n' >"$stub/stat"
+    command chmod +x "$stub/stat"
+
+    local fresh="$SANDBOX/never-existed-root"
+    assert_true "[ ! -e \"$fresh\" ]" \
+        "setup: the path must NOT exist, or the pre-check fires and this proves nothing"
+
+    local log="$SANDBOX/root-recheck.log"
+    command env -uBASH_ENV PATH="$stub:$PATH" \
+        CORPORA_MANIFEST="$SANDBOX/m1" CORPORA_DIR="$fresh" \
+        bash --noprofile --norc "$FETCHER" --dir >"$log" 2>&1
+    local rc=$?
+    local out
+    out="$(command cat "$log" 2>/dev/null)"
+
+    assert_true "[ \"$rc\" -ne 0 ]" \
+        "A root that fails the trust check AFTER creation must be refused"
+    assert_contains "$out" "after creation" \
+        "The refusal must come from the POST-creation re-check, not the pre-check"
+}
+
 test_corpora_present_rejects_an_untrustworthy_tree() {
     # THE PREDICATE ITSELF must refuse a tree it cannot vouch for — not only the
     # fetch path. Found by walking fetch_one's control flow after cycle 2, which
@@ -738,6 +853,9 @@ run_test test_symlinked_corpora_dir_is_refused
 run_test test_foreign_owned_corpora_dir_is_refused
 run_test test_symlinked_per_corpus_dir_is_refused
 run_test test_symlinked_per_corpus_dir_refused_even_when_at_the_pin
+run_test test_ensure_trusted_dir_runs_both_checks
+run_test test_refusals_do_not_fall_through_when_sourced
+run_test test_root_is_rechecked_after_creation
 run_test test_corpora_present_rejects_an_untrustworthy_tree
 run_test test_foreign_owned_per_corpus_dir_is_refused
 run_test test_trust_check_refuses_when_stat_is_unusable
