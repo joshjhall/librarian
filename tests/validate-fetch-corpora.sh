@@ -38,6 +38,13 @@ source "$SCRIPT_DIR/lib/harness.sh"
 
 FETCHER="$REPO_ROOT/bin/fetch-corpora.sh"
 
+# bounded_run, for the cases that assert a HANG does not happen. A test for a
+# hang that can itself hang is worse than no test — it wedges the suite instead
+# of reporting. GNU `timeout` is not used, per CLAUDE.md § Runtime policy
+# (macOS ships none).
+# shellcheck source=bin/bounded-run.sh
+. "$REPO_ROOT/bin/bounded-run.sh"
+
 # git is not optional for this suite — it IS the subject. Absent, exit the
 # reserved sentinel 77 so run-all.sh renders `[SKIP] ... did not run` rather
 # than a green [ok] (#538/#571).
@@ -584,6 +591,109 @@ test_group_or_world_writable_dir_is_refused() {
     assert_contains "$RUN_OUT" "$ok" "and must be reported as the resolved dir"
 }
 
+test_default_fallback_reaches_tmp_when_primary_is_hostile() {
+    # THE TEST A COMMENT PROMISED AND NOBODY WROTE (cycle 5 finding). The comment
+    # in test_explicit_unwritable_corpora_dir_fails_loudly named this function as
+    # the coverage for the default-path fallback — and no such function existed,
+    # so a reader scanning the list concluded the branch was covered and stopped
+    # looking. Same "comment asserts intent, not code" shape as the three stale
+    # die comments, arriving through a cross-reference instead of a claim.
+    #
+    # THE BRANCH: CORPORA_DIR unset, /cache/corpora unusable => /tmp/corpora.
+    # Permissions cannot construct it in a sandbox (the primary path is hardcoded
+    # and a test cannot chmod /cache without root), but the TRUST check can: a
+    # stat stub reporting a foreign uid makes the primary fail
+    # dir_is_trustworthy, and the fallback must then be taken.
+    #
+    # THE STUB MUST CONDEMN ONLY THE PRIMARY. Everything else it is asked about
+    # — /tmp, /tmp/corpora, and crucially the ANCESTORS `/tmp` and `/`, which the
+    # path walk also stats — must answer truthfully, or the fallback fails for a
+    # reason that has nothing to do with the branch under test. The first version
+    # of this stub special-cased only `/tmp*` and so condemned `/`, which read as
+    # the fix not working.
+    #
+    # So: delegate to the real stat for every path except the primary. `-f`/`-Lp`
+    # and `-c`/`%a` both pass through untouched.
+    if [ ! -d /cache ]; then
+        skip_test "no /cache on this host — the primary path does not exist to be refused"
+        return 0
+    fi
+
+    local real_stat
+    real_stat="$(command -v stat)" || {
+        skip_test "no stat on PATH"
+        return 0
+    }
+
+    local stub="$SANDBOX/stubbin-fallback"
+    command mkdir -p "$stub"
+    command printf '#!/usr/bin/env bash\nfor a in "$@"; do case "$a" in /cache/corpora) echo 999999; exit 0 ;; esac; done\nexec %s "$@"\n' \
+        "$real_stat" >"$stub/stat"
+    command chmod +x "$stub/stat"
+
+    local log="$SANDBOX/default-fallback.log"
+    local rc=0
+    bounded_run 20 env -uBASH_ENV -uCORPORA_DIR PATH="$stub:$PATH" \
+        CORPORA_MANIFEST="$SANDBOX/m1" \
+        bash --noprofile --norc "$FETCHER" --dir >"$log" 2>&1 || rc=$?
+
+    local out
+    out="$(command cat "$log" 2>/dev/null)"
+    assert_true "[ \"$rc\" -ne 124 ]" "The fallback path must not hang"
+    assert_exit 0 "$rc" "With the primary refused, the default must fall back rather than fail"
+    assert_contains "$out" "/tmp/corpora" \
+        "and the resolved directory must be the documented /tmp fallback"
+}
+
+test_relative_path_never_hangs() {
+    # THE ANCESTOR WALK HUNG FOREVER ON A RELATIVE PATH. `${parent%/*}` is a
+    # NO-OP on a bare name, so `parent` never shrank to "/" and the loop spun
+    # calling stat with no bound — and this runs before any network call, so
+    # bounded_run does not cover it. Reproduced at exit 124.
+    #
+    # Worse, the loop carried a comment claiming it terminated "when the path
+    # stops shrinking" while implementing no such check: the comment asserted the
+    # safety property the code lacked, which is exactly how the hang shipped.
+    #
+    # BOUNDED ASSERTION. This case must never be able to hang the suite itself,
+    # so it runs under an explicit bound and asserts the command COMPLETED —
+    # a test for a hang that can itself hang is worse than no test.
+    local probe="$SANDBOX/relprobe.sh"
+    command mkdir -p "$SANDBOX/relhome/reldir"
+    command printf '#!/usr/bin/env bash\ncd "%s"\n. "%s"\nif dir_is_trustworthy reldir; then echo TRUE; else echo FALSE; fi\necho RETURNED\n' \
+        "$SANDBOX/relhome" "$FETCHER" >"$probe"
+
+    local log="$SANDBOX/relprobe.log"
+    local rc=0
+    bounded_run 10 env CORPORA_MANIFEST="$SANDBOX/m1" bash "$probe" >"$log" 2>&1 || rc=$?
+
+    assert_true "[ \"$rc\" -ne 124 ]" \
+        "A relative path must NOT hang the ancestor walk (124 == the bound fired)"
+    local out
+    out="$(command cat "$log" 2>/dev/null)"
+    assert_contains "$out" "RETURNED" "The call must return rather than spin"
+    assert_contains "$out" "FALSE" \
+        "and must answer false — a non-absolute path cannot be vouched for"
+}
+
+test_relative_corpora_dir_fails_with_a_clear_message() {
+    # The root cause of the hang, reached the way an operator would: a typo'd
+    # env var. It must produce an ordinary error naming the problem, not a
+    # trust refusal (which would read as "your directory is hostile") and not a
+    # spin.
+    local log="$SANDBOX/relenv.log"
+    local rc=0
+    bounded_run 10 env CORPORA_MANIFEST="$SANDBOX/m1" CORPORA_DIR=./relcorpora \
+        bash "$FETCHER" --dir >"$log" 2>&1 || rc=$?
+
+    assert_true "[ \"$rc\" -ne 124 ]" "A relative CORPORA_DIR must not hang"
+    assert_true "[ \"$rc\" -ne 0 ]" "and must fail"
+    local out
+    out="$(command cat "$log" 2>/dev/null)"
+    assert_contains "$out" "must be an absolute path" \
+        "The error must name the real problem, not report a trust refusal"
+}
+
 test_writable_ancestor_is_refused() {
     # THE FOURTH AXIS, found by asking what symlink+ownership+mode still miss.
     # A directory can be ours, non-symlink and 0755 while sitting inside a
@@ -1030,6 +1140,9 @@ run_test test_symlinked_per_corpus_dir_is_refused
 run_test test_symlinked_per_corpus_dir_refused_even_when_at_the_pin
 run_test test_ensure_trusted_dir_runs_both_checks
 run_test test_group_or_world_writable_dir_is_refused
+run_test test_default_fallback_reaches_tmp_when_primary_is_hostile
+run_test test_relative_path_never_hangs
+run_test test_relative_corpora_dir_fails_with_a_clear_message
 run_test test_writable_ancestor_is_refused
 run_test test_sticky_ancestor_is_accepted
 run_test test_mode_check_handles_four_digit_modes

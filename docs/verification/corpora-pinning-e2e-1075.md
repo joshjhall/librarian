@@ -428,6 +428,51 @@ question to ask. That is the argument for the cycles: not that the reviewers
 catch everything, but that each finding names a *class*, and sweeping the class
 finds siblings the reviewer never saw.
 
+### The four axes of the trust check, and what is still open
+
+The CWE-377 class arrived four times, each a different axis of the same
+question — *may this directory be trusted with a `git checkout`, which runs
+`.git/hooks/*`?*
+
+| Axis | Attack it closes | Found by |
+| --- | --- | --- |
+| Not a symlink | Pre-plant a link to a tree the attacker controls | cycle 1 |
+| Owned by our uid | Pre-plant a real directory the attacker owns | cycle 1 |
+| No group/other write | A dir we own that a co-tenant can still write into | cycle 4 (deferrable) |
+| No writable ancestor | `rename()` our directory away and substitute | author |
+
+The fourth was found by asking what the first three still miss, before the cycle
+that would have asked it returned. A `0755` directory we own inside a `0777`
+parent was accepted — the check was asking about an *inode* when the script needs
+an answer about a *path*, which every later git call re-traverses.
+
+Two asymmetries in the ancestor rule, both measured rather than assumed:
+ancestors are **not** required to be owned by us (`/cache`, `/tmp` and `/` are
+root-owned by design, so requiring our uid would refuse every real deployment),
+and a **sticky** world-writable ancestor is accepted (`/tmp` is `1777`, and the
+sticky bit is exactly the kernel's guarantee that only an entry's owner may
+rename it — without the exemption the documented bare-host fallback would refuse
+itself).
+
+**What remains open, stated rather than implied:**
+
+- **POSIX ACLs.** An ACL can grant write access while `stat -c %a` still reports
+  `755`, so the mode check would read such a directory as safe. Not demonstrated
+  here — `setfacl` is absent from this image — so this is reasoned, not measured.
+  It is the most plausible remaining hole.
+- **Bind mounts / overlays.** A path component can be a mount point whose
+  underlying permissions differ from what `stat` reports at that path. Not
+  examined.
+- **Hardlinks: ruled out.** Measured — the kernel refuses `ln` on a directory
+  (`hard link not allowed for directory`), so this axis does not exist for the
+  objects being checked.
+
+The residual risk is narrower than the list suggests: all of these require a
+co-resident attacker on a shared host, and the corpora path is normally a
+container-private volume. But "narrow" is not "absent", and a reader deciding
+whether to run this on a multi-tenant box should have the list rather than a
+green check.
+
 ### On the cycle cap
 
 `maxCycles: 3` was passed to the harness on an assumption; the documented default
@@ -443,7 +488,7 @@ eyeballed judgement.
 
 ```text
 $ bash tests/lint-measurement-citations.sh   # 16 passed, 0 failed
-$ bash tests/validate-fetch-corpora.sh       # 31 passed, 0 failed
+$ bash tests/validate-fetch-corpora.sh       # 36 passed, 0 failed
 $ bash tests/validate-shards.sh              # 15 passed — both gates claimed by exactly one shard
 $ bash tests/lint-shell-portability.sh       # 2762 passed, 0 failed (bash-3.2 + BSD, AC9)
 $ bash tests/lint-shellcheck.sh              # 346 passed, 0 failed

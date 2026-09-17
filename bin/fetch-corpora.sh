@@ -247,10 +247,29 @@ dir_is_trustworthy() {
     # Recursion terminates at "/" or when the path stops shrinking, so a relative
     # or unusual path cannot loop. The leaf itself is skipped (already checked
     # above, and with the stricter ownership rule).
-    local parent="$d"
+    # ABSOLUTE FIRST — the walk is only meaningful on an absolute path, and a
+    # relative one HANGS without this. `${parent%/*}` is a NO-OP on a bare name
+    # (the pattern does not match), so `parent` never shrinks to "/" and the loop
+    # spins forever calling stat, with no bound: this runs before any network
+    # call, so bounded_run does not cover it. `CORPORA_DIR=./corpora` is an
+    # ordinary typo and would wedge the script and every consumer sourcing it.
+    # Reproduced at exit 124 before this fix.
+    case "$d" in
+        /*) ;;
+        *) return 1 ;;
+    esac
+
+    # The `prev` guard is the progress check. An earlier version of this loop
+    # carried a comment claiming it terminated "when the path stops shrinking"
+    # and did not implement it — the comment asserted the safety property the
+    # code lacked, which is how the hang shipped.
+    local parent="$d" prev=""
     while :; do
+        prev="$parent"
         parent="${parent%/*}"
         [ -n "$parent" ] || parent="/"
+        # No progress => we are at the top; stop rather than loop.
+        [ "$parent" != "$prev" ] || break
         _path_component_is_safe "$parent" || return 1
         [ "$parent" != "/" ] || break
     done
@@ -343,17 +362,63 @@ resolve_corpora_dir() {
     local want probe
     want="${CORPORA_DIR:-/cache/corpora}"
 
+    # A RELATIVE CORPORA_DIR IS REJECTED HERE, with a message that names the
+    # problem. dir_is_trustworthy also refuses a non-absolute path (its ancestor
+    # walk is only meaningful on one), but a bare refusal there would read as
+    # "your directory is hostile" when the truth is "that value is not a path I
+    # can reason about". `CORPORA_DIR=./corpora` is an ordinary typo and deserves
+    # an ordinary error.
+    case "$want" in
+        /*) ;;
+        *) die "CORPORA_DIR must be an absolute path, got: $want" ;;
+    esac
+
     # Both trust checks live in ensure_trusted_dir, so this function cannot
     # obtain an unvetted path — see that function's header for why the invariant
     # moved there instead of being repeated here.
-    if ensure_trusted_dir "$want"; then
+    #
+    # UNTRUSTED IS A FALLBACK CONDITION FOR THE DEFAULT, NOT A HARD STOP. The
+    # documented contract is "/cache/corpora, falling back to /tmp/corpora when
+    # that is not usable", and "unusable" was implemented only for UNWRITABLE —
+    # so a hostile default primary died here instead of falling back, which the
+    # contract does not say and which is the worse behavior: a co-tenant who can
+    # make /cache/corpora untrustworthy could otherwise deny the tool entirely,
+    # when a private /tmp/corpora was available all along. Found by writing the
+    # test a comment had promised (cycle 5).
+    #
+    # An EXPLICIT CORPORA_DIR still fails loud below — an operator naming a path
+    # is told the truth about it rather than quietly redirected.
+    #
+    # ensure_trusted_dir dies on refusal, so the check is run in a subshell here
+    # to convert that into a status this function can branch on.
+    # The refusal message is CAPTURED, not suppressed-then-regenerated: re-running
+    # ensure_trusted_dir after it has already created the directory would report
+    # the pre-creation reason for a post-creation failure, i.e. the wrong cause.
+    local trust_err
+    trust_err="$(command mktemp 2>/dev/null)" || trust_err="/dev/null"
+    if (ensure_trusted_dir "$want" 2>"$trust_err" >/dev/null); then
         probe="$want/.write-probe.$$"
         if : >"$probe" 2>/dev/null; then
             command rm -f "$probe" 2>/dev/null
+            [ "$trust_err" = "/dev/null" ] || command rm -f "$trust_err" 2>/dev/null
             command printf '%s\n' "$want"
             return 0
         fi
+    elif [ -n "${CORPORA_DIR:-}" ]; then
+        # An operator who NAMED this path is told exactly why it was refused,
+        # replaying the message the subshell already produced. That message is
+        # the specific one (symlink / ownership / mode / ancestor / not
+        # writable), so no generic summary is added after it — a second, vaguer
+        # line would only bury the real cause.
+        if [ -s "$trust_err" ]; then
+            command cat "$trust_err" >&2
+            command rm -f "$trust_err" 2>/dev/null
+            exit 1
+        fi
+        [ "$trust_err" = "/dev/null" ] || command rm -f "$trust_err" 2>/dev/null
+        die "CORPORA_DIR is not writable: $CORPORA_DIR"
     fi
+    [ "$trust_err" = "/dev/null" ] || command rm -f "$trust_err" 2>/dev/null
 
     # An explicit CORPORA_DIR that is not writable is an operator error, not an
     # invitation to silently put the data somewhere else: a caller that set the
