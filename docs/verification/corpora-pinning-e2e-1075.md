@@ -190,11 +190,72 @@ The first two are the same family as the drift this slice exists to stop: a chec
 that reports clean while not having looked. Finding them in the gate rather than
 in a consumer's published figure is the point of writing the gate first.
 
+### What the adversarial review found on top of that
+
+The pre-PR review harness (five dimensions + a fresh judge) returned **two
+blocking findings and three deferrable**, all of which were fixed. The two that
+mattered most were ones the author's own mutation testing structurally could not
+reach, because they were about paths no fixture entered.
+
+**1. Predictable `/tmp/corpora` enabled a symlink pre-plant (CWE-377, blocking).**
+`resolve_corpora_dir` decided *writable* and treated that as *safe*. On a shared
+host an attacker can create `/tmp/corpora` first — as a directory they own, or a
+symlink to one — and both `mkdir -p` and the write probe then succeed. The script
+would run `git init` / `fetch` / `checkout` inside that tree, and **git executes
+`.git/hooks/*` automatically on checkout**, which turns an ordinary temp-dir
+weakness into local code execution as the invoking user. Fixed with
+`dir_is_trustworthy`: an existing path must be a non-symlink owned by the current
+uid, checked *before* `mkdir -p` (afterwards, "we made it" and "it was already
+there" are indistinguishable), and the fallback is created `mkdir -m 0700`.
+
+**2. A test named for behavior it did not assert (blocking).**
+`test_tmp_fallback_when_cache_unwritable` set `CORPORA_DIR` explicitly and
+asserted the *error* path — the opposite of the fallback its name promised. That
+is worse than no test: a reader scanning the list concludes the fallback is
+covered and stops looking. Renamed to
+`test_explicit_unwritable_corpora_dir_fails_loudly`, with the genuine gap stated
+in the docstring rather than implied away.
+
+**3. `corpora_present` could kill its caller (deferrable, fixed anyway).**
+Found independently while triaging the review. `die` called `exit`
+unconditionally, and in a **sourced** context `exit` terminates the *consumer's*
+shell — so a consuming gate sourcing this file with a missing manifest would die
+at load, never reaching the 77 sentinel it exists to report. The gate would die
+with no verdict exactly where it should have printed `[SKIP] … did not run`.
+`die` now returns when sourced and exits when executed; both directions are
+asserted.
+
+Two deferrable findings were also fixed rather than filed: the documented
+https-only URL policy is now **enforced** (`valid_corpus_url`, plus an https
+assertion over the committed manifest — a stated rule with no code behind it is
+the doc-claims-what-the-code-lacks shape), and the untested default
+fetch-everything path and `--help`/unknown-option branches now have cases.
+
+### The fixture that was testing nothing
+
+Worth recording on its own, because it nearly shipped green.
+`test_trust_check_refuses_when_stat_is_unusable` shadows `stat` with a failing
+stub to prove the guard **refuses** when ownership is indeterminate. The first
+version passed — against a guard that fails open.
+
+The cause: this environment sets `BASH_ENV=/etc/bash_env`, which bash sources on
+every non-interactive start and which **rebuilds `PATH`**. The stub directory was
+discarded before the script ran, `stat` resolved to the real binary, and the case
+exercised the ordinary path while claiming to exercise the hostile one. Fixed
+with `env -uBASH_ENV … bash --noprofile --norc`, and confirmed by mutating the
+guard to fail open — which the fixture now catches.
+
+The same class explains a related hardening: GNU and BSD `stat` disagree about
+what `-f` means (BSD gives the uid; GNU reads `%u` as a *filename* and prints a
+filesystem dump). The fallback chain therefore validates stat's **output** as
+all-digits rather than trusting its exit status, so a wrong-platform answer is
+unusable instead of merely unlikely.
+
 ### Result
 
 ```text
-$ bash tests/lint-measurement-citations.sh   # 15 passed, 0 failed
-$ bash tests/validate-fetch-corpora.sh       # 14 passed, 0 failed
+$ bash tests/lint-measurement-citations.sh   # 16 passed, 0 failed
+$ bash tests/validate-fetch-corpora.sh       # 23 passed, 0 failed
 $ bash tests/validate-shards.sh              # 15 passed — both gates claimed by exactly one shard
 $ bash tests/lint-shell-portability.sh       # 2762 passed, 0 failed (bash-3.2 + BSD, AC9)
 $ bash tests/lint-shellcheck.sh              # 346 passed, 0 failed

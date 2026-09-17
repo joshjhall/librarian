@@ -76,28 +76,53 @@ NOT_OUR_REF='upload-pack: not our ref'
 # shellcheck source=bin/bounded-run.sh
 . "$SCRIPT_DIR/bounded-run.sh"
 
+# SOURCED_MODE — true when this file was `.`-sourced rather than executed.
+#
+# This distinction is load-bearing for `die` below. A consuming gate
+# (#1069/#1071/#1072/#1074) sources this file for `corpora_present` alone, and in
+# a sourced context `exit` terminates the CALLER'S shell, not a subprocess. So an
+# unconditional `exit` in a helper turns "I could not answer" into "your gate
+# died at load" — the consumer never reaches its own 77 sentinel, and a suite
+# that should have reported `[SKIP] … did not run` instead dies with no verdict.
+#
+# Detected once here, at load, because $0 and BASH_SOURCE are only reliably
+# comparable before any function reassigns them.
+if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
+    SOURCED_MODE=0
+else
+    SOURCED_MODE=1
+fi
+
+# die <message> — fail loud. Exits when executed; RETURNS when sourced, so a
+# consumer's shell survives to report its own verdict.
 die() {
     command printf 'fetch-corpora: %s\n' "$*" >&2
+    [ "$SOURCED_MODE" -eq 1 ] && return 1
     exit 1
 }
 
 usage_die() {
     command printf 'fetch-corpora: %s\n' "$*" >&2
     command printf 'Usage: fetch-corpora.sh [--list|--dir] [name...]\n' >&2
+    [ "$SOURCED_MODE" -eq 1 ] && return 2
     exit 2
 }
 
-command -v git >/dev/null 2>&1 || {
-    command printf 'fetch-corpora: git not found — cannot materialize corpora.\n' >&2
-    exit 2
+# require_runtime — the preconditions a FETCH needs. Deliberately NOT run at
+# load: `corpora_present` needs neither git-for-fetching nor a bound, so a
+# consumer asking "is the corpus here?" must not be refused for lacking tools it
+# will never use. main() calls this; sourcing does not.
+require_runtime() {
+    command -v git >/dev/null 2>&1 || {
+        command printf 'fetch-corpora: git not found — cannot materialize corpora.\n' >&2
+        return 2
+    }
+    bounded_run_available || {
+        command printf 'fetch-corpora: bounded_run unavailable (no sleep/mktemp) — refusing to run an unbounded network fetch.\n' >&2
+        return 2
+    }
+    return 0
 }
-
-bounded_run_available || {
-    command printf 'fetch-corpora: bounded_run unavailable (no sleep/mktemp) — refusing to run an unbounded network fetch.\n' >&2
-    exit 2
-}
-
-[ -f "$MANIFEST" ] || die "manifest not found: $MANIFEST"
 
 # --- corpora dir resolution -------------------------------------------------
 # Primary /cache/corpora (the named volume; the /cache prefix is load-bearing —
@@ -110,9 +135,62 @@ bounded_run_available || {
 # read-only bind mount, and a full filesystem can each make wrong in a different
 # direction. Creating and removing a probe file answers the question actually
 # being asked.
+#
+# WRITABLE IS NOT THE SAME AS TRUSTWORTHY (review finding, CWE-377). The fallback
+# path is FIXED and PREDICTABLE, which is what makes it useful on a bare host and
+# also what makes it pre-plantable on a shared one: an attacker who creates
+# /tmp/corpora first — as a directory they own, or as a symlink to one — passes
+# both `mkdir -p` (the target already resolves) and the write probe (it really is
+# writable). The script would then run `git init` / `fetch` / `checkout` inside a
+# tree of unknown provenance, and git runs `.git/hooks/*` automatically on
+# checkout. That escalates an ordinary temp-dir weakness into local code
+# execution as the invoking user, because the operation being performed on the
+# directory is a git checkout.
+#
+# So an EXISTING directory must also be ours: not a symlink, and owned by the
+# current uid. A path we just created ourselves is fine by construction. This is
+# fail-loud rather than fall-back-elsewhere — a hostile pre-plant is a fact about
+# the host worth surfacing, not something to quietly route around.
+dir_is_trustworthy() {
+    local d="$1" owner
+    # A symlink is refused outright: its target can be swapped after this check,
+    # so no amount of inspecting the target makes it safe to write through.
+    [ -L "$d" ] && return 1
+    [ -d "$d" ] || return 1
+
+    # BSD and GNU stat spell this differently and neither accepts the other's
+    # flags, so try both rather than assuming a platform (CLAUDE.md § Runtime
+    # policy). If NEITHER yields a uid, the check is INDETERMINATE — and a guard
+    # that could not run has learned nothing, so it refuses rather than passes.
+    #
+    # THE RESULT IS VALIDATED, NOT INFERRED FROM THE EXIT CODE. GNU `stat -f`
+    # does not mean what BSD `stat -f` means: handed `%u` it reads it as a FILE
+    # and prints a filesystem dump. It happens to exit 1 here, but the near miss
+    # is the point — an exit status is the wrong thing to trust when the two
+    # tools disagree about what the flag means. Requiring all-digits makes a
+    # wrong-platform answer unusable rather than merely unlikely, which is what
+    # keeps this from comparing a uid against a block-size table.
+    owner="$(command stat -c %u "$d" 2>/dev/null)"
+    case "${owner:-x}" in
+        *[!0-9]*) owner="$(command stat -f %u "$d" 2>/dev/null)" ;;
+    esac
+    case "${owner:-x}" in
+        *[!0-9]*) return 1 ;;
+    esac
+    [ "$owner" = "$(command id -u)" ]
+}
+
 resolve_corpora_dir() {
     local want probe
     want="${CORPORA_DIR:-/cache/corpora}"
+
+    # Check BEFORE mkdir -p: once mkdir has succeeded against a pre-planted
+    # symlink, the distinction between "we made it" and "it was already there"
+    # is gone.
+    if [ -e "$want" ] || [ -L "$want" ]; then
+        dir_is_trustworthy "$want" ||
+            die "refusing to use $want — it exists but is a symlink or is not owned by uid $(command id -u)"
+    fi
 
     if command mkdir -p "$want" 2>/dev/null; then
         probe="$want/.write-probe.$$"
@@ -131,7 +209,16 @@ resolve_corpora_dir() {
         die "CORPORA_DIR is not writable: $CORPORA_DIR"
     fi
 
-    command mkdir -p /tmp/corpora 2>/dev/null ||
+    # Same trust check on the fallback — this is the predictable path, so it is
+    # the one most worth pre-planting.
+    if [ -e /tmp/corpora ] || [ -L /tmp/corpora ]; then
+        dir_is_trustworthy /tmp/corpora ||
+            die "refusing to use /tmp/corpora — it exists but is a symlink or is not owned by uid $(command id -u)"
+    fi
+    # 0700 on creation: a mode that lets another user write into our corpora
+    # tree reintroduces the tampering this check exists to prevent, just one
+    # step later. Harmless on the container path, load-bearing on a shared host.
+    command mkdir -m 0700 -p /tmp/corpora 2>/dev/null ||
         die "neither /cache/corpora nor /tmp/corpora is writable"
     command printf '%s\n' "/tmp/corpora"
 }
@@ -198,6 +285,45 @@ is_full_sha() {
     [ "${#1}" -eq 40 ]
 }
 
+# valid_corpus_url <string> — https (or file:// for tests), no credentials.
+#
+# The manifest header states this policy; this is what ENFORCES it. A documented
+# rule with no code behind it is the doc-claims-what-the-code-lacks shape: it
+# reads as a constraint while permitting the opposite.
+#
+# Two things are refused. An `ssh://` / `git@` remote, because corpora are
+# fetched on CI-less developer machines where an ssh remote either prompts or
+# fails in a way that has nothing to do with the pin. And credentials embedded in
+# the URL (`https://user:token@host/…`), because fetch_one ECHOES the url — on
+# the fetch line and on both error paths — so a credential in the manifest
+# becomes a credential in every log and CI transcript. The rejection therefore
+# happens BEFORE the url is echoed anywhere.
+#
+# `file://` IS ALLOWED, and that is not a loophole in the policy — it is what
+# makes the policy testable. tests/validate-fetch-corpora.sh must exercise the
+# real fetch, checkout and SHA-verification paths WITHOUT network access
+# (#1075 AC8), which means a local remote. Refusing file:// would leave the
+# fetch path either untested or tested only against the network — and the
+# committed manifest is covered separately by the https assertion in
+# lint-measurement-citations.sh's sibling checks, so a file:// URL cannot reach
+# a real corpus entry unnoticed.
+#
+# The `@` test is scoped to the AUTHORITY component (before the first `/` after
+# the scheme): a `@` later in a path is legitimate and must not be refused.
+valid_corpus_url() {
+    local url="$1" rest authority
+    case "$url" in
+        https://*) rest="${url#https://}" ;;
+        file://*) return 0 ;;
+        *) return 1 ;;
+    esac
+    authority="${rest%%/*}"
+    case "$authority" in
+        *@*) return 1 ;;
+    esac
+    [ -n "$authority" ]
+}
+
 # --- the verification step (AC4) --------------------------------------------
 # verify_head <dir> <expected-sha> — true when the checkout is exactly the pin.
 verify_head() {
@@ -219,10 +345,20 @@ verify_head() {
 # corpus left at the wrong commit by an interrupted fetch must read as absent, or
 # the consumer measures against an unpinned tree while believing otherwise —
 # which is the whole failure this slice exists to prevent.
+# It answers FALSE rather than dying on every "cannot tell" path — an absent
+# manifest, an unresolvable corpora dir, an unknown name. A predicate a consumer
+# calls to decide whether to skip must be safe to call in any state; if it could
+# abort, the consumer would die at the exact moment it was trying to report a
+# clean skip.
 corpora_present() {
     local name="$1" dir="${2:-}" sha
-    [ -n "$dir" ] || dir="$(resolve_corpora_dir)"
+    [ -f "$MANIFEST" ] || return 1
+    if [ -z "$dir" ]; then
+        dir="$(resolve_corpora_dir 2>/dev/null)" || return 1
+        [ -n "$dir" ] || return 1
+    fi
     sha="$(manifest_field "$name" 3)" || return 1
+    [ -n "$sha" ] || return 1
     [ -d "$dir/$name/.git" ] || return 1
     verify_head "$dir/$name" "$sha"
 }
@@ -239,6 +375,11 @@ fetch_one() {
 
     is_full_sha "$sha" ||
         die "$name: manifest SHA is not a full 40-char hex SHA: '$sha'"
+
+    # Checked BEFORE the url is echoed anywhere below — a credential-bearing URL
+    # must not reach a log on its way to being rejected.
+    valid_corpus_url "$url" ||
+        die "$name: manifest URL must be https with no embedded credentials"
 
     dir="$root/$name"
 
@@ -357,6 +498,11 @@ main() {
         shift
     done
 
+    # Preconditions belong to the FETCH, so they are checked here rather than at
+    # load — see require_runtime.
+    require_runtime || return $?
+    [ -f "$MANIFEST" ] || die "manifest not found: $MANIFEST"
+
     root="$(resolve_corpora_dir)"
 
     if [ "$want_dir" -eq 1 ]; then
@@ -396,6 +542,8 @@ main() {
 
 # Sourced (to reuse corpora_present) vs executed. When sourced, define the
 # functions and stop — a consuming gate wants the predicate, not a fetch.
-if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
+# SOURCED_MODE is computed from this same comparison at load; reused rather than
+# re-derived so the two can never disagree.
+if [ "$SOURCED_MODE" -eq 0 ]; then
     main "$@"
 fi

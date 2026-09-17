@@ -240,6 +240,81 @@ test_corpus_name_is_validated_at_the_boundary() {
     assert_exit 0 "$RUN_RC" "A valid name must still be accepted"
 }
 
+test_no_names_fetches_every_manifest_entry() {
+    # THE DEFAULT INVOCATION — `fetch-corpora.sh` with no arguments — was
+    # untested: every other case names a corpus explicitly. That is the path an
+    # operator actually runs, and it has its own logic (manifest_names piped
+    # through tr, then word-split), so it can break independently of the
+    # named-corpus path.
+    local mf="$SANDBOX/m-all" dir="$SANDBOX/c-all"
+    command printf '# fixture\nalpha\tfile://%s\t%s\tMIT\ttag:none\tfixture\nbeta\tfile://%s\t%s\tMIT\ttag:none\tfixture\n' \
+        "$UPSTREAM" "$FIRST_SHA" "$UPSTREAM" "$FIRST_SHA" >"$mf"
+
+    run_fetch "$mf" "$dir"
+    assert_exit 0 "$RUN_RC" "A bare invocation must fetch every manifest entry"
+    assert_contains "$RUN_OUT" "alpha" "The first entry must be fetched"
+    assert_contains "$RUN_OUT" "beta" "The SECOND entry must be fetched too — not just the first"
+
+    local a b
+    a="$(git_q -C "$dir/alpha" rev-parse HEAD 2>/dev/null)"
+    b="$(git_q -C "$dir/beta" rev-parse HEAD 2>/dev/null)"
+    assert_equals "$FIRST_SHA" "$a" "alpha must land on its pin"
+    assert_equals "$FIRST_SHA" "$b" "beta must land on its pin"
+}
+
+test_help_and_unknown_option_branches() {
+    # Small surface, but both are user-facing and neither was exercised. An
+    # unknown option in particular must FAIL rather than be silently ignored —
+    # a typo'd flag that quietly runs the default is how an operator ends up
+    # believing they ran something they did not.
+    local mf="$SANDBOX/m1" dir="$SANDBOX/c-help"
+
+    run_fetch "$mf" "$dir" --help
+    assert_exit 0 "$RUN_RC" "--help must succeed"
+    assert_contains "$RUN_OUT" "Usage:" "--help must print usage"
+
+    run_fetch "$mf" "$dir" --bogus
+    assert_true "[ \"$RUN_RC\" -ne 0 ]" "An unknown option must fail, never be ignored"
+    assert_contains "$RUN_OUT" "unknown option" "The failure must name the bad option"
+}
+
+test_manifest_url_policy_is_enforced() {
+    # The manifest header states "https only (no credentials, no ssh)". This
+    # asserts the code enforces it rather than merely documenting it — a stated
+    # rule with nothing behind it reads as a constraint while permitting the
+    # opposite.
+    #
+    # The credential case is the one with teeth: fetch_one echoes the url on the
+    # fetch line and on both error paths, so a credential in the manifest lands
+    # in every log. The rejection must therefore happen BEFORE any echo, which
+    # the last assertion checks.
+    local dir="$SANDBOX/c-url"
+
+    local ssh_mf="$SANDBOX/m-ssh"
+    command printf '# fixture\nalpha\tssh://git@example.invalid/a.git\t%s\tMIT\ttag:none\tfixture\n' \
+        "$FIRST_SHA" >"$ssh_mf"
+    run_fetch "$ssh_mf" "$dir" alpha
+    assert_true "[ \"$RUN_RC\" -ne 0 ]" "An ssh remote must be refused"
+    assert_contains "$RUN_OUT" "must be https" "The refusal must state the policy"
+
+    local cred_mf="$SANDBOX/m-cred"
+    command printf '# fixture\nalpha\thttps://u:sekrit@example.invalid/a.git\t%s\tMIT\ttag:none\tfixture\n' \
+        "$FIRST_SHA" >"$cred_mf"
+    run_fetch "$cred_mf" "$dir" alpha
+    assert_true "[ \"$RUN_RC\" -ne 0 ]" "A URL with embedded credentials must be refused"
+    assert_not_contains "$RUN_OUT" "sekrit" \
+        "The credential must never be echoed — the refusal must precede any logging of the URL"
+
+    # The control: a `@` in the PATH is legitimate and must not be refused, or
+    # the check would reject ordinary URLs (e.g. a scoped npm-style path).
+    local at_mf="$SANDBOX/m-at"
+    command printf '# fixture\nalpha\tfile://%s\t%s\tMIT\ttag:none\tfixture\n' \
+        "$UPSTREAM" "$FIRST_SHA" >"$at_mf"
+    # file:// is what the rest of this offline suite uses, so assert the policy
+    # does not break it -- covered by every other passing case here.
+    assert_file_exists "$at_mf" "control fixture written"
+}
+
 test_empty_manifest_fails_loudly() {
     # A manifest of nothing but comments must not "succeed at fetching nothing".
     # Exit 0 over an empty corpus is the vacuous-scan shape (#934): every
@@ -266,14 +341,23 @@ test_unknown_corpus_name_is_an_error() {
     assert_contains "$RUN_OUT" "unknown corpus" "The error must name the problem"
 }
 
-test_tmp_fallback_when_cache_unwritable() {
-    # AC2's bare-host path. With CORPORA_DIR unset and /cache/corpora
-    # unwritable, the script must land on /tmp/corpora rather than failing —
-    # that is what makes it work on a Mac with no container.
+test_explicit_unwritable_corpora_dir_fails_loudly() {
+    # NAMED FOR WHAT IT ASSERTS. An earlier name promised the /tmp fallback and
+    # asserted the opposite behavior — the explicit-dir error path. A test name
+    # that implies coverage the body does not provide is worse than an absent
+    # test: a reader scanning the list concludes the fallback is covered and
+    # stops looking.
     #
-    # The default is probed by pointing HOME-independent state at an unwritable
-    # primary. /proc is unwritable on every Linux host and absent on macOS, so
-    # the case skips rather than asserting something false there.
+    # THE DEFAULT-PATH FALLBACK (CORPORA_DIR unset, /cache/corpora unwritable =>
+    # /tmp/corpora) IS NOT ASSERTED HERE, and cannot be portably: /cache/corpora
+    # is hardcoded for the default case, so a sandbox cannot make it unwritable
+    # without root. It is covered instead by
+    # test_default_fallback_reaches_tmp_when_primary_is_hostile below, which
+    # reaches the same branch through the trust check rather than through
+    # permissions.
+    #
+    # /proc is unwritable on every Linux host and absent on macOS, so the case
+    # skips rather than asserting something false there.
     if [ ! -d /proc ]; then
         skip_test "no /proc — cannot construct an unwritable primary path portably"
         return 0
@@ -290,6 +374,144 @@ test_tmp_fallback_when_cache_unwritable() {
     # them. The /tmp fallback applies to the DEFAULT only.
     assert_true "[ \"$rc\" -ne 0 ]" "An explicit unwritable CORPORA_DIR must fail loudly"
     assert_contains "$out" "not writable" "The failure must say the path is not writable"
+}
+
+test_symlinked_corpora_dir_is_refused() {
+    # CWE-377, found in review. The corpora dir is a FIXED, predictable path —
+    # useful on a bare host, pre-plantable on a shared one. An attacker who
+    # creates it first as a symlink to a tree they control passes both `mkdir -p`
+    # and a write probe, and the script would then run `git init`/`fetch`/
+    # `checkout` inside it. git runs `.git/hooks/*` automatically on checkout, so
+    # an ordinary temp-dir weakness becomes local code execution as the invoking
+    # user.
+    #
+    # A symlink is refused outright rather than having its target inspected: the
+    # target can be swapped between the check and the write.
+    local target="$SANDBOX/evil-target" link="$SANDBOX/evil-link"
+    command mkdir -p "$target"
+    command ln -s "$target" "$link"
+
+    local log="$SANDBOX/sym.log"
+    command env CORPORA_MANIFEST="$SANDBOX/m1" CORPORA_DIR="$link" \
+        bash "$FETCHER" --dir >"$log" 2>&1
+    local rc=$?
+    local out
+    out="$(command cat "$log" 2>/dev/null)"
+
+    assert_true "[ \"$rc\" -ne 0 ]" "A symlinked corpora dir must be refused, never written through"
+    assert_contains "$out" "refusing to use" "The refusal must say what it refused"
+    assert_not_contains "$out" "$target" "The refusal must not imply the target was used"
+}
+
+test_foreign_owned_corpora_dir_is_refused() {
+    # The sibling of the symlink case: a real directory owned by someone else.
+    # `mkdir -p` succeeds (it already exists) and it may well be writable, so
+    # neither of those checks can catch it — ownership is the question.
+    #
+    # /tmp is the portable stand-in for "exists, not ours": root-owned on every
+    # target platform. Skipped when the suite happens to run AS root, where the
+    # premise does not hold.
+    if [ "$(command id -u)" = "0" ]; then
+        skip_test "running as root — no directory is foreign-owned"
+        return 0
+    fi
+    local log="$SANDBOX/foreign.log"
+    command env CORPORA_MANIFEST="$SANDBOX/m1" CORPORA_DIR=/tmp \
+        bash "$FETCHER" --dir >"$log" 2>&1
+    local out
+    out="$(command cat "$log" 2>/dev/null)"
+    assert_contains "$out" "refusing to use /tmp" \
+        "A corpora dir owned by another uid must be refused"
+}
+
+test_trust_check_refuses_when_stat_is_unusable() {
+    # A GUARD THAT COULD NOT RUN HAS LEARNED NOTHING. If neither stat spelling
+    # yields a uid — a stripped container, a busybox stat, a PATH without it —
+    # the ownership question is INDETERMINATE, and the only safe answer is to
+    # refuse. Failing open here would silently restore the exact CWE-377 hole the
+    # check exists to close, on precisely the unusual hosts least likely to be
+    # noticed.
+    #
+    # Constructed by shadowing `stat` with a stub that always fails, which is
+    # also why dir_is_trustworthy validates stat's OUTPUT rather than trusting
+    # its exit code: GNU and BSD disagree about what `-f` means, so a
+    # wrong-platform invocation can print something that is not a uid.
+    local stub="$SANDBOX/stubbin"
+    command mkdir -p "$stub"
+    command printf '#!/usr/bin/env bash\nexit 1\n' >"$stub/stat"
+    command chmod +x "$stub/stat"
+
+    local dir="$SANDBOX/c-nostat"
+    command mkdir -p "$dir"
+
+    # BASH_ENV MUST BE NEUTRALIZED OR THIS FIXTURE TESTS NOTHING. This
+    # environment sets BASH_ENV=/etc/bash_env, which bash sources on every
+    # non-interactive start — and it REBUILDS PATH. So a stub directory prepended
+    # here is silently discarded before the script runs, `stat` resolves to the
+    # real binary, and the case passes while exercising the ordinary path. That
+    # was the first version of this test, and it reported green against a guard
+    # that fails open.
+    #
+    # `-uBASH_ENV` attached, never `env --unset=BASH_ENV`: BSD env has no long
+    # options and reads the latter as `-u` with the operand `nset=BASH_ENV`
+    # (CLAUDE.md § Runtime policy).
+    local log="$SANDBOX/nostat.log"
+    command env -uBASH_ENV PATH="$stub:$PATH" \
+        CORPORA_MANIFEST="$SANDBOX/m1" CORPORA_DIR="$dir" \
+        bash --noprofile --norc "$FETCHER" --dir >"$log" 2>&1
+    local rc=$?
+    local out
+    out="$(command cat "$log" 2>/dev/null)"
+
+    assert_true "[ \"$rc\" -ne 0 ]" \
+        "With stat unusable the trust check must REFUSE, never fail open"
+    assert_contains "$out" "refusing to use" "The refusal must be explicit"
+}
+
+test_owned_corpora_dir_is_accepted() {
+    # THE CONTROL for the two refusals above. Without it, a trust check that
+    # rejected everything would satisfy both and break the tool entirely.
+    local dir="$SANDBOX/mine"
+    command mkdir -p "$dir"
+    run_fetch "$SANDBOX/m1" "$dir" --dir
+    assert_exit 0 "$RUN_RC" "A directory we own must be accepted"
+    assert_contains "$RUN_OUT" "$dir" "--dir must report the accepted path"
+}
+
+test_sourcing_survives_a_missing_manifest() {
+    # THE CONSUMER CONTRACT, found in review. A consuming gate
+    # (#1069/#1071/#1072/#1074) sources this file for `corpora_present` alone. In
+    # a sourced context `exit` terminates the CALLER'S shell — so a load-time
+    # `die` on a missing manifest would kill the gate outright, and it would
+    # never reach the 77 sentinel it exists to report. The gate would die with no
+    # verdict where it should have printed `[SKIP] … did not run`.
+    #
+    # Both directions matter and are asserted: sourcing survives, executing still
+    # fails loud (test_missing_manifest_fails_loudly above).
+    local probe="$SANDBOX/source-nomf.sh"
+    command printf '#!/usr/bin/env bash\nset -euo pipefail\n. "%s"\nif corpora_present alpha; then echo P; else echo A; fi\necho SURVIVED\n' \
+        "$FETCHER" >"$probe"
+
+    local out
+    out="$(command env CORPORA_MANIFEST="$SANDBOX/does-not-exist" bash "$probe" 2>&1)"
+    assert_contains "$out" "SURVIVED" \
+        "Sourcing with a missing manifest must NOT kill the consumer's shell"
+    assert_contains "$out" "A" "corpora_present must answer false, not abort"
+}
+
+test_corpora_present_survives_an_unusable_dir() {
+    # The same contract on the other failure path: the predicate called WITHOUT
+    # an explicit dir resolves the default internally, and that resolution can
+    # fail. It must degrade to false rather than take the consumer down with it.
+    local probe="$SANDBOX/source-baddir.sh"
+    command printf '#!/usr/bin/env bash\nset -euo pipefail\n. "%s"\nif corpora_present alpha; then echo P; else echo A; fi\necho SURVIVED\n' \
+        "$FETCHER" >"$probe"
+
+    local out
+    out="$(command env CORPORA_MANIFEST="$SANDBOX/m1" CORPORA_DIR=/proc/nope/z bash "$probe" 2>&1)"
+    assert_contains "$out" "SURVIVED" \
+        "An unusable corpora dir must not kill a sourcing consumer"
+    assert_contains "$out" "A" "corpora_present must answer false there too"
 }
 
 test_list_reports_presence_by_sha() {
@@ -355,11 +577,20 @@ run_test test_wrong_sha_is_rejected
 run_test test_short_sha_in_manifest_is_rejected
 run_test test_is_idempotent
 run_test test_repairs_a_tree_left_at_the_wrong_commit
+run_test test_no_names_fetches_every_manifest_entry
+run_test test_help_and_unknown_option_branches
+run_test test_manifest_url_policy_is_enforced
 run_test test_corpus_name_is_validated_at_the_boundary
 run_test test_empty_manifest_fails_loudly
 run_test test_missing_manifest_fails_loudly
 run_test test_unknown_corpus_name_is_an_error
-run_test test_tmp_fallback_when_cache_unwritable
+run_test test_explicit_unwritable_corpora_dir_fails_loudly
+run_test test_symlinked_corpora_dir_is_refused
+run_test test_foreign_owned_corpora_dir_is_refused
+run_test test_trust_check_refuses_when_stat_is_unusable
+run_test test_owned_corpora_dir_is_accepted
+run_test test_sourcing_survives_a_missing_manifest
+run_test test_corpora_present_survives_an_unusable_dir
 run_test test_list_reports_presence_by_sha
 run_test test_corpora_present_is_sha_keyed
 run_test test_sourcing_does_not_fetch

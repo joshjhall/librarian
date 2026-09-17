@@ -243,11 +243,40 @@ test_manifest_has_entries() {
     # mismatches. Asserting the corpus is non-empty BEFORE reporting clean is
     # what separates "checked and fine" from "never looked".
     local n
-    n="$(
-        manifest_short_shas "$MANIFEST" >/dev/null 2>&1
-        command grep -cvE '^([[:space:]]*#|[[:space:]]*$)' "$MANIFEST" || true
-    )"
+    n="$(command grep -cvE '^([[:space:]]*#|[[:space:]]*$)' "$MANIFEST" || true)"
     assert_true "[ \"$n\" -ge 1 ]" "Manifest must declare at least one corpus (else this gate is vacuous)"
+}
+
+test_manifest_urls_are_https_without_credentials() {
+    # The COMMITTED manifest's URL policy, asserted over the real file.
+    #
+    # fetch-corpora.sh's valid_corpus_url allows `file://` so the offline
+    # behavior suite can exercise the real fetch path against a local remote
+    # (#1075 AC8). That is correct there and wrong here: a `file://` entry in the
+    # committed manifest would name a corpus nobody else can materialize, and it
+    # would pass the fetcher's own check. This is the gate that makes the
+    # allowance safe — the fetcher's comment claims this coverage exists, so it
+    # must actually exist.
+    local bad name url rest authority
+    bad=""
+    while IFS=$'\t' read -r name url rest || [ -n "$name" ]; do
+        case "$name" in
+            '' | '#'*) continue ;;
+        esac
+        case "$url" in
+            https://*) rest="${url#https://}" ;;
+            *)
+                bad="$bad$name:$url "
+                continue
+                ;;
+        esac
+        authority="${rest%%/*}"
+        case "$authority" in
+            *@*) bad="$bad$name:credentials-in-url " ;;
+        esac
+    done <"$MANIFEST"
+    assert_output_empty "$bad" \
+        "Every committed manifest URL must be https with no embedded credentials"
 }
 
 test_manifest_shas_are_full_length() {
@@ -442,6 +471,7 @@ test_fixture_scanner_reads_every_hit() {
 
 run_test test_manifest_exists
 run_test test_manifest_has_entries
+run_test test_manifest_urls_are_https_without_credentials
 run_test test_manifest_shas_are_full_length
 run_test test_published_citations_match_manifest
 run_test test_real_docs_are_actually_scanned
