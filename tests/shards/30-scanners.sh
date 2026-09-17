@@ -175,6 +175,12 @@ run_stage "Scanner language-table consistency" bash "$SCRIPT_DIR/lint-language-t
 # rather than a fifth entry there: that one is shaped around a patterns.{py,sh}
 # pair plus a `## Language Support` matrix this file has neither of.
 run_stage "review-route.sh extension table" bash "$SCRIPT_DIR/lint-review-route-lang.sh"
+# The third consumer of the same ADR 0002 rule (#1073). The two stages above
+# cover the executable copies; these two are PROSE tables an LLM reads —
+# code-reviewer.md's Step 2 classifier and codebase-audit's orchestration
+# protocol — and both were ungated, which is how `.swift` went missing from the
+# one copy that decides whether a file is reviewed at all.
+run_stage "Prose classifier extension tables" bash "$SCRIPT_DIR/lint-classifier-lang.sh"
 run_stage "check-* deterministic coverage tool" bash "$SCRIPT_DIR/validate-patterns-coverage.sh"
 run_stage "Coverage-corpus completeness" bash "$SCRIPT_DIR/validate-coverage-corpus.sh"
 run_stage "Coverage runner resolution + fail-loud" bash "$SCRIPT_DIR/validate-coverage-runner.sh"

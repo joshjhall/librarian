@@ -79,7 +79,7 @@ Assign each file one or more types:
 
 | Type     | Extensions / Paths                                                     |
 | -------- | ---------------------------------------------------------------------- |
-| source   | `.py`, `.js`, `.ts`, `.go`, `.rs`, `.rb`, `.java`, `.kt`, `.c`, `.cpp` |
+| source   | `.py`, `.js`, `.jsx`, `.mjs`, `.cjs`, `.ts`, `.tsx`, `.rs`, `.go`, `.sh`, `.bash`, `.swift`, `.rb`, `.java`, `.kt`, `.c`, `.cpp` |
 | test     | `*_test.*`, `*_spec.*`, `test_*.*`, `tests/`, `__tests__/`             |
 | config   | `.json`, `.yaml`, `.yml`, `.toml`, `.ini`, `.env*`                     |
 | ci       | `.github/workflows/`, `.gitlab-ci.yml`, `Jenkinsfile`, `.circleci/`    |
@@ -89,6 +89,21 @@ Assign each file one or more types:
 
 A file may match multiple types (e.g., a SQL migration is both `database`
 and `source`).
+
+The `source` row is governed by ADR 0002 (`review-audit/docs/adr/0002-scanner-language-support.md`)
+and gated by `tests/lint-classifier-lang.sh`. Its normative spelling is
+`EXT_LANG` in `check-decomposition/loc_engine.py`; this row may cover FEWER
+extensions but may never CONTRADICT it — the same subset rule `review-route.sh`
+follows.
+
+`.rb`, `.java`, `.kt`, `.c` and `.cpp` are here and NOT in `EXT_LANG`, which is
+correct rather than drift. `EXT_LANG` exists to drive `check-decomposition`'s
+segmenters, so it models a language only once something can measure its
+production LOC; this table decides only whether a file is *reviewable source*,
+which is a coarser question with an earlier answer. Those five are scanned today
+(`SPLIT_SHAPE_FALLBACK`'s comment: "all scanned, since none are skipped"), so
+classifying them `source` matches what the pipeline already does. The gate
+carries them as an explicit declaration, never as silent retention.
 
 `docs` exists because prose is reviewable work, not inert text: the
 `decomposition` dimension sizes markdown and judges whether a doc split left a

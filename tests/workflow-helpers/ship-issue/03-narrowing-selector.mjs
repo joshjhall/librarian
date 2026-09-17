@@ -249,6 +249,51 @@ export async function run() {
     );
   }
 
+  // #1073 — THE SAME CROSS-ARTIFACT GAP, one level down. The loop above pins
+  // that each relevant-type NAME exists as a row; it says nothing about which
+  // EXTENSIONS that row lists. `.swift` was absent from the `source` row while
+  // `source` itself was present, so the check above passed and a Swift-only
+  // delta still classified as NO type at all — matching nothing in
+  // DIMENSION_RELEVANT_TYPES, and since narrowing is not a partial cycle
+  // (no dimensionsSkipped, no budgetExhausted), returning `clean` having
+  // reviewed no Swift.
+  //
+  // tests/lint-classifier-lang.sh gates the table's vocabulary against the
+  // normative EXT_LANG. This asserts the OTHER end: that a Swift delta actually
+  // reaches the three dimensions. AC5 of #1073 requires exactly this pairing —
+  // "assert the dimensions actually selected; a unit test over the table alone
+  // would pass while the routing stayed broken."
+  ok(
+    /^\|\s*source\s*\|.*`\.swift`/m.test(reviewerAgent),
+    "code-reviewer.md Step 2 classifies .swift as source (#1073)",
+  );
+
+  const swiftOnly = call({
+    deltaFiles: ["Sources/App/Model.swift"],
+    manifest: {
+      classifications: [{ file: "Sources/App/Model.swift", types: ["source"] }],
+    },
+  });
+  const swiftNames = swiftOnly.entries.map((e) => e.dim.name).sort();
+  for (const dim of ["security", "correctness", "tests"]) {
+    ok(
+      swiftNames.includes(dim),
+      `selectReviewDimensions: swift-only delta selects '${dim}' (#1073)`,
+    );
+  }
+  // The failure mode this guards is a SILENT one, so pin the two signals that
+  // would otherwise let a fully-narrowed-away cycle read as a healthy pass.
+  eq(
+    swiftOnly.dimensionsSkipped.length,
+    0,
+    "selectReviewDimensions: swift-only delta records no skipped dimension (#1073)",
+  );
+  eq(
+    swiftOnly.budgetExhausted,
+    false,
+    "selectReviewDimensions: swift-only delta does not force budget_exhausted (#1073)",
+  );
+
   const docsOnly = call({
     deltaFiles: ["docs/guide.md"],
     manifest: { classifications: [{ file: "docs/guide.md", types: ["docs"] }] },
