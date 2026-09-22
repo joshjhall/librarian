@@ -344,7 +344,7 @@ jobs:
       # on every run and reintroduces the prefix-fallback drift this key
       # deliberately avoids. Not worth it for an event this rare.
       #
-      # The key carries the BARE version (`0.49.0`), never the pinned-spec form
+      # The key carries the BARE version (`0.54.0`), never the pinned-spec form
       # that the install step below uses. tests/lint-agnix-clean.sh's
       # agnix_pin_in greps the FIRST pinned-spec match in the file — over the
       # whole file, comments included — and compares it against
@@ -373,7 +373,7 @@ jobs:
           # runner.arch is in the key because the release asset is
           # arch-specific (x86_64 vs aarch64) — a shared key would hand an
           # unrunnable binary to the other architecture.
-          key: agnix-bin-${{ runner.os }}-${{ runner.arch }}-0.49.0
+          key: agnix-bin-${{ runner.os }}-${{ runner.arch }}-0.54.0
 
       - name: Install agnix (pinned)
         id: agnix-install
@@ -400,7 +400,7 @@ jobs:
           # file would be a drift channel tests/lint-agnix-clean.sh cannot see:
           # its agnix_pin_in takes the FIRST `agnix@X.Y.Z` match and would never
           # compare it against the second.
-          pin="agnix@0.49.0"
+          pin="agnix@0.54.0"
           verify_dir="$(mktemp -d)"
 
           # Signature failure gets its OWN message, not the notice below. "npm
