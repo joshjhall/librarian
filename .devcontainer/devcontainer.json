@@ -8,11 +8,18 @@
   // our entrypoint runs (permission/mount reconciliation, etc.).
   "overrideCommand": false,
 
+  // Lifecycle commands use the ARRAY (exec) form, never a string. Zed expands a
+  // string command to `/bin/sh -c <cmd>` and then space-joins that into a
+  // second `sh -c`, so `bash <path>` runs as a bare `bash` with the script path
+  // as $0: it reads empty stdin and exits 0, and the hook silently does nothing.
+  // That is how a Zed-built container came up with no ruff. The array form
+  // survives the round-trip and is equally valid for VS Code / devcontainer CLI.
+
   // Install dependencies once when the container is first created.
-  "postCreateCommand": "bash /workspace/librarian/.devcontainer/post-create.sh",
+  "postCreateCommand": ["bash", "/workspace/librarian/.devcontainer/post-create.sh"],
 
   // Configure git, CLI auth, and install git hooks on every start.
-  "postStartCommand": "bash /workspace/librarian/.devcontainer/post-start.sh",
+  "postStartCommand": ["bash", "/workspace/librarian/.devcontainer/post-start.sh"],
 
   "customizations": {
     "vscode": {
