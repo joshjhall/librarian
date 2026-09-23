@@ -155,7 +155,7 @@ jobs:
           # file would be a drift channel tests/lint-agnix-clean.sh cannot see:
           # its agnix_pin_in takes the FIRST `agnix@X.Y.Z` match and would never
           # compare it against the second.
-          pin="agnix@0.49.0"
+          pin="agnix@0.54.0"
           verify_dir="$(mktemp -d)"
 
           # A failed signature check writes present=false on the SAME path as a
