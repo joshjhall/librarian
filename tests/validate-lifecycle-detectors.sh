@@ -610,8 +610,8 @@ test_unpaired_listener_python() {
     local d list
 
     # Python registration forms (#841), each isolated for the same reason as the
-    # JS and Rust alternatives above: the label is shared, so a composite fixture
-    # would keep passing while all but one alternative rotted.
+    # JS and Rust alternatives in test_unpaired_listener: the label is shared, so
+    # a composite fixture would keep passing while all but one alternative rotted.
     d="$(fresh_dir)"
     command printf '%s\n' 'signal.signal(signal.SIGTERM, _handler)' >"$d/sig.py"
     list="$(make_list "$d/l" "$d/sig.py")"
@@ -677,7 +677,7 @@ test_unpaired_listener_python() {
     # only exercises the first half; both halves carry their own copy of the
     # `[[:space:]]*\(` terminator, so a future edit touching only this one
     # would otherwise be unpinned -- the same one-fixture-per-half rule the
-    # qualified-form fixtures above exist for.
+    # qualified-form fixtures below exist for.
     d="$(fresh_dir)"
     command printf '%s\n' 'add_readerx(fd)' >"$d/trail2.py"
     list="$(make_list "$d/l" "$d/trail2.py")"
