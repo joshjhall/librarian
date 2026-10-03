@@ -343,3 +343,95 @@ STUB
     assert_true "[ -e '$sb/.worktrees/issue-155' ]" \
         "the directory really is still there"
 }
+
+# The registration re-read is a FIXED-STRING compare (#1088 review). As a
+# basic regex, a `[` in the repo path turns the line into a bracket expression
+# that no longer matches itself — so a STILL-REGISTERED worktree reads as
+# deregistered, and the re-check refusal this issue routes through
+# adopt_if_deregistered would hand it to the leftover cleanup instead.
+#
+# The stub's plain remove fails WITHOUT deregistering and breaks the .git
+# pointer so the re-check reads unverifiable: the only thing standing between
+# that worktree and the cleanup arm is the re-read matching its own path.
+test_worktree_rm_reread_matches_a_bracketed_repo_path() {
+    local sb base real_git branches
+    new_sandbox base
+    sb="$WORKDIR/repo[x]-$$"
+    command mv "$base" "$sb"
+    run_in "$sb" "$WT_NEW" 156
+    assert_exit 0 "$RUN_RC" "worktree-new succeeds under a bracketed repo path"
+
+    real_git="$(command -v git)"
+    command mkdir -p "$sb/bin"
+    command cat >"$sb/bin/git" <<STUB
+#!/usr/bin/env bash
+# Test stub: the plain remove fails WITHOUT deregistering and leaves the
+# worktree unresolvable, so the force re-check reads unverifiable.
+if [ "\${1:-}" = "worktree" ] && [ "\${2:-}" = "remove" ]; then
+    command printf 'gitdir: /nonexistent/admin/dir\n' >"$sb/.worktrees/issue-156/.git"
+    command echo "fatal: STUBBED REMOVAL FAILURE" >&2
+    exit 128
+fi
+exec "$real_git" "\$@"
+STUB
+    command chmod +x "$sb/bin/git"
+
+    RUN_RC=0
+    RUN_OUT="$(cd "$sb" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" -uBASH_ENV \
+            HOME="$sb" TMUX= TMUX_TMPDIR="${SANDBOX_TMUX_DIR:-$sb/.tmux}" \
+            PATH="$sb/bin:$PATH" \
+            GOLEM_WORKTREE_DIR=.worktrees \
+            GOLEM_STATUS_DIR=.worktrees/.status \
+            GOLEM_BASE_REF=HEAD \
+            GOLEM_WORKTREE_LOCAL_FILES="" \
+            "$REAL_BASH" "$WT_RM" 156 2>&1)" || RUN_RC=$?
+
+    assert_exit 1 "$RUN_RC" \
+        "a still-registered worktree under a bracketed path is refused, not adopted"
+    assert_contains "$RUN_OUT" "is still registered and nothing was removed" \
+        "the re-read recognises its own registration line"
+    assert_not_contains "$RUN_OUT" "WAS deregistered" \
+        "never claims a deregistration that did not happen"
+    assert_true "[ -e '$sb/.worktrees/issue-156' ]" "nothing is removed"
+    branches="$(/usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
+        git -C "$sb" branch --list "feature/issue-156")"
+    assert_not_empty "$branches" "the branch survives the refusal"
+}
+
+# Relayed fallback output is sanitized (#1088 review). unwedge-worktree's
+# report embeds a PATH, so a crafted directory name could otherwise smuggle an
+# ANSI escape or a CR line-overwrite into the operator's terminal — the same
+# reason git's captured stderr goes through sanitize_stderr.
+test_worktree_rm_unwedge_output_is_sanitized() {
+    local sb blocked shim real_mv
+    if [ "$(command id -u)" = "0" ]; then
+        skip_test "running as root — permission bits cannot make rm fail"
+        return 0
+    fi
+    new_sandbox sb
+    ignore_build_dir "$sb"
+    run_in "$sb" "$WT_NEW" 157
+    assert_exit 0 "$RUN_RC" "worktree-new succeeds"
+    blocked="$(make_undeletable "$sb/.worktrees/issue-157")"
+
+    real_mv="$(command -v mv)"
+    shim="$sb/shim"
+    make_failing_mv "$shim"
+    command cat >"$shim/unwedge-worktree" <<STUB
+#!/usr/bin/env bash
+"$real_mv" "\$1" "\$(dirname "\$1")/.wedged-\$(basename "\$1")-STUBBED"
+command printf 'unwedge-worktree: moved \033[31mESCAPED\033[0m\rOVERWRITE\n'
+STUB
+    command chmod +x "$shim/unwedge-worktree"
+
+    run_with_early_deregistering_git "$sb" 157 "$shim"
+    restore_undeletable "$blocked"
+
+    assert_exit 0 "$RUN_RC" "teardown completes through the fallback"
+    assert_contains "$RUN_OUT" "ESCAPED" "the fallback's report is still relayed"
+    assert_not_contains "$RUN_OUT" "$(command printf '\033')" \
+        "no raw ESC byte reaches the operator's terminal"
+    assert_not_contains "$RUN_OUT" "$(command printf '\r')" \
+        "no raw CR byte reaches the operator's terminal"
+}

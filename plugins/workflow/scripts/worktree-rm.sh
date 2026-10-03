@@ -420,7 +420,7 @@ listed=0
 # form exits 0 and reports the worktree absent. Unguarded by a test for the
 # reason recorded in worktree-new.sh.
 wt_list="$(command git worktree list --porcelain)"
-if command grep -qx "worktree $root/$wt" <<<"$wt_list"; then
+if command grep -Fqx -- "worktree $root/$wt" <<<"$wt_list"; then
     listed=1
 fi
 
@@ -951,7 +951,7 @@ adopt_if_deregistered() {
     post_rc=0
     post_list="$(command git worktree list --porcelain 2>/dev/null)" || post_rc=$?
     if [ "$post_rc" -ne 0 ] ||
-        command grep -qx "worktree $root/$wt" <<<"$post_list"; then
+        command grep -Fqx -- "worktree $root/$wt" <<<"$post_list"; then
         # Either git failed WITHOUT deregistering, or the re-read
         # could not be evaluated at all. Both mean there is no leftover
         # directory this run may adopt, so keep the refusal — but state

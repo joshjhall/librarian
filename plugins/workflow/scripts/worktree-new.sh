@@ -62,7 +62,7 @@ br="${GOLEM_BRANCH_PREFIX}${N}"
 # earlier `repo_root` call, so such a test passes for the wrong reason. Recorded
 # as measured-but-unguarded rather than asserted-and-untested.
 wt_list="$(command git worktree list --porcelain)"
-if command grep -qx "worktree $root/$wt" <<<"$wt_list"; then
+if command grep -Fqx -- "worktree $root/$wt" <<<"$wt_list"; then
     command echo "worktree-new: $wt already exists — remove it first (worktree-rm.sh $N)" >&2
     exit 1
 fi
