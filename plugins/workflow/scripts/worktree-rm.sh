@@ -962,11 +962,19 @@ adopt_if_deregistered() {
         # registered" about a state that could not be read would assert
         # something unmeasured, which is the defect this region keeps
         # being filed about.
+        #
+        # NEITHER ARM CLAIMS "NOTHING WAS REMOVED" (#1088 review). This script
+        # removed nothing, but the failed `git worktree remove` it ran may have
+        # deleted part of the tree before failing — the disk contents were
+        # never measured, so the message names what this script did and the
+        # registration state, and leaves the directory's state to the operator.
         if [ "$post_rc" -ne 0 ]; then
             command echo "  Could not re-read the worktree list afterwards, so whether the" >&2
-            command echo "  worktree is still registered is unknown — nothing was removed." >&2
+            command echo "  worktree is still registered is unknown; teardown removed nothing" >&2
+            command echo "  itself, but git's failed attempt may have emptied part of the tree." >&2
         else
-            command echo "  The worktree is still registered and nothing was removed." >&2
+            command echo "  The worktree is still registered, so teardown stops here; git's" >&2
+            command echo "  failed attempt may have emptied part of the tree." >&2
         fi
         command echo "  Next: inspect it, then retry — git -C $wt status; git worktree list" >&2
         exit 1

@@ -389,11 +389,15 @@ STUB
 
     assert_exit 1 "$RUN_RC" \
         "a still-registered worktree under a bracketed path is refused, not adopted"
-    assert_contains "$RUN_OUT" "is still registered and nothing was removed" \
+    assert_contains "$RUN_OUT" "The worktree is still registered, so teardown stops here" \
         "the re-read recognises its own registration line"
     assert_not_contains "$RUN_OUT" "WAS deregistered" \
         "never claims a deregistration that did not happen"
-    assert_true "[ -e '$sb/.worktrees/issue-156' ]" "nothing is removed"
+    # The refusal follows a FAILED git removal that may have deleted part of
+    # the tree, so it must not assert the disk is untouched (#1088 review).
+    assert_not_contains "$RUN_OUT" "nothing was removed" \
+        "the refusal never claims the disk state it did not measure"
+    assert_true "[ -e '$sb/.worktrees/issue-156' ]" "the worktree directory survives"
     branches="$(/usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$sb" branch --list "feature/issue-156")"
     assert_not_empty "$branches" "the branch survives the refusal"
