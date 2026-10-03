@@ -407,6 +407,28 @@ test_worktree_rm_unverifiable_uv_venv_path_is_refused() {
     assert_contains "$RUN_OUT" "removed worktree" "the rest of teardown still ran"
 }
 
+# The SEED side refuses the same planted link teardown does (#1091 review c5):
+# a `<cache>/<repo-key> -> elsewhere` must not make worktree-new create the venv
+# dir — or point UV_PROJECT_ENVIRONMENT — through it. Positive control: the same
+# fixture without the link seeds (test_worktree_new_uv_seeds_project_environment).
+test_worktree_new_uv_refuses_symlinked_repo_key_dir() {
+    local sb
+    new_sandbox sb
+    _uv_need_jq || return 0
+    _uv_project "$sb"
+    local cache="$sb/venvs" venv
+    venv="$(_uv_venv "$sb" "$cache" 98)"
+    command mkdir -p "$cache" "$sb/elsewhere"
+    command ln -s "$sb/elsewhere" "${venv%/*}"
+
+    _uv_run "$WT_NEW" "$sb" "$cache" 98
+    assert_exit 0 "$RUN_RC" "worktree-new exits 0 with a planted repo-key link"
+    assert_not_contains "$RUN_OUT" "UV_PROJECT_ENVIRONMENT" "does not seed through the link"
+    assert_equals "" "$(_uv_key_of "$sb" 98)" "writes no UV_PROJECT_ENVIRONMENT"
+    assert_true "[ ! -e \"$sb/elsewhere/issue-98\" ]" \
+        "Nothing is created in the link target"
+}
+
 # golem_repo_key's uniqueness rests on the cksum suffix: two repos that share a
 # BASENAME (two checkouts of one project) must still get different keys. The
 # cross-repo teardown test uses mktemp-named sandboxes whose basenames already

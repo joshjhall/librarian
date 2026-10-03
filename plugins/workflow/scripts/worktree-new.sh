@@ -421,6 +421,29 @@ seed_cache_env() {
     # unrelated worktree-rm tests red with `?? .claude/`.
     command git -C "$wt" check-ignore -q ".claude/settings.local.json" \
         2>/dev/null || return 0
+    # The target must sit where its path SAYS (#1091 review c5), and that is
+    # verified BEFORE anything is created. The cache root is a shared mount and
+    # a subdir key is predictable, so a planted `<cache>/<key> -> /elsewhere`
+    # would make `mkdir -p` create — and the seeded env send uv's whole venv to
+    # — /elsewhere/issue-N. So: create only the subdir (a plain mkdir of one
+    # component), refuse a subdir or target that is a link, and require the canonical parent to equal the
+    # canonical cache root plus the subdir. Same rule worktree-rm.sh applies
+    # before its rm -rf, so the two sides agree on which paths are ours. A
+    # target this cannot verify is not seeded.
+    local root_real parent_real parent="${target%/*}"
+    if [ -n "$sub" ] && [ ! -e "$parent" ] && [ ! -L "$parent" ]; then
+        command mkdir "$parent" 2>/dev/null || return 0
+    fi
+    # The link test covers only what lies BELOW the configured root: the root
+    # itself may legitimately be a symlink (an operator pointing /cache/target
+    # at a bigger disk — #944's own symlinked-cache test pins that), and the
+    # canonical comparison below already accounts for it.
+    if [ -n "$sub" ] && [ -L "$parent" ]; then return 0; fi
+    [ ! -L "$target" ] || return 0
+    root_real="$(command readlink -f "$cache_root" 2>/dev/null)" || root_real=""
+    parent_real="$(command readlink -f "$parent" 2>/dev/null)" || parent_real=""
+    [ -n "$root_real" ] && [ "$parent_real" = "$root_real${sub:+/$sub}" ] ||
+        return 0
     command mkdir -p "$target" 2>/dev/null || return 0
     settings="$wt/.claude/settings.local.json"
     command mkdir -p "$wt/.claude"
