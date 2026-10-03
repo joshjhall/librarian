@@ -302,6 +302,11 @@ run_fragment_test test_worktree_rm_force_failure_without_deregistration_still_re
 run_fragment_test test_worktree_rm_force_fallthrough_still_honors_the_residue_guard "worktree-rm: the force fall-through still honors the residue guard (#1017)"
 run_fragment_test test_worktree_rm_force_failure_after_complete_removal_is_not_refused "worktree-rm: a force failure after a COMPLETE removal is a no-op, not a false refusal (#1017 review)"
 run_fragment_test test_worktree_rm_force_reread_failure_fails_closed "worktree-rm: an unreadable post-force registration re-read fails closed (#1017 review)"
+run_fragment_test test_worktree_rm_recheck_after_deregistration_completes_teardown "worktree-rm: a plain removal that deregistered is adopted, not refused as 'Nothing was removed' (#1088)"
+run_fragment_test test_worktree_rm_recheck_after_deregistration_without_residue "worktree-rm: a plain removal that deregistered and emptied the path continues teardown (#1088)"
+run_fragment_test test_worktree_rm_quarantine_falls_back_to_unwedge_worktree "worktree-rm: a failed quarantine rename falls back to unwedge-worktree (#1088)"
+run_fragment_test test_worktree_rm_quarantine_without_unwedge_worktree_reports_occupied "worktree-rm: without unwedge-worktree the path is reported occupied (#1088)"
+run_fragment_test test_worktree_rm_failed_unwedge_fallback_reports_occupied "worktree-rm: a failing unwedge-worktree fallback is relayed, path reported occupied (#1088)"
 run_fragment_test test_worktree_rm_repairs_stale_core_worktree "worktree-rm: repairs a stale main-repo core.worktree (#258)"
 run_fragment_test test_worktree_rm_preserves_valid_core_worktree "worktree-rm: preserves a valid core.worktree (#258)"
 
