@@ -49,7 +49,13 @@ test_archive_modes_flags_group_writable() {
     out="$(command bash "$ARCHIVE_GUARD" "$tgz" 2>&1)" || rc=$?
     assert_exit 1 "$rc" "a 0002-masked archive is rejected"
     assert_contains "$out" "scripts/run.sh" "the offending executable is named"
-    assert_contains "$out" "p/scripts/" "the offending directory is named"
+    # `p/scripts/` alone is also a substring of the run.sh line, so match the
+    # directory's OWN line: it ends at the trailing slash.
+    local dir_lines
+    dir_lines="$(printf '%s\n' "$out" | command awk '/^  d/ && / p\/scripts\/$/')"
+    assert_not_empty "$dir_lines" "the offending directory entry itself is named"
+    # 4 of 5: p/, p/README, p/scripts/, p/scripts/run.sh — the symlink excluded.
+    assert_contains "$out" "4 of 5 entries" "every non-symlink offender is counted, dirs included"
     assert_not_contains "$out" "p/link" "the symlink (always lrwxrwxrwx) is not flagged"
 }
 
