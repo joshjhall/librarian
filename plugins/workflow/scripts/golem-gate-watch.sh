@@ -88,6 +88,12 @@
 #                            gate, died on an API error (#446), OR turn-ended/idle
 #                            at their prompt (#447)
 #   --stream-panes           pane poll loop: emit on transition, until killed
+#   --stream[-panes] --emit-existing
+#                            as above, but EMIT the gates already open at
+#                            startup once instead of priming them silently
+#                            (#1090). Use it whenever an orchestrator (re)arms
+#                            the watch — the quiet default would hide a golem
+#                            already waiting; it suits only a human restart.
 #   --once-liveness          liveness snapshot: per-golem heartbeat/stall, exit 0
 #   --stream-liveness        liveness poll loop: emit on a per-golem class change
 #                            (working→idle, alive→stall, →gated), deduped like the
@@ -475,7 +481,7 @@ _set_has() {
 # is suppressed; a golem that clears (drops out of the snapshot) is forgotten so
 # a later re-gate fires again; a changed message re-emits. `prime=1` records the
 # current state WITHOUT emitting (so --stream does not dump pre-existing gates as
-# if they were new on startup).
+# if they were new on startup); --emit-existing passes prime=0 instead (#1090).
 LAST_EMIT=""
 emit_transitions() {
     local snapshot="$1" prime="${2:-0}"
@@ -1687,6 +1693,29 @@ if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
             ;;
     esac
 
+    # Optional second arg (#1090): `--emit-existing` drops the silent startup
+    # prime on the two GATE streams, so a gate already open at (re)arm is pushed
+    # once instead of hidden until it clears. Anything else — including the flag
+    # on a mode it does not apply to — exits 2: an ignored typo would quietly
+    # restore the very prime the caller asked to drop.
+    prime=1
+    case "${2:-}" in
+        "") ;;
+        --emit-existing)
+            case "$mode" in
+                --stream | --stream-panes) prime=0 ;;
+                *)
+                    command echo "golem-gate-watch: --emit-existing applies only to --stream|--stream-panes, not '$mode'" >&2
+                    exit 2
+                    ;;
+            esac
+            ;;
+        *)
+            command echo "golem-gate-watch: unknown option '$2' (want --emit-existing after --stream|--stream-panes)" >&2
+            exit 2
+            ;;
+    esac
+
     status_dir="$(resolve_status_dir || true)"
     feed="${status_dir:+$status_dir/feed.jsonl}"
 
@@ -1701,10 +1730,11 @@ if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
             ;;
         --stream)
             # Prime from the current state so pre-existing gates are not replayed as
-            # new, then emit only genuine transitions thereafter. feed_snapshot_live
+            # new (unless --emit-existing, #1090, which emits them once), then emit
+            # only genuine transitions thereafter. feed_snapshot_live
             # applies the #446 ghost filter so a torn-down golem never streams as a
             # fresh transition.
-            [ -n "$feed" ] && emit_transitions "$(feed_snapshot_live "$feed")" 1
+            [ -n "$feed" ] && emit_transitions "$(feed_snapshot_live "$feed")" "$prime"
             while :; do
                 "$SLEEP" "$interval"
                 [ -n "$feed" ] && emit_transitions "$(feed_snapshot_live "$feed")" 0
@@ -1719,12 +1749,15 @@ if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
             # then dedups the confirmed standing line to a single push. Note this means
             # a genuine idle takes prime + 1 poll (two observations) to surface — the
             # confirmation the issue asks for.
+            # --emit-existing (#1090) emits the confirmed startup snapshot, which the
+            # debounce has already stripped of any unconfirmed idle line — so only
+            # real gates surface at arm time; an idle still waits one more poll.
             # confirm_turn_end and emit_transitions BOTH mutate module state, so
             # each must run in THIS shell — only the inner panes_snapshot capture is
             # a subshell. confirm_turn_end writes CONFIRMED_SNAPSHOT; emit_transitions
             # reads it.
             confirm_turn_end "$(panes_snapshot)"
-            emit_transitions "$CONFIRMED_SNAPSHOT" 1
+            emit_transitions "$CONFIRMED_SNAPSHOT" "$prime"
             while :; do
                 "$SLEEP" "$interval"
                 confirm_turn_end "$(panes_snapshot)"

@@ -24,6 +24,40 @@
 
 # shellcheck disable=SC2034  # SNAP_*/LIVE_*/PANES_* are read by the area fragments
 
+# shellcheck source=bin/bounded-run.sh
+. "$(cd "$(command dirname "${BASH_SOURCE[0]}")/../.." && command pwd)/bin/bounded-run.sh"
+
+# Stream-mode knobs for the two snapshot drivers below (#1090). Both default to
+# the snapshot mode, so every pre-#1090 caller is unchanged:
+#   GW_MODE   the script's argument string (default --once / --once-panes);
+#             e.g. "--stream-panes --emit-existing"
+#   GW_POLLS  how many polls a --stream* run gets before the stub `sleep` ends
+#             it (default 1: the startup poll only)
+# A --stream* loop never exits on its own, so the drivers put _write_poll_stub's
+# `sleep` first on PATH (the script resolves SLEEP through PATH, `_bin`) and
+# bound the whole run with bounded_run as the backstop against a hang.
+
+# _write_poll_stub <dir> <count-file> — a `sleep` that counts its calls and, on
+# the GW_POLLS-th, TERMs its parent (the watcher) instead of sleeping. Every
+# earlier call prints `[pollN]` first, N being the poll the loop runs next, so
+# one run's output separates startup lines from each later poll's. Builtins
+# only: the pane driver runs under a PATH holding nothing but the stubs.
+_write_poll_stub() {
+    command cat >"$1/sleep" <<STUB
+#!/usr/bin/env bash
+n=0
+read -r n <"$2" 2>/dev/null || n=0
+n=\$((n + 1))
+printf '%s\n' "\$n" >"$2"
+if [ "\$n" -ge "${GW_POLLS:-1}" ]; then
+    kill -TERM "\$PPID"
+    exit 0
+fi
+printf '[poll%s]' "\$((n + 1))"
+STUB
+    command chmod +x "$1/sleep"
+}
+
 # _pane_rc <function-name> <text> — source the script (the main-guard makes it
 # sourceable without running the drive block) in a subshell and call one of its
 # prompt-overlay matchers, echoing the function's exit code. The subshell
@@ -259,13 +293,20 @@ _run_once_snapshot() {
     # the repo root). `&& SNAP_RC=0 || SNAP_RC=$?` records the real exit code
     # without tripping `set -e`; stdout goes to a file so it is read back
     # verbatim rather than mixed with the exit code.
+    local mode_args
+    read -r -a mode_args <<<"${GW_MODE:---once}"
+    command mkdir -p "$tmp/stub-bin"
+    _write_poll_stub "$tmp/stub-bin" "$tmp/polls"
+    # -uBASH_ENV: the devcontainer's /etc/bash_env resets $PATH for every
+    # non-interactive bash, which would drop the stub `sleep` (#1090).
     SNAP_RC=0
     (
         cd "$tmp" &&
-            /usr/bin/env "${git_scrub[@]/#/-u}" \
+            bounded_run 30 /usr/bin/env "${git_scrub[@]/#/-u}" -uBASH_ENV \
+                PATH="$tmp/stub-bin:$PATH" \
                 GOLEM_BLOCK_TTL="$ttl" GOLEM_WORKTREE_DIR=.worktrees \
                 GOLEM_STATUS_DIR=.worktrees/.status \
-                bash "$GATE_WATCH" --once
+                bash "$GATE_WATCH" "${mode_args[@]}"
     ) >"$tmp/out" 2>/dev/null && SNAP_RC=0 || SNAP_RC=$?
     SNAP_OUT="$(command cat "$tmp/out")"
 }
@@ -712,16 +753,19 @@ TMUX_STUB
     command chmod +x "$stub_bin/tmux"
     # -uBASH_ENV: the devcontainer's /etc/bash_env resets $PATH for every
     # non-interactive bash, which would undo the hermetic PATH.
+    local mode_args
+    read -r -a mode_args <<<"${GW_MODE:---once-panes}"
+    _write_poll_stub "$stub_bin" "$tmp/polls"
     PANES_RC=0
     (
         cd "$tmp" &&
-            /usr/bin/env -uBASH_ENV PATH="$stub_bin" \
+            bounded_run 30 /usr/bin/env -uBASH_ENV PATH="$stub_bin" \
                 FAKE_PANE_TEXT="$pane_text" \
                 FAKE_PANE_TEXT_E="${PANE_TEXT_E-$pane_text}" \
                 FAKE_PANE_TEXT_S="${PANE_TEXT_S-$pane_text}" \
                 FAKE_PANE_TEXT_S_SESSION="${PANE_TEXT_S_SESSION:-golem-9}" \
                 FAKE_TMUX_LS="${TMUX_LS:-golem-9: 1 windows}" \
-                "$real_bash" "$GATE_WATCH" --once-panes
+                "$real_bash" "$GATE_WATCH" "${mode_args[@]}"
     ) >"$tmp/out" 2>/dev/null && PANES_RC=0 || PANES_RC=$?
     PANES_OUT="$(command cat "$tmp/out")"
 }
