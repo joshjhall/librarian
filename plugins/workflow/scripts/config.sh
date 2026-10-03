@@ -292,7 +292,8 @@
 # case-insensitive virtiofs+bindfs stack teardown leaves a phantom `.venv/Lib`
 # that readdir lists but rmdir/rename/unlink answer ENOENT (containers#1004).
 # Same contract as GOLEM_CARGO_CACHE_DIR: a probed DEFAULT, and a nonexistent
-# path disables the seed.
+# path disables the seed. Venvs land at <this>/<golem_repo_key>/issue-N — see
+# golem_repo_key for why the repo is part of the path.
 : "${GOLEM_UV_CACHE_DIR:=/cache/venv}"
 
 # Liveness/heartbeat (SOFT, advisory — never auto-kills a golem):
@@ -366,6 +367,26 @@ export GOLEM_WORKTREE_DIR GOLEM_STATUS_DIR GOLEM_BRANCH_PREFIX GOLEM_LEVEL \
     GOLEM_MODE_FIX_ATTEMPTS GOLEM_MODE_CHECK_INTERVAL \
     GOLEM_EVENT_SINKS GOLEM_EVENT_SINK_TIMEOUT \
     GOLEM_EVENT_LISTEN_ADDR GOLEM_EVENT_LISTEN_PORT GOLEM_EVENT_MAX_BODY
+
+# golem_repo_key <repo-root> — a stable, per-REPO directory name for state kept
+# OUTSIDE the repo under a shared root (the uv venv cache, #1091): the repo's
+# basename for legibility plus a cksum of its full path for uniqueness.
+#
+# WHY the repo is in the path at all: /cache is one mount shared by every repo
+# in the container, and issue numbers are per-repo. Keyed by `issue-N` alone,
+# two repos each working their issue 42 would SHARE one venv — and since
+# worktree-rm.sh rm -rf's it on teardown, finishing one golem would delete the
+# other's live environment. Both scripts derive the key from repo_root(), so
+# the creator and the remover always agree.
+#
+# cksum (POSIX, same output shape on GNU and BSD) rather than md5sum/shasum,
+# which are each missing on one of the two platforms.
+golem_repo_key() {
+    local root="$1" sum
+    sum="$(command printf '%s' "$root" | command cksum)" || return 1
+    sum="${sum%% *}"
+    command printf '%s-%s\n' "${root##*/}" "$sum"
+}
 
 # golem_model_flag — print ` --model "<GOLEM_MODEL>"` when GOLEM_MODEL is set,
 # else nothing. SINGLE SOURCE OF TRUTH for the model-flag shape: golem-launch.sh

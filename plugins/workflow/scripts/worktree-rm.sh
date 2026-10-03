@@ -1297,14 +1297,22 @@ fi
 #
 # Issue mode only — worktree-new.sh keys the venv by issue number and never
 # creates one for a name-mode worktree, so a name has no venv to find. The path
-# is built from a validated number (^[0-9]+$ above) under a non-empty, non-root
-# cache dir, so it can name neither the cache root nor anything outside it.
+# is <cache>/<golem_repo_key>/issue-N, the SAME derivation worktree-new.sh used:
+# keyed by repo as well as issue, because the cache is shared across repos and
+# another repo's issue N is somebody else's live venv. It is built from a
+# validated number (^[0-9]+$ above) under an ABSOLUTE, non-root cache dir (a
+# relative one would resolve inside this checkout), and a symlinked leaf is
+# refused rather than followed.
 # Best-effort: a failed removal warns and leaves `removed` alone, for the same
 # reason the tmux arm below does — teardown is past its destructive git steps,
 # so failing here would strand a removed worktree behind a non-zero exit.
-if [ "$wt_mode" = "issue" ] && [ -n "$GOLEM_UV_CACHE_DIR" ] &&
-    [ "$GOLEM_UV_CACHE_DIR" != "/" ]; then
-    uv_venv="${GOLEM_UV_CACHE_DIR%/}/issue-$N"
+case "$GOLEM_UV_CACHE_DIR" in
+    /?*) uv_cache_ok=1 ;;
+    *) uv_cache_ok=0 ;;
+esac
+if [ "$wt_mode" = "issue" ] && [ "$uv_cache_ok" -eq 1 ] &&
+    uv_key="$(golem_repo_key "$root")" && [ -n "$uv_key" ]; then
+    uv_venv="${GOLEM_UV_CACHE_DIR%/}/$uv_key/issue-$N"
     if [ -d "$uv_venv" ] && [ ! -L "$uv_venv" ]; then
         if command rm -rf "$uv_venv" 2>/dev/null && [ ! -e "$uv_venv" ]; then
             command echo "  removed uv venv $uv_venv"

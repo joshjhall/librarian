@@ -78,6 +78,20 @@ _uv_key_of() {
         "$1/.worktrees/issue-$2/.claude/settings.local.json" 2>/dev/null
 }
 
+# _uv_venv <sandbox> <cache> <issue-N> — the venv path the scripts derive:
+# <cache>/<golem_repo_key>/issue-N. Computed by CALLING config.sh's function,
+# not re-spelling it, so a change to the key cannot leave the tests asserting a
+# stale shape that both scripts have moved away from.
+_uv_venv() {
+    local key
+    key="$(
+        # shellcheck source=/dev/null
+        . "$SCRIPTS/config.sh"
+        golem_repo_key "$1"
+    )"
+    command printf '%s/%s/issue-%s\n' "$2" "$key" "$3"
+}
+
 _uv_need_jq() {
     command -v jq >/dev/null 2>&1 && return 0
     skip_test "jq unavailable — the seed is jq-gated by design"
@@ -100,13 +114,15 @@ test_worktree_new_uv_seeds_project_environment() {
     local cache="$sb/venvs"
     command mkdir -p "$cache"
 
+    local venv
+    venv="$(_uv_venv "$sb" "$cache" 81)"
     _uv_run "$WT_NEW" "$sb" "$cache" 81
     assert_exit 0 "$RUN_RC" "worktree-new exits 0 when seeding the uv venv"
-    assert_equals "$cache/issue-81" "$(_uv_key_of "$sb" 81)" \
-        "UV_PROJECT_ENVIRONMENT is seeded per-worktree into settings.local.json"
-    assert_contains "$RUN_OUT" "seeded UV_PROJECT_ENVIRONMENT=$cache/issue-81" \
+    assert_equals "$venv" "$(_uv_key_of "$sb" 81)" \
+        "UV_PROJECT_ENVIRONMENT is seeded per-repo, per-worktree into settings.local.json"
+    assert_contains "$RUN_OUT" "seeded UV_PROJECT_ENVIRONMENT=$venv" \
         "reports the uv seed"
-    assert_true "[ -d \"$cache/issue-81\" ]" "The per-worktree venv dir is created"
+    assert_true "[ -d \"$venv\" ]" "The per-worktree venv dir is created"
     local kept
     kept="$(command jq -r '.permissions.allow[0] // empty' \
         "$sb/.worktrees/issue-81/.claude/settings.local.json" 2>/dev/null)"
@@ -126,8 +142,8 @@ test_worktree_new_uv_venv_is_per_worktree() {
 
     _uv_run "$WT_NEW" "$sb" "$cache" 82
     _uv_run "$WT_NEW" "$sb" "$cache" 83
-    assert_equals "$cache/issue-82" "$(_uv_key_of "$sb" 82)" "issue 82 gets its own venv"
-    assert_equals "$cache/issue-83" "$(_uv_key_of "$sb" 83)" "issue 83 gets its own venv"
+    assert_equals "$(_uv_venv "$sb" "$cache" 82)" "$(_uv_key_of "$sb" 82)" "issue 82 gets its own venv"
+    assert_equals "$(_uv_venv "$sb" "$cache" 83)" "$(_uv_key_of "$sb" 83)" "issue 83 gets its own venv"
 }
 
 # The gate's second arm: `uv.lock` with no pyproject.toml still counts. Without
@@ -141,7 +157,7 @@ test_worktree_new_uv_lock_alone_triggers_seed() {
     command mkdir -p "$cache"
 
     _uv_run "$WT_NEW" "$sb" "$cache" 84
-    assert_equals "$cache/issue-84" "$(_uv_key_of "$sb" 84)" \
+    assert_equals "$(_uv_venv "$sb" "$cache" 84)" "$(_uv_key_of "$sb" 84)" \
         "a uv.lock alone marks the worktree as a uv project"
 }
 
@@ -166,7 +182,7 @@ test_worktree_new_uv_noop_without_uv_project() {
     assert_not_contains "$subject_out" "UV_PROJECT_ENVIRONMENT" \
         "emits no uv line for a repo with no pyproject.toml / uv.lock"
     assert_equals "" "$(_uv_key_of "$sb" 85)" "writes no UV_PROJECT_ENVIRONMENT"
-    assert_true "[ ! -e \"$cache/issue-85\" ]" "provisions no venv dir for a non-uv repo"
+    assert_equals "" "$(command ls -A "$cache")" "provisions nothing under the cache for a non-uv repo"
 
     # Control: identical sandbox shape plus a marker DOES seed.
     local sb2
@@ -174,7 +190,7 @@ test_worktree_new_uv_noop_without_uv_project() {
     _uv_project "$sb2"
     command mkdir -p "$sb2/venvs"
     _uv_run "$WT_NEW" "$sb2" "$sb2/venvs" 85
-    assert_equals "$sb2/venvs/issue-85" "$(_uv_key_of "$sb2" 85)" \
+    assert_equals "$(_uv_venv "$sb2" "$sb2/venvs" 85)" "$(_uv_key_of "$sb2" 85)" \
         "control: the same setup with a pyproject.toml DOES seed"
 }
 
@@ -205,7 +221,7 @@ test_worktree_new_uv_coexists_with_cargo_seed() {
     _uv_run "$WT_NEW" "$sb" "$sb/venvs" 87 "$sb/targets"
     assert_equals "$sb/targets/issue-87" "$(_uv_key_of "$sb" 87 CARGO_TARGET_DIR)" \
         "CARGO_TARGET_DIR survives the uv merge"
-    assert_equals "$sb/venvs/issue-87" "$(_uv_key_of "$sb" 87)" \
+    assert_equals "$(_uv_venv "$sb" "$sb/venvs" 87)" "$(_uv_key_of "$sb" 87)" \
         "UV_PROJECT_ENVIRONMENT sits alongside it"
 }
 
@@ -219,26 +235,137 @@ test_worktree_rm_removes_uv_venv() {
     new_sandbox sb
     _uv_need_jq || return 0
     _uv_project "$sb"
-    local cache="$sb/venvs"
-    command mkdir -p "$cache/issue-99/bin"
-    command printf 'sibling\n' >"$cache/issue-99/bin/python"
+    local cache="$sb/venvs" venv sibling
+    venv="$(_uv_venv "$sb" "$cache" 88)"
+    sibling="$(_uv_venv "$sb" "$cache" 99)"
+    command mkdir -p "${sibling}/bin"
+    command printf 'sibling\n' >"$sibling/bin/python"
 
     _uv_run "$WT_NEW" "$sb" "$cache" 88
-    assert_equals "$cache/issue-88" "$(_uv_key_of "$sb" 88)" \
+    assert_equals "$venv" "$(_uv_key_of "$sb" 88)" \
         "the seed landed (guards a vacuous teardown pass below)"
     # What `uv sync` would leave behind, including the lib64 symlink that is
     # the containers#1004 trigger shape.
-    command mkdir -p "$cache/issue-88/bin" "$cache/issue-88/lib"
-    command printf 'py\n' >"$cache/issue-88/bin/python"
-    command ln -s lib "$cache/issue-88/lib64"
+    command mkdir -p "$venv/bin" "$venv/lib"
+    command printf 'py\n' >"$venv/bin/python"
+    command ln -s lib "$venv/lib64"
 
     _uv_run "$WT_RM" "$sb" "$cache" 88
     assert_exit 0 "$RUN_RC" "teardown succeeds after the uv seed — no dirty refusal"
     assert_not_contains "$RUN_OUT" "uncommitted" "teardown reports no uncommitted changes"
-    assert_contains "$RUN_OUT" "removed uv venv $cache/issue-88" "reports the venv removal"
-    assert_true "[ ! -e \"$cache/issue-88\" ]" "The per-worktree venv is gone"
-    assert_true "[ -f \"$cache/issue-99/bin/python\" ]" "A sibling issue's venv is untouched"
+    assert_contains "$RUN_OUT" "removed uv venv $venv" "reports the venv removal"
+    assert_true "[ ! -e \"$venv\" ]" "The per-worktree venv is gone"
+    assert_true "[ -f \"$sibling/bin/python\" ]" "A sibling issue's venv is untouched"
     assert_true "[ -d \"$cache\" ]" "The cache root itself is untouched"
+}
+
+# The cache is ONE mount shared by every repo in the container, and issue
+# numbers are per-repo. Two repos each tearing down "issue 42" must not share —
+# and so must not delete — one venv. This is the review finding the repo key
+# answers: keyed by issue alone, finishing repo A's golem rm -rf'd repo B's live
+# environment.
+test_worktree_rm_spares_another_repos_same_issue_venv() {
+    local a b
+    new_sandbox a
+    new_sandbox b
+    _uv_need_jq || return 0
+    _uv_project "$a"
+    _uv_project "$b"
+    local cache="$WORKDIR/shared-venvs-$$"
+    command mkdir -p "$cache"
+
+    _uv_run "$WT_NEW" "$a" "$cache" 42
+    _uv_run "$WT_NEW" "$b" "$cache" 42
+    local va vb
+    va="$(_uv_key_of "$a" 42)"
+    vb="$(_uv_key_of "$b" 42)"
+    assert_not_empty "$va" "repo A seeded (guards a vacuous pass)"
+    assert_not_empty "$vb" "repo B seeded (guards a vacuous pass)"
+    assert_true "[ \"$va\" != \"$vb\" ]" \
+        "The same issue number in two repos gets two DIFFERENT venvs"
+    command printf 'b\n' >"$vb/marker"
+
+    _uv_run "$WT_RM" "$a" "$cache" 42
+    assert_exit 0 "$RUN_RC" "repo A's teardown exits 0"
+    assert_true "[ ! -e \"$va\" ]" "repo A's venv is removed"
+    assert_true "[ -f \"$vb/marker\" ]" "repo B's venv for the SAME issue number survives"
+}
+
+# A symlinked leaf is refused, never followed: `rm -rf link` would only unlink,
+# but the guard exists so a planted link can never redirect the delete, and the
+# target's content must survive either way.
+test_worktree_rm_refuses_symlinked_uv_venv() {
+    local sb
+    new_sandbox sb
+    local cache="$sb/venvs" venv
+    venv="$(_uv_venv "$sb" "$cache" 91)"
+    command mkdir -p "$sb/precious" "${venv%/*}"
+    command printf 'keep\n' >"$sb/precious/file"
+    command ln -s "$sb/precious" "$venv"
+    _uv_run "$WT_NEW" "$sb" "$cache" 91
+
+    _uv_run "$WT_RM" "$sb" "$cache" 91
+    assert_exit 0 "$RUN_RC" "teardown exits 0 with a symlinked venv path"
+    assert_not_contains "$RUN_OUT" "uv venv" "neither removes nor warns about a symlinked leaf"
+    assert_true "[ -f \"$sb/precious/file\" ]" "The symlink target's content survives"
+    assert_true "[ -L \"$venv\" ]" "The symlink itself is left in place"
+}
+
+# A removal that fails must warn and still exit 0 — teardown is past its
+# destructive git steps, so failing here would strand a removed worktree behind
+# a non-zero exit. A read-only parent makes the rm fail; root defeats that, so
+# skip rather than assert a false pass.
+test_worktree_rm_failed_uv_venv_removal_warns_and_exits_0() {
+    local sb
+    new_sandbox sb
+    local cache="$sb/venvs" venv
+    venv="$(_uv_venv "$sb" "$cache" 92)"
+    _uv_run "$WT_NEW" "$sb" "$cache" 92
+    command mkdir -p "$venv/bin"
+    command chmod 555 "${venv%/*}" 2>/dev/null || true
+    if [ -w "${venv%/*}" ]; then
+        command chmod 755 "${venv%/*}" 2>/dev/null || true
+        skip_test "venv parent still writable after chmod 555 (running as root?)"
+        return
+    fi
+
+    _uv_run "$WT_RM" "$sb" "$cache" 92
+    local rc="$RUN_RC" out="$RUN_OUT"
+    command chmod 755 "${venv%/*}" 2>/dev/null || true
+    assert_exit 0 "$rc" "teardown still exits 0 when the venv cannot be removed"
+    assert_contains "$out" "could not remove uv venv $venv" "warns, naming the venv"
+    assert_not_contains "$out" "removed uv venv" "does not claim a removal that failed"
+    assert_contains "$out" "removed worktree" "the worktree teardown itself still happened"
+}
+
+# A RELATIVE cache root is refused by both scripts: it would resolve against the
+# repo checkout — the mount the whole feature exists to avoid — and on teardown
+# would aim rm -rf at a path inside the repo. Positive control: the same
+# relative dir, made absolute, does seed.
+test_worktree_uv_relative_cache_root_is_refused() {
+    local sb
+    new_sandbox sb
+    _uv_need_jq || return 0
+    _uv_project "$sb"
+    command mkdir -p "$sb/relvenvs"
+
+    _uv_run "$WT_NEW" "$sb" relvenvs 93
+    assert_not_contains "$RUN_OUT" "UV_PROJECT_ENVIRONMENT" "a relative cache root is not seeded"
+    assert_equals "" "$(command ls -A "$sb/relvenvs")" "nothing is provisioned under it"
+
+    local key
+    key="$(_uv_venv "$sb" relvenvs 93)"
+    command mkdir -p "$sb/$key"
+    _uv_run "$WT_RM" "$sb" relvenvs 93
+    assert_true "[ -d \"$sb/$key\" ]" "teardown does not rm -rf under a relative cache root"
+
+    local sb2
+    new_sandbox sb2
+    _uv_project "$sb2"
+    command mkdir -p "$sb2/relvenvs"
+    _uv_run "$WT_NEW" "$sb2" "$sb2/relvenvs" 93
+    assert_equals "$(_uv_venv "$sb2" "$sb2/relvenvs" 93)" "$(_uv_key_of "$sb2" 93)" \
+        "control: the same dir spelled absolutely DOES seed"
 }
 
 # No venv to remove: teardown stays quiet about it. Guards an unconditional
@@ -263,13 +390,15 @@ test_worktree_rm_dirty_refusal_keeps_uv_venv() {
     _uv_project "$sb"
     local cache="$sb/venvs"
     command mkdir -p "$cache"
+    local venv
+    venv="$(_uv_venv "$sb" "$cache" 90)"
     _uv_run "$WT_NEW" "$sb" "$cache" 90
-    command mkdir -p "$cache/issue-90/bin"
+    command mkdir -p "$venv/bin"
     command printf 'wip\n' >"$sb/.worktrees/issue-90/seed.txt"
 
     _uv_run "$WT_RM" "$sb" "$cache" 90
     assert_exit 1 "$RUN_RC" "worktree-rm refuses the dirty worktree"
-    assert_true "[ -d \"$cache/issue-90/bin\" ]" "The refused worktree's venv survives"
+    assert_true "[ -d \"$venv/bin\" ]" "The refused worktree's venv survives"
     assert_not_contains "$RUN_OUT" "removed uv venv" "reports no venv removal on refusal"
 }
 
@@ -279,8 +408,10 @@ test_worktree_rm_dirty_refusal_keeps_uv_venv() {
 test_worktree_rm_name_mode_leaves_uv_cache_alone() {
     local sb
     new_sandbox sb
-    local cache="$sb/venvs"
-    command mkdir -p "$cache/issue-scratch" "$cache/scratch"
+    local cache="$sb/venvs" key_dir
+    key_dir="$(_uv_venv "$sb" "$cache" scratch)"
+    key_dir="${key_dir%/*}"
+    command mkdir -p "$key_dir/issue-scratch" "$key_dir/scratch"
     /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$sb" worktree add -q .worktrees/scratch -b scratch 2>/dev/null
 
@@ -288,6 +419,6 @@ test_worktree_rm_name_mode_leaves_uv_cache_alone() {
     assert_exit 0 "$RUN_RC" "name-mode teardown exits 0"
     assert_true "[ ! -e \"$sb/.worktrees/scratch\" ]" \
         "the named worktree was removed (guards a vacuous pass)"
-    assert_true "[ -d \"$cache/issue-scratch\" ] && [ -d \"$cache/scratch\" ]" \
+    assert_true "[ -d \"$key_dir/issue-scratch\" ] && [ -d \"$key_dir/scratch\" ]" \
         "name mode touches nothing under the uv cache"
 }

@@ -357,14 +357,22 @@ cargo_cache_fstype() {
     command echo "$best_fs"
 }
 
-# seed_cache_env <cache-root> <ENV_KEY> — the whole seed, shared by every key
-# this script relocates (#944 cargo, #1091 uv). One body, not one per key: the
-# probe, the ignore check and the atomic write are the parts reviewers kept
-# finding bugs in, and a second copy would have to re-learn each one.
-# Best-effort; always returns 0, and is SILENT on every refusal.
+# seed_cache_env <cache-root> <ENV_KEY> [subdir] — the whole seed, shared by
+# every key this script relocates (#944 cargo, #1091 uv). One body, not one per
+# key: the probe, the ignore check and the atomic write are the parts reviewers
+# kept finding bugs in, and a second copy would have to re-learn each one. The
+# target is <cache-root>/[<subdir>/]issue-N; the probe always classifies the
+# cache ROOT. Best-effort; always returns 0, and is SILENT on every refusal.
 seed_cache_env() {
-    local cache_root="$1" key="$2"
-    local target="$cache_root/issue-$N" probe_dir fs settings tmp
+    local cache_root="$1" key="$2" sub="${3:-}"
+    local target probe_dir fs settings tmp
+    target="$cache_root/${sub:+$sub/}issue-$N"
+    # ABSOLUTE only. A relative root resolves against this script's cwd — the
+    # repo checkout, i.e. the very mount the seed exists to stay off.
+    case "$cache_root" in
+        /?*) ;;
+        *) return 0 ;;
+    esac
     # The CONFIGURED directory must itself already exist. Deliberately NOT an
     # ancestor walk: climbing to the deepest existing parent makes an absent
     # cache location probe as PRESENT (every path has an existing ancestor,
@@ -451,10 +459,13 @@ seed_cache_env "$GOLEM_CARGO_CACHE_DIR" CARGO_TARGET_DIR
 #
 # Gated on the repo being a uv/pyproject project — a repo with neither file
 # gets no key and no output line, so non-Python worktrees are byte-identical.
-# worktree-rm.sh removes <GOLEM_UV_CACHE_DIR>/issue-N on teardown; a venv,
-# unlike a cargo target, is not worth keeping across an issue's lifetime.
+# worktree-rm.sh removes the venv on teardown; a venv, unlike a cargo target, is
+# not worth keeping across an issue's lifetime — which is also why it is
+# namespaced by REPO (golem_repo_key): a deleted path must never be one another
+# repo's issue of the same number is using.
 if [ -f "$wt/pyproject.toml" ] || [ -f "$wt/uv.lock" ]; then
-    seed_cache_env "$GOLEM_UV_CACHE_DIR" UV_PROJECT_ENVIRONMENT
+    seed_cache_env "$GOLEM_UV_CACHE_DIR" UV_PROJECT_ENVIRONMENT \
+        "$(golem_repo_key "$root")"
 fi
 
 # Seed a workspace-trust entry for the new worktree path so the copied
