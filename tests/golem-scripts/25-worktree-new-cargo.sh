@@ -489,3 +489,29 @@ test_worktree_new_cargo_no_jq_is_noop() {
     assert_file_exists "$sb/.worktrees/issue-47/.claude/settings.local.json" \
         "the worktree is otherwise good — the copied settings file is present"
 }
+
+# The shared seed_cache_env (#1091) refuses a RELATIVE cache root for every key,
+# cargo included: a relative root resolves against the repo checkout — the very
+# mount the seed exists to stay off. This is a behaviour change for cargo (a
+# relative GOLEM_CARGO_CACHE_DIR used to be honoured), so it is pinned here
+# rather than left as a side effect. Control: the same dir, absolute, seeds.
+test_worktree_new_cargo_relative_cache_root_is_noop() {
+    local sb
+    new_sandbox sb
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq unavailable — the seed is jq-gated by design"
+        return
+    fi
+    _commit_gitignore "$sb"
+    command mkdir -p "$sb/reltarget"
+
+    _cargo_run "$sb" reltarget 51
+    assert_exit 0 "$RUN_RC" "worktree-new exits 0 with a relative cargo cache root"
+    assert_not_contains "$RUN_OUT" "seeded CARGO_TARGET_DIR" \
+        "a relative cargo cache root is not seeded"
+    assert_equals "" "$(command ls -A "$sb/reltarget")" "nothing is provisioned under it"
+
+    _cargo_run "$sb" "$sb/reltarget" 52
+    assert_equals "$sb/reltarget/issue-52" "$(_cargo_target_of "$sb" 52)" \
+        "control: the same dir spelled absolutely DOES seed"
+}

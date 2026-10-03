@@ -375,6 +375,38 @@ test_worktree_rm_refuses_slash_slash_uv_cache_root() {
     assert_not_contains "$RUN_OUT" "removed uv venv" "nothing is removed under a '//' root"
 }
 
+# The UNVERIFIABLE arm: when `readlink -f` cannot run, teardown cannot prove
+# the path is free of symlinks, so it must not delete — and must say so rather
+# than skip silently. A PATH stub fails only `readlink -f`, passing every other
+# readlink call through, so the rest of teardown runs normally. -uBASH_ENV
+# because this image's /etc/bash_env re-exports a full PATH into every
+# non-interactive bash, which would silently restore the real readlink.
+test_worktree_rm_unverifiable_uv_venv_path_is_refused() {
+    local sb
+    new_sandbox sb
+    local cache="$sb/venvs" venv real_rl
+    venv="$(_uv_venv "$sb" "$cache" 97)"
+    _uv_run "$WT_NEW" "$sb" "$cache" 97
+    command mkdir -p "$venv/bin"
+    real_rl="$(command -v readlink)"
+    command mkdir -p "$sb/stubbin"
+    command printf '#!/bin/sh\n[ "$1" = "-f" ] && exit 1\nexec %s "$@"\n' \
+        "$real_rl" >"$sb/stubbin/readlink"
+    command chmod +x "$sb/stubbin/readlink"
+
+    _uv_env "$sb" "$cache" "$sb/no-cargo-cache"
+    RUN_RC=0
+    RUN_OUT="$(cd "$sb" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" -uBASH_ENV "${_UV_ENV[@]}" \
+            PATH="$sb/stubbin:$PATH" \
+            "$REAL_BASH" "$WT_RM" 97 2>&1)" || RUN_RC=$?
+    assert_exit 0 "$RUN_RC" "teardown exits 0 when readlink -f cannot run"
+    assert_contains "$RUN_OUT" "refusing to remove uv venv $venv" \
+        "an unverifiable path is refused out loud"
+    assert_true "[ -d \"$venv/bin\" ]" "The unverifiable venv is left in place"
+    assert_contains "$RUN_OUT" "removed worktree" "the rest of teardown still ran"
+}
+
 # golem_repo_key's uniqueness rests on the cksum suffix: two repos that share a
 # BASENAME (two checkouts of one project) must still get different keys. The
 # cross-repo teardown test uses mktemp-named sandboxes whose basenames already
