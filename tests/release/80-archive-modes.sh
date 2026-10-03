@@ -111,6 +111,21 @@ test_release_yml_pins_archive_mask() {
     # line has no `=`. `[$]` keeps the dollar literal in BRE on GNU and BSD.
     assert_file_contains "$rel" '^ *bash bin/check-archive-modes.sh "[$]tarball" || exit 1$' \
         "release.yml runs the mode guard with an explicit failure check"
+    # Presence alone survives a reordering: the guard must sit AFTER the
+    # archive is built and BEFORE it is signed, or a bad tarball still ships
+    # signed. Compare the first line number of each, by fixed-string index().
+    local order
+    order="$(command awk '
+        !a && index($0, "git -c tar.umask=0022 archive") { a = NR }
+        !g && index($0, "bash bin/check-archive-modes.sh") { g = NR }
+        !s && index($0, "cosign sign-blob") { s = NR }
+        END { printf "%d %d %d", a, g, s }' "$rel")"
+    local a_ln g_ln s_ln
+    read -r a_ln g_ln s_ln <<EOF
+$order
+EOF
+    assert_true "[ \"$a_ln\" -gt 0 ] && [ \"$a_ln\" -lt \"$g_ln\" ] && [ \"$g_ln\" -lt \"$s_ln\" ]" \
+        "release.yml runs the guard after archiving and before signing (archive=$a_ln guard=$g_ln sign=$s_ln)"
     assert_file_contains "$REPO_ROOT/README.md" \
         'git -c tar.umask=0022 archive --format=tar.gz --prefix=librarian-<version>/ v<version>' \
         "README's reproduce command carries the same mask"
