@@ -132,6 +132,13 @@ run_fragment_test test_heartbeat_interval_numeric_coercion "GOLEM_HEARTBEAT_INTE
 run_fragment_test test_ghost_gate_dropped_when_no_trace "Ghost filter: gated golem with no live trace dropped from BLOCKED (#446)"
 run_fragment_test test_pane_is_api_error "pane_is_api_error: matches API-error death, spinner vetoes, classifies retriable/terminal (#446)"
 run_fragment_test test_panes_snapshot_died_dispatch "panes_snapshot: died-on-API-error emits DIED before turn-end; modal gates still win (#446)"
+run_fragment_test test_stream_emit_existing_feed "--stream --emit-existing surfaces an open gate at startup; default primes quietly (#1090)"
+run_fragment_test test_stream_emit_existing_feed_emits_once "--stream --emit-existing: startup gate emitted once, deduped on later polls (#1090)"
+run_fragment_test test_stream_panes_emit_existing_plan_gate "--stream-panes --emit-existing surfaces an open plan gate at startup; default quiet (#1090)"
+run_fragment_test test_stream_panes_emit_existing_emits_once "--stream-panes --emit-existing: startup gate emitted once, deduped on later polls (#1090)"
+run_fragment_test test_stream_panes_idle_debounce_survives_emit_existing "--stream-panes: idle debounced at startup with or without --emit-existing (#447/#1090)"
+run_fragment_test test_stream_panes_emit_existing_died_at_rearm "--stream-panes --emit-existing surfaces a golem stopped on an API error at re-arm (#1090)"
+run_fragment_test test_emit_existing_rejected_elsewhere "--emit-existing on another mode, or a typo'd option, exits 2 (#1090)"
 
 run_fragment_test test_pane_prompt_line_class "pane_prompt_line_class: dim=suggestion, plain=input, bare=empty (#977)"
 run_fragment_test test_pane_prompt_line_class_unknown_not_empty "pane_prompt_line_class: unreadable/glyph-less pane is unknown, NOT empty (#977)"

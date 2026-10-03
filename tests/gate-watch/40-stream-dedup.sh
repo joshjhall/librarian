@@ -492,3 +492,151 @@ test_pane_footer_lines_env_overridable() {
         ) 2>/dev/null)" \
         "pane_liveness_class: GOLEM_PANE_FOOTER_LINES=12 enlarges the window so the same idle footer classifies idle"
 }
+
+# --- Gates already open at (re)arm (#1090) ------------------------------------
+# Both gate streams PRIME on their first poll: whatever is open is recorded and
+# NOT emitted. An orchestrator that re-arms after every event therefore never
+# heard about a golem that was already waiting — three golems sat unreported in
+# one session. `--emit-existing` emits that startup snapshot once. These drive
+# the REAL drive arms (GW_MODE / GW_POLLS in the sandbox), not emit_transitions
+# alone, because the defect lived in the arm's hardcoded `1`.
+#
+# Every "stays quiet" assertion is paired with a flag-on run over the IDENTICAL
+# fixture that does emit, so a quiet result cannot mean a broken fixture.
+
+# Feed channel: a fresh gate present at startup.
+test_stream_emit_existing_feed() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (feed_snapshot no-ops without jq)"
+        return 0
+    fi
+    local gate='{"golem":"golem-4","event":"gate","message":"push gate"}'
+
+    GW_MODE="--stream --emit-existing" _run_once_snapshot 999999999999 "$gate"
+    assert_contains "$SNAP_OUT" "golem-4"$'\t' \
+        "--stream --emit-existing surfaces a gate already open at startup (#1090)"
+
+    GW_MODE="--stream" _run_once_snapshot 999999999999 "$gate"
+    assert_not_contains "$SNAP_OUT" "golem-4" \
+        "--stream without the flag still primes silently (quiet human restart kept)"
+}
+
+# Feed channel, emit-once: the --stream arm takes the same startup-only prime as
+# --stream-panes (below), so it needs the same later-poll dedup guard. Three
+# polls; the gate line must appear exactly once, at startup.
+test_stream_emit_existing_feed_emits_once() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (feed_snapshot no-ops without jq)"
+        return 0
+    fi
+    local gate='{"golem":"golem-4","event":"gate","message":"push gate"}' n
+
+    GW_POLLS=3 GW_MODE="--stream --emit-existing" _run_once_snapshot 999999999999 "$gate"
+    assert_contains "$SNAP_OUT" "[poll3]" \
+        "Feed run reached the third poll (vacuity guard for the later-poll assertion)"
+    assert_contains "${SNAP_OUT%%\[poll2\]*}" "golem-4"$'\t' \
+        "Feed: the open gate is emitted at startup"
+    assert_not_contains "${SNAP_OUT#*\[poll2\]}" "golem-4" \
+        "Feed: ...and NOT re-emitted on polls 2 or 3"
+    n="$(command printf '%s\n' "$SNAP_OUT" | command grep -o 'golem-4' | command wc -l)"
+    assert_equals "1" "$((n + 0))" "Feed: the gate line appears exactly once across three polls"
+}
+
+# Pane channel: a plan gate (the golem-3 row of #1090) present at startup.
+test_stream_panes_emit_existing_plan_gate() {
+    local plan="Would you like to proceed?"$'\n'"❯ 1. Yes, and use auto mode"
+
+    GW_MODE="--stream-panes --emit-existing" _run_panes_snapshot_tmux "$plan"
+    assert_contains "$PANES_OUT" "golem-9"$'\t' \
+        "--stream-panes --emit-existing surfaces a plan gate already open at startup (#1090)"
+
+    GW_MODE="--stream-panes" _run_panes_snapshot_tmux "$plan"
+    assert_not_contains "$PANES_OUT" "golem-9" \
+        "--stream-panes without the flag still primes silently"
+}
+
+# --emit-existing lifts the prime on the STARTUP poll only. A gate it emits must
+# then be deduped like any standing gate: a regression that passed prime=0 to
+# every poll would re-push it each cycle, and the startup-only cases above (one
+# poll) cannot see that. Three polls; the line must appear exactly once, at
+# startup.
+test_stream_panes_emit_existing_emits_once() {
+    local plan="Would you like to proceed?"$'\n'"❯ 1. Yes, and use auto mode"
+    local later n
+
+    GW_POLLS=3 GW_MODE="--stream-panes --emit-existing" _run_panes_snapshot_tmux "$plan"
+    assert_contains "$PANES_OUT" "[poll3]" \
+        "The run reached the third poll (vacuity guard for the later-poll assertion)"
+    assert_contains "${PANES_OUT%%\[poll2\]*}" "golem-9"$'\t' \
+        "The open gate is emitted at startup"
+    later="${PANES_OUT#*\[poll2\]}"
+    assert_not_contains "$later" "golem-9" \
+        "...and NOT re-emitted on polls 2 or 3 (standing gate stays deduped)"
+    n="$(command printf '%s\n' "$PANES_OUT" | command grep -o 'golem-9' | command wc -l)"
+    assert_equals "1" "$((n + 0))" "The gate line appears exactly once across three polls"
+}
+
+# Pane channel, a golem idle at re-arm (operator-requested). --emit-existing must
+# NOT bypass the #447 debounce — one idle-looking poll is not yet an idle golem —
+# and the idle must still surface on the next confirmed poll. Two polls via the
+# stub sleep; `[poll2]` splits startup output from the second poll's.
+#
+# Measured while writing this: the idle case behaves the SAME without the flag.
+# A fresh watcher starts with an empty debounce set, so an idle pane is never in
+# the primed snapshot, and it surfaces on poll 2 either way. This case therefore
+# pins debounce-preservation, not the flag; the default run is asserted too, so
+# that equivalence is recorded rather than assumed.
+test_stream_panes_idle_debounce_survives_emit_existing() {
+    local idle="  ⏵⏵ auto mode on" mode
+    for mode in "--stream-panes --emit-existing" "--stream-panes"; do
+        GW_POLLS=2 GW_MODE="$mode" _run_panes_snapshot_tmux "$idle"
+        assert_contains "$PANES_OUT" "[poll2]" \
+            "$mode: the run reached the second poll (vacuity guard for the startup assertion)"
+        assert_not_contains "${PANES_OUT%%\[poll2\]*}" "golem-9" \
+            "$mode: an unconfirmed idle is NOT emitted at startup (#447 debounce kept)"
+        assert_contains "${PANES_OUT#*\[poll2\]}" "golem-9"$'\t'"⚠ idle at prompt" \
+            "$mode: ...and IS emitted on the next confirmed poll (#447)"
+    done
+}
+
+# Pane channel: a golem that stopped on an API error before the re-arm — the
+# shape of the stall behind the idle request above. Unlike a plain idle, the
+# #446 DIED line is a real gate that skips the debounce, so it IS in the primed
+# snapshot: the default prime hides it until it clears, which never happens
+# without a human. This is the idle-at-rearm case the flag actually changes.
+test_stream_panes_emit_existing_died_at_rearm() {
+    local died="API Error: Request rejected (429)"$'\n'"⏺ stopped"$'\n'"  ⏵⏵ auto mode on"
+
+    GW_POLLS=2 GW_MODE="--stream-panes --emit-existing" _run_panes_snapshot_tmux "$died"
+    assert_contains "${PANES_OUT%%\[poll2\]*}" "golem-9"$'\t' \
+        "--emit-existing surfaces a golem stopped on an API error at startup (#1090)"
+
+    GW_POLLS=2 GW_MODE="--stream-panes" _run_panes_snapshot_tmux "$died"
+    assert_contains "$PANES_OUT" "[poll2]" \
+        "Default run reached the second poll (vacuity guard)"
+    assert_not_contains "$PANES_OUT" "golem-9" \
+        "Without the flag the stopped golem is primed and stays silent across polls"
+}
+
+# The flag is accepted only where it means something, and nothing else is
+# accepted at all — an ignored typo would silently restore the prime.
+# Every call is bounded: a regression that ACCEPTS the args starts a stream that
+# never exits, so unbounded it would hang the suite instead of failing it.
+test_emit_existing_rejected_elsewhere() {
+    local out rc mode
+    for mode in --once --once-panes --once-liveness --stream-liveness; do
+        rc=0
+        out="$(bounded_run 10 bash "$GATE_WATCH" "$mode" --emit-existing 2>&1)" || rc=$?
+        assert_equals "2" "$rc" "$mode --emit-existing exits 2"
+        assert_contains "$out" "--emit-existing applies only to" \
+            "$mode --emit-existing names the modes it applies to"
+    done
+    rc=0
+    out="$(bounded_run 10 bash "$GATE_WATCH" --stream --emit-existnig 2>&1)" || rc=$?
+    assert_equals "2" "$rc" "A misspelled second arg exits 2 rather than being ignored"
+    assert_contains "$out" "unknown option" "...with a message naming it"
+    rc=0
+    out="$(bounded_run 10 bash "$GATE_WATCH" --stream --emit-existing junk 2>&1)" || rc=$?
+    assert_equals "2" "$rc" "A trailing extra arg exits 2 rather than being ignored"
+    assert_contains "$out" "unexpected argument" "...with a message naming it"
+}
