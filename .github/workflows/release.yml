@@ -143,8 +143,15 @@ jobs:
           # Deterministic archive of the whole marketplace tree at the tag —
           # this is the "what bytes are signed" contract (see README ## Verifying
           # a release). Reproducible from the tag alone with the same command.
-          git archive --format=tar.gz --prefix="librarian-${version}/" \
-            -o "$tarball" "$GITHUB_REF_NAME"
+          # `tar.umask` is pinned because git otherwise masks entry modes with
+          # the PROCESS umask, which is 0002 on the runner: every release up to
+          # v0.15.0 shipped 664/775 entries, and root-extracting consumers kept
+          # them group-writable (#1101). The mask is part of the reproduce
+          # command, so it is part of the byte contract too.
+          git -c tar.umask=0022 archive --format=tar.gz \
+            --prefix="librarian-${version}/" -o "$tarball" "$GITHUB_REF_NAME"
+          # Refuse to sign a tarball carrying a group- or world-writable entry.
+          bash bin/check-archive-modes.sh "$tarball" || exit 1
           # Keyless: OIDC identity from this workflow, signature + cert emitted as
           # a single Sigstore bundle. cosign 3.x defaults to --new-bundle-format,
           # which deprecated and IGNORES the old --output-signature/-certificate
