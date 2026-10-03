@@ -435,3 +435,27 @@ STUB
     assert_not_contains "$RUN_OUT" "$(command printf '\r')" \
         "no raw CR byte reaches the operator's terminal"
 }
+
+# worktree-new.sh shares the registration match (#1088 review), so pin it under
+# the same bracketed repo path. The branch-exists guard that follows it would
+# also refuse, so it is taken out of the way first — detach the worktree's HEAD
+# and delete the branch, leaving the worktree REGISTERED — which makes the
+# registration match the only thing that can refuse the duplicate.
+test_worktree_new_already_exists_matches_a_bracketed_repo_path() {
+    local base sb
+    new_sandbox base
+    sb="$WORKDIR/repo[y]-$$"
+    command mv "$base" "$sb"
+    run_in "$sb" "$WT_NEW" 158
+    assert_exit 0 "$RUN_RC" "worktree-new succeeds under a bracketed repo path"
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
+        git -C "$sb/.worktrees/issue-158" checkout -q --detach 2>/dev/null
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
+        git -C "$sb" branch -D -q "feature/issue-158" 2>/dev/null
+
+    run_in "$sb" "$WT_NEW" 158
+    assert_exit 1 "$RUN_RC" \
+        "a second worktree-new is refused while the first is still registered"
+    assert_contains "$RUN_OUT" "already exists — remove it first" \
+        "the registration match recognises its own line under a bracketed path"
+}
