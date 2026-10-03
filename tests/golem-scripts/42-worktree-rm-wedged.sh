@@ -853,7 +853,7 @@ STUB
 
     assert_exit 1 "$RUN_RC" \
         "a force failure that did NOT deregister still refuses"
-    assert_contains "$RUN_OUT" "still registered and nothing was removed" \
+    assert_contains "$RUN_OUT" "still registered, so teardown stops here" \
         "says which state it is in, rather than leaving the operator to guess"
     assert_contains "$RUN_OUT" "Next:" \
         "the refusal states a next action, like every other exit in this region"
@@ -1060,7 +1060,7 @@ STUB
         "an unevaluable re-read takes the refusal arm, never the rm -rf arm"
     # It must NOT borrow the still-registered wording: that would assert a
     # registration state this branch could not measure.
-    assert_not_contains "$RUN_OUT" "is still registered and nothing was removed" \
+    assert_not_contains "$RUN_OUT" "is still registered, so teardown stops here" \
         "never claims a registration state the failed re-read could not observe"
     assert_true "[ -e '$sb/.worktrees/issue-145' ]" \
         "nothing is removed when the state could not be read"
