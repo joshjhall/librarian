@@ -127,6 +127,9 @@ test_pane_liveness_class() {
     # heartbeat instead of falsely reporting idle. Mirrors the push-channel fix.
     assert_equals "" "$(_pane_class "⏺ working"$'\n'"  ⏵⏵ auto mode on · 2 monitors")" \
         "A golem parked on its own monitors is indeterminate, NOT idle (#517 pull channel)"
+    # #1089: the background-Workflow harness row (▰▱ bar + N/M) is the same park.
+    assert_equals "" "$(_pane_class "  ⏵⏵ auto mode on (shift+tab to cycle) · PR #23 · ← for agents"$'\n'"  ◯ next-issue-review  ▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▱▱▱  6/7 · 18s · ↓ 100.0k tokens")" \
+        "A golem parked on its ▰▱ Workflow harness row is indeterminate, NOT idle (#1089 pull channel)"
     # Spinner precedence: both the working spinner AND the auto-mode footer on
     # screen must resolve to working, not idle (a working auto-mode golem shows
     # both). Guards the check order in the classifier.
@@ -1013,6 +1016,11 @@ test_pane_is_turn_end_pending_own_work() {
     assert_equals "1" \
         "$(_pane_rc pane_is_turn_end "next-issue-review  5/6 agents done"$'\n'"  ⏵⏵ auto mode on")" \
         "A 'N/6 agents done' review-harness footer is NOT idle"
+    # #1089: the verbatim footer from the field — the harness now renders as a ▰▱
+    # progress bar with a bare N/M, no 'agents done', no spinner, no monitor count.
+    assert_equals "1" \
+        "$(_pane_rc pane_is_turn_end "  ⏵⏵ auto mode on (shift+tab to cycle) · PR #23 · ← for agents"$'\n'"  ◯ next-issue-review  ▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▱▱▱  6/7 · 18s · ↓ 100.0k tokens")" \
+        "A '◯ <name> ▰▱ bar N/M' Workflow harness row is NOT idle (#1089)"
     # Preserved true cases: ordinary completion prose — including prose with an
     # INCIDENTAL digit near the trigger word — must NOT suppress a genuine idle, or
     # the fix would re-introduce the #517 false-NEGATIVE it exists to prevent. These
@@ -1036,6 +1044,9 @@ test_pane_is_turn_end_pending_own_work() {
     assert_equals "0" \
         "$(_pane_rc pane_is_turn_end "reviewed all 5 dynamic workflow docs"$'\n'"  ⏵⏵ auto mode on")" \
         "An incidental 'N dynamic workflow' prose (no 'Waiting for' prefix) STILL fires (real idle preserved)"
+    assert_equals "0" \
+        "$(_pane_rc pane_is_turn_end "Finished 6/7 steps; the last one needs you."$'\n'"  ⏵⏵ auto mode on")" \
+        "An incidental 'N/M' in prose with no ▰▱ bar STILL fires (real idle preserved, #1089)"
 }
 
 # pane_pending_own_work in isolation (#517): the raw predicate returns 0 only on a
@@ -1081,6 +1092,29 @@ test_pane_pending_own_work() {
     # match (grep is per-line; a case-glob would have matched across the newline).
     assert_equals "1" "$(_pane_rc pane_pending_own_work "Completed 4/6 setup steps"$'\n'"separately, 12 things agents done elsewhere")" \
         "An 'N/M' and 'agents done' on DIFFERENT lines do NOT match (per-line grep)"
+    # #1089: the ▰▱ progress-bar harness row, checked under a byte locale too.
+    local bar_row="  ◯ next-issue-review  ▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▱▱▱  6/7 · 18s · ↓ 100.0k tokens"
+    assert_equals "0" "$(_pane_rc pane_pending_own_work "$bar_row")" \
+        "A '◯ <name> ▰▱ bar N/M' Workflow harness row is own-work pending (#1089)"
+    assert_equals "0" "$(LC_ALL=C _pane_rc pane_pending_own_work "$bar_row")" \
+        "The ▰▱ harness row still matches under LC_ALL=C (#1089)"
+    assert_equals "0" "$(_pane_rc pane_pending_own_work "  ◯ next-issue-review  ▱▱▱▱▱▱▱▱  0/7 · 2s")" \
+        "An all-empty ▱ bar (step 0/M) is own-work pending (#1089)"
+    assert_equals "1" "$(_pane_rc pane_pending_own_work "Finished 6/7 steps, PR #12/34 next")" \
+        "A bare 'N/M' in prose with no ▰▱ bar is NOT own-work pending (#1089)"
+    assert_equals "0" "$(_pane_rc pane_pending_own_work "progress ▰▱▱ 1/7")" \
+        "A mixed bar of exactly 3 glyphs (the floor) is own-work pending (#1089)"
+    assert_equals "1" "$(_pane_rc pane_pending_own_work "progress ▰▰ 3/4")" \
+        "A 2-glyph bar is below the 3-glyph floor, NOT own-work pending (#1089)"
+    assert_equals "1" "$(_pane_rc pane_pending_own_work "progress ▰▰▰6/7")" \
+        "A bar fused to its fraction (no space) is NOT own-work pending (#1089)"
+    # The discriminating case for the alternation: under GNU grep in a byte locale
+    # a `[▰▱]` bracket is a set of four bytes, so two glyphs (6 bytes) clear `{3,}`
+    # and this trap would match. The alternation keeps counting whole glyphs.
+    assert_equals "1" "$(LC_ALL=C _pane_rc pane_pending_own_work "progress ▰▰ 3/4")" \
+        "A 2-glyph bar stays below the floor under LC_ALL=C (glyph alternation, not byte bracket) (#1089)"
+    assert_equals "1" "$(_pane_rc pane_pending_own_work "  ◯ next-issue-review  ▰▰▰▰▰▰▰▰▰▰")" \
+        "A ▰▱ bar with no N/M step count is NOT own-work pending (#1089)"
 }
 
 # End-to-end turn-end dispatch (#447): drive the REAL panes_snapshot() via
