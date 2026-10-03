@@ -52,7 +52,8 @@ source_fragments "$SCRIPT_DIR/release" \
     40-git-automation.sh \
     50-changelog.sh \
     60-git-cliff-install.sh \
-    70-stamp-versions.sh
+    70-stamp-versions.sh \
+    80-archive-modes.sh
 
 # --- Run all tests ----------------------------------------------------------
 
@@ -114,5 +115,11 @@ run_fragment_test test_stamp_no_arg "stamp-versions.mjs exits 1 with no version 
 run_fragment_test test_stamp_bad_semver "stamp-versions.mjs exits 1 on a malformed version argument"
 run_fragment_test test_stamp_empty_plugins "stamp-versions.mjs exits 1 when marketplace.json has an empty plugins[]"
 run_fragment_test test_stamp_missing_version_field "stamp-versions.mjs exits non-zero on a version-less plugin.json"
+
+run_fragment_test test_archive_modes_flags_group_writable "check-archive-modes.sh rejects a 0002-masked archive, names offenders, skips symlinks"
+run_fragment_test test_archive_modes_accepts_pinned_mask "check-archive-modes.sh passes a 0022-masked archive and scans every entry"
+run_fragment_test test_archive_modes_world_writable_only "check-archive-modes.sh rejects other-write even with group-write clear"
+run_fragment_test test_archive_modes_fails_loud_on_bad_input "check-archive-modes.sh exits 2 on missing/unlistable/empty/absent input"
+run_fragment_test test_release_yml_pins_archive_mask "release.yml + README pin tar.umask=0022 and release.yml runs the guard"
 
 generate_report

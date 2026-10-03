@@ -33,8 +33,12 @@ was published by this project and has not been tampered with.
 tag, produced by:
 
 ```bash
-git archive --format=tar.gz --prefix=librarian-<version>/ v<version>
+git -c tar.umask=0022 archive --format=tar.gz --prefix=librarian-<version>/ v<version>
 ```
+
+The `tar.umask` pin is part of the contract. Without it, git masks entry modes
+with your shell's umask, so the bytes differ from one machine to the next. Under
+a `0002` umask, every entry also ships group-writable.
 
 **Assets published per release** (attached to the GitHub Release):
 
