@@ -1102,8 +1102,12 @@ test_pane_pending_own_work() {
         "An all-empty ▱ bar (step 0/M) is own-work pending (#1089)"
     assert_equals "1" "$(_pane_rc pane_pending_own_work "Finished 6/7 steps, PR #12/34 next")" \
         "A bare 'N/M' in prose with no ▰▱ bar is NOT own-work pending (#1089)"
+    assert_equals "0" "$(_pane_rc pane_pending_own_work "progress ▰▱▱ 1/7")" \
+        "A mixed bar of exactly 3 glyphs (the floor) is own-work pending (#1089)"
     assert_equals "1" "$(_pane_rc pane_pending_own_work "progress ▰▰ 3/4")" \
         "A 2-glyph bar is below the 3-glyph floor, NOT own-work pending (#1089)"
+    assert_equals "1" "$(_pane_rc pane_pending_own_work "progress ▰▰▰6/7")" \
+        "A bar fused to its fraction (no space) is NOT own-work pending (#1089)"
     # The discriminating case for the alternation: under GNU grep in a byte locale
     # a `[▰▱]` bracket is a set of four bytes, so two glyphs (6 bytes) clear `{3,}`
     # and this trap would match. The alternation keeps counting whole glyphs.
