@@ -390,7 +390,7 @@ test_worktree_rm_unverifiable_uv_venv_path_is_refused() {
     command mkdir -p "$venv/bin"
     real_rl="$(command -v readlink)"
     command mkdir -p "$sb/stubbin"
-    command printf '#!/bin/sh\n[ "$1" = "-f" ] && exit 1\nexec %s "$@"\n' \
+    command printf '#!/usr/bin/env bash\n[ "$1" = "-f" ] && exit 1\nexec %s "$@"\n' \
         "$real_rl" >"$sb/stubbin/readlink"
     command chmod +x "$sb/stubbin/readlink"
 
