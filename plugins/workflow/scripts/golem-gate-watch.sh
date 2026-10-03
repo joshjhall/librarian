@@ -1715,6 +1715,10 @@ if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
             exit 2
             ;;
     esac
+    if [ "$#" -gt 2 ]; then
+        command echo "golem-gate-watch: unexpected argument '$3'" >&2
+        exit 2
+    fi
 
     status_dir="$(resolve_status_dir || true)"
     feed="${status_dir:+$status_dir/feed.jsonl}"

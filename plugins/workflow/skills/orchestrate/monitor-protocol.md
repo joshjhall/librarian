@@ -312,17 +312,23 @@ skip the very gate its level exists to enforce.
 
 Each emitted `golem-{N}\t<message>` line is **one fresh gate** → raise it to the
 operator and point them at `${CLAUDE_PLUGIN_ROOT}/scripts/golem-attach.sh {N}`. The watcher emits only on the
-**transition into** a fresh gate (a standing gate is not re-emitted; a gate that
-clears and later re-occurs re-fires), so this is signal, not noise.
+**transition into** a fresh gate (within one watcher's lifetime a standing gate
+is not re-emitted; a gate that clears and later re-occurs re-fires), so this is
+signal, not noise.
 
 **Always arm — and re-arm — with `--emit-existing`** (#1090). Without it a
 stream **primes** silently: every gate already open at arm time is recorded and
 never emitted, so a golem that was waiting when you re-armed after an event
 stays unreported until its gate clears, which never happens without a human.
-With it, those gates emit **once** at startup, then only transitions. Treat each
-startup line exactly like a transition. A turn-end idle is still debounced, so
-it surfaces one poll later. The bare quiet start is only for a human restarting
-the watch in their own terminal.
+With it, those gates emit **once** at startup, then only transitions. A turn-end
+idle is still debounced, so it surfaces one poll later. The bare quiet start is
+only for a human restarting the watch in their own terminal.
+
+The dedup state does **not** survive a re-arm, so each startup snapshot repeats
+every gate still open — including ones you already raised. Check each startup
+line against the gates you have raised and not yet seen resolved: a match is a
+reminder, not a new gate, so do not re-broker it. A repeat is the safe failure;
+the silent miss it replaces was not.
 
 - **Feed channel** (`--stream`) — reads the classified `feed.jsonl`
   (`gate` vs `idle`, post-#600), so it works for **every** golem including
