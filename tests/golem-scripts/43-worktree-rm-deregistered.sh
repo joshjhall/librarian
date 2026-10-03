@@ -305,3 +305,41 @@ STUB
     assert_true "[ -e '$sb/.worktrees/issue-154' ]" \
         "the directory really is still there"
 }
+
+# The exit-0-but-nothing-moved arm: unwedge_fallback trusts the PATH, not the
+# exit status. A fallback that reports success while the tree is still there
+# must read as a failure — claiming the path free would be the misreporting
+# class this whole region exists to prevent.
+test_worktree_rm_unwedge_success_without_move_reports_occupied() {
+    local sb blocked shim
+    if [ "$(command id -u)" = "0" ]; then
+        skip_test "running as root — permission bits cannot make rm fail"
+        return 0
+    fi
+    new_sandbox sb
+    ignore_build_dir "$sb"
+    run_in "$sb" "$WT_NEW" 155
+    assert_exit 0 "$RUN_RC" "worktree-new succeeds"
+    blocked="$(make_undeletable "$sb/.worktrees/issue-155")"
+
+    shim="$sb/shim"
+    make_failing_mv "$shim"
+    command cat >"$shim/unwedge-worktree" <<'STUB'
+#!/usr/bin/env bash
+command echo "unwedge-worktree: STUBBED CLAIM OF SUCCESS"
+exit 0
+STUB
+    command chmod +x "$shim/unwedge-worktree"
+
+    run_with_early_deregistering_git "$sb" 155 "$shim"
+    restore_undeletable "$blocked"
+
+    assert_exit 0 "$RUN_RC" "teardown still completes"
+    assert_contains "$RUN_OUT" "unwedge-worktree could not move it either" \
+        "an exit-0 fallback that left the path in place is reported as a failure"
+    assert_contains "$RUN_OUT" "stays occupied" "reports the path occupied"
+    assert_not_contains "$RUN_OUT" "moved it aside instead" \
+        "never claims the fallback freed a path that is still there"
+    assert_true "[ -e '$sb/.worktrees/issue-155' ]" \
+        "the directory really is still there"
+}

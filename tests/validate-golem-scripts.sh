@@ -308,6 +308,7 @@ run_fragment_test test_worktree_rm_recheck_after_deregistration_without_residue 
 run_fragment_test test_worktree_rm_quarantine_falls_back_to_unwedge_worktree "worktree-rm: a failed quarantine rename falls back to unwedge-worktree (#1088)"
 run_fragment_test test_worktree_rm_quarantine_without_unwedge_worktree_reports_occupied "worktree-rm: without unwedge-worktree the path is reported occupied (#1088)"
 run_fragment_test test_worktree_rm_failed_unwedge_fallback_reports_occupied "worktree-rm: a failing unwedge-worktree fallback is relayed, path reported occupied (#1088)"
+run_fragment_test test_worktree_rm_unwedge_success_without_move_reports_occupied "worktree-rm: an exit-0 unwedge-worktree that moved nothing is not reported as success (#1088 review)"
 run_fragment_test test_worktree_rm_repairs_stale_core_worktree "worktree-rm: repairs a stale main-repo core.worktree (#258)"
 run_fragment_test test_worktree_rm_preserves_valid_core_worktree "worktree-rm: preserves a valid core.worktree (#258)"
 
