@@ -89,10 +89,14 @@ test_archive_modes_fails_loud_on_bad_input() {
     rc=0
     # A valid but EMPTY tarball lists cleanly and finds nothing, so it must be
     # refused explicitly: zero entries scanned is not a clean verdict.
-    (cd "$WORKDIR" && command tar -czf am-empty.tar.gz -T /dev/null) ||
-        assert_true "false" "fixture empty tarball built"
-    command bash "$ARCHIVE_GUARD" "$WORKDIR/am-empty.tar.gz" >/dev/null 2>&1 || rc=$?
+    # Built as 1024 zero bytes (a bare end-of-archive marker), not `tar -T
+    # /dev/null`, which bsdtar may refuse. The message is pinned so a fixture
+    # that failed to build cannot pass via the missing-file branch.
+    local out
+    command head -c 1024 /dev/zero | command gzip >"$WORKDIR/am-empty.tar.gz"
+    out="$(command bash "$ARCHIVE_GUARD" "$WORKDIR/am-empty.tar.gz" 2>&1)" || rc=$?
     assert_exit 2 "$rc" "an empty tarball is refused, not reported clean"
+    assert_contains "$out" "lists no entries" "the empty-listing branch is the one that refused"
     rc=0
     command bash "$ARCHIVE_GUARD" >/dev/null 2>&1 || rc=$?
     assert_exit 2 "$rc" "no argument prints usage"
@@ -105,7 +109,7 @@ test_release_yml_pins_archive_mask() {
     local rel="$REPO_ROOT/.github/workflows/release.yml"
     assert_file_defines "$rel" 'git -c tar.umask=0022 archive --format=tar.gz' \
         "release.yml archives with tar.umask pinned to 0022"
-    assert_file_not_contains "$rel" '          git archive ' \
+    assert_file_not_contains "$rel" '^[[:space:]]*git archive' \
         "release.yml has no unmasked git archive call left"
     # Not assert_file_defines: that helper pins `NAME=` definitions, and this
     # line has no `=`. `[$]` keeps the dollar literal in BRE on GNU and BSD.
@@ -113,9 +117,11 @@ test_release_yml_pins_archive_mask() {
         "release.yml runs the mode guard with an explicit failure check"
     # Presence alone survives a reordering: the guard must sit AFTER the
     # archive is built and BEFORE it is signed, or a bad tarball still ships
-    # signed. Compare the first line number of each, by fixed-string index().
+    # signed. Compare the first line number of each, by fixed-string index(),
+    # skipping comment lines so prose naming a command cannot shift the order.
     local order
     order="$(command awk '
+        /^[[:space:]]*#/ { next }
         !a && index($0, "git -c tar.umask=0022 archive") { a = NR }
         !g && index($0, "bash bin/check-archive-modes.sh") { g = NR }
         !s && index($0, "cosign sign-blob") { s = NR }
