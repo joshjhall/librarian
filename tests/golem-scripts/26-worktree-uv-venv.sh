@@ -306,7 +306,9 @@ test_worktree_rm_refuses_symlinked_uv_venv() {
 
     _uv_run "$WT_RM" "$sb" "$cache" 91
     assert_exit 0 "$RUN_RC" "teardown exits 0 with a symlinked venv path"
-    assert_not_contains "$RUN_OUT" "uv venv" "neither removes nor warns about a symlinked leaf"
+    assert_not_contains "$RUN_OUT" "removed uv venv" "does not remove a symlinked leaf"
+    assert_contains "$RUN_OUT" "refusing to remove uv venv $venv" \
+        "says it refused — a silent skip would read as 'nothing to remove'"
     assert_true "[ -f \"$sb/precious/file\" ]" "The symlink target's content survives"
     assert_true "[ -L \"$venv\" ]" "The symlink itself is left in place"
 }
@@ -330,8 +332,47 @@ test_worktree_rm_refuses_symlinked_uv_repo_key_dir() {
     _uv_run "$WT_RM" "$sb" "$cache" 94
     assert_exit 0 "$RUN_RC" "teardown exits 0 with a symlinked repo-key dir"
     assert_not_contains "$RUN_OUT" "removed uv venv" "does not delete through the link"
+    assert_contains "$RUN_OUT" "refusing to remove uv venv $venv" \
+        "the parent check was REACHED and refused (guards a vacuous pass)"
     assert_true "[ -f \"$sb/elsewhere/issue-94/file\" ]" \
         "The link target's issue dir survives"
+}
+
+# Positive control for the parent check: a cache ROOT that is itself a symlink
+# (e.g. /cache -> /mnt/x) is a legitimate layout, and canonicalizing the root
+# as well as the parent is what lets it still match. Without this, a regression
+# that compared the RAW root against the canonical parent would refuse every
+# venv on such a host — leaking them all while the refusal tests stayed green.
+test_worktree_rm_removes_uv_venv_under_symlinked_cache_root() {
+    local sb
+    new_sandbox sb
+    _uv_need_jq || return 0
+    _uv_project "$sb"
+    command mkdir -p "$sb/real-venvs"
+    command ln -s "$sb/real-venvs" "$sb/venvs"
+    local cache="$sb/venvs" venv
+    venv="$(_uv_venv "$sb" "$cache" 95)"
+    _uv_run "$WT_NEW" "$sb" "$cache" 95
+    assert_equals "$venv" "$(_uv_key_of "$sb" 95)" "the seed landed through the root link"
+    command mkdir -p "$venv/bin"
+
+    _uv_run "$WT_RM" "$sb" "$cache" 95
+    assert_exit 0 "$RUN_RC" "teardown exits 0 under a symlinked cache root"
+    assert_contains "$RUN_OUT" "removed uv venv $venv" "a symlinked ROOT still removes the venv"
+    assert_not_contains "$RUN_OUT" "refusing" "a symlinked root is not mistaken for a planted link"
+    assert_true "[ -d \"$sb/real-venvs\" ]" "The real cache root survives"
+}
+
+# A root that canonicalizes to `/` is refused even though it passes the
+# absolute-path check: `//` is absolute, and would otherwise put the venv parent
+# at /<key>. Teardown still exits 0.
+test_worktree_rm_refuses_slash_slash_uv_cache_root() {
+    local sb
+    new_sandbox sb
+    _uv_run "$WT_NEW" "$sb" "$sb/no-cache" 96
+    _uv_run "$WT_RM" "$sb" // 96
+    assert_exit 0 "$RUN_RC" "teardown exits 0 with GOLEM_UV_CACHE_DIR=//"
+    assert_not_contains "$RUN_OUT" "removed uv venv" "nothing is removed under a '//' root"
 }
 
 # golem_repo_key's uniqueness rests on the cksum suffix: two repos that share a

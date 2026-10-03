@@ -1309,7 +1309,9 @@ fi
 # /elsewhere/issue-N. So the venv's parent, canonicalized, must equal the
 # canonical cache root plus the key, and the leaf itself must not be a link. A
 # root that canonicalizes to `/` (e.g. `//`) is refused too. Where `readlink -f`
-# cannot run, the delete is SKIPPED: an unverifiable path is not deleted.
+# cannot run, the delete is SKIPPED: an unverifiable path is not deleted. A
+# refusal of an EXISTING venv says so on stderr — a silent skip would leak the
+# venv while reading exactly like "there was nothing to remove".
 # Best-effort: a failed removal warns and leaves `removed` alone, for the same
 # reason the tmux arm below does — teardown is past its destructive git steps,
 # so failing here would strand a removed worktree behind a non-zero exit.
@@ -1324,9 +1326,13 @@ if [ "$wt_mode" = "issue" ] && [ "$uv_cache_ok" -eq 1 ] &&
         uv_root_real=""
     uv_parent_real="$(command readlink -f "${uv_venv%/*}" 2>/dev/null)" ||
         uv_parent_real=""
-    if [ -d "$uv_venv" ] && [ ! -L "$uv_venv" ] &&
-        [ -n "$uv_root_real" ] && [ "$uv_root_real" != "/" ] &&
-        [ "$uv_parent_real" = "$uv_root_real/$uv_key" ]; then
+    if [ -L "$uv_venv" ] || { [ -e "$uv_venv" ] && {
+        [ -z "$uv_root_real" ] || [ "$uv_root_real" = "/" ] ||
+            [ "$uv_parent_real" != "$uv_root_real/$uv_key" ]
+    }; }; then
+        command echo "worktree-rm: WARNING: refusing to remove uv venv $uv_venv —" \
+            "it is, or sits under, a symlink (or its path could not be verified); inspect it by hand" >&2
+    elif [ -d "$uv_venv" ]; then
         if command rm -rf "$uv_venv" 2>/dev/null && [ ! -e "$uv_venv" ]; then
             command echo "  removed uv venv $uv_venv"
             removed=1

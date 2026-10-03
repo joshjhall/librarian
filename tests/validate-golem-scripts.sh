@@ -233,6 +233,8 @@ run_fragment_test test_worktree_rm_removes_uv_venv "worktree-rm: removes this is
 run_fragment_test test_worktree_rm_spares_another_repos_same_issue_venv "worktree-rm: the same issue number in ANOTHER repo keeps its uv venv (#1091 review c1)"
 run_fragment_test test_worktree_rm_refuses_symlinked_uv_venv "worktree-rm: a symlinked uv venv leaf is refused, its target untouched (#1091 review c1)"
 run_fragment_test test_worktree_rm_refuses_symlinked_uv_repo_key_dir "worktree-rm: a symlinked repo-key dir under the uv cache is not followed (#1091 review c2)"
+run_fragment_test test_worktree_rm_removes_uv_venv_under_symlinked_cache_root "worktree-rm: a symlinked cache ROOT still removes the venv — positive control (#1091 review c3)"
+run_fragment_test test_worktree_rm_refuses_slash_slash_uv_cache_root "worktree-rm: a '//' uv cache root removes nothing and exits 0 (#1091 review c3)"
 run_fragment_test test_golem_repo_key_separates_same_basename "config: golem_repo_key separates two repos sharing a basename (#1091 review c2)"
 run_fragment_test test_worktree_rm_failed_uv_venv_removal_warns_and_exits_0 "worktree-rm: a failed uv venv removal warns and still exits 0 (#1091 review c1)"
 run_fragment_test test_worktree_uv_relative_cache_root_is_refused "worktree-new/rm: a RELATIVE uv cache root is refused by both (#1091 review c1)"
