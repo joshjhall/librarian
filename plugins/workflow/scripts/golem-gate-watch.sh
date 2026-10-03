@@ -824,6 +824,17 @@ pane_is_multi_question_form() {
 #                               pattern (e.g. "Waiting for the force-push … to finish").
 #   `N/M agents done`           the `next-issue-review … N/M agents done` harness
 #                               footer (fraction immediately before the phrase).
+#                               Kept for older Claude Code builds; newer ones render
+#                               the row below instead.
+#   `▰▰▰…▱▱ N/M`                the background-Workflow progress row that replaced
+#                               `agents done` (#1089): `◯ <name>  <▰▱ bar>  N/M ·
+#                               <elapsed> · ↓ <tokens>`. Anchored on 3+ bar glyphs
+#                               IMMEDIATELY followed by the step fraction, so a bare
+#                               `N/M` in prose (`PR #12/34`, `step 6/7`) cannot match.
+#                               The glyphs are an ALTERNATION, not a `[▰▱]` bracket:
+#                               each is 3 bytes, and under a byte locale (LC_ALL=C,
+#                               GNU grep measured) a bracket degrades to a set of four
+#                               bytes, so a 2-glyph `▰▰ 3/4` (6 bytes) clears `{3,}`.
 # Same FOOTER anchoring as the sibling matchers (#246) — reuses the
 # $pane_footer_lines window, no wider scan. This is the shared #517 chrome list;
 # both the push matcher (pane_is_turn_end) and the pull classifier
@@ -832,6 +843,7 @@ OWN_WORK_RE='(·[[:space:]]*|[0-9]+[[:space:]]+shells?,[[:space:]]*)[0-9]+[[:spa
 OWN_WORK_RE="${OWN_WORK_RE}|[Ww]aiting for.*dynamic workflow"
 OWN_WORK_RE="${OWN_WORK_RE}|[Ww]aiting for.*to finish"
 OWN_WORK_RE="${OWN_WORK_RE}|[0-9]+/[0-9]+[[:space:]]+agents[[:space:]]+done"
+OWN_WORK_RE="${OWN_WORK_RE}|(▰|▱){3,}[[:space:]]+[0-9]+/[0-9]+"
 pane_pending_own_work() {
     local footer
     footer="$("$TAIL" -n "$pane_footer_lines" <<<"$1")"
