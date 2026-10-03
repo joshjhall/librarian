@@ -102,6 +102,7 @@ source_fragments "$SCRIPT_DIR/golem-scripts" \
     30-config-repo-root.sh \
     40-worktree-rm.sh \
     42-worktree-rm-wedged.sh \
+    43-worktree-rm-deregistered.sh \
     45-worktree-rm-symlink.sh \
     47-worktree-rm-named.sh \
     50-attach.sh \
