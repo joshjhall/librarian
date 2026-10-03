@@ -32,6 +32,7 @@
 #
 # Config (env-overridable; defaults in config.sh):
 #   GOLEM_WORKTREE_DIR (.worktrees)   GOLEM_BRANCH_PREFIX (feature/issue-)
+#   GOLEM_UV_CACHE_DIR (/cache/venv) — the per-issue venv removed on teardown
 #
 # NOTE: the containers recipe also refreshed a bare host's on-disk runtime
 # copies (.claude/hooks, justfile, bin) from origin/main after teardown — that
@@ -1285,6 +1286,32 @@ if [ -n "$br" ] && [ -n "$(command git branch --list "$br")" ]; then
         command git branch -D "$br"
         command echo "  deleted branch $br"
         removed=1
+    fi
+fi
+
+# Remove the per-worktree uv virtualenv worktree-new.sh seeded OFF the repo
+# mount (#1091). It lives under GOLEM_UV_CACHE_DIR, not in the worktree, so
+# removing the worktree does not remove it and nothing else ever would. Placed
+# AFTER every refusal above: a dirty or unverifiable worktree exits before this
+# point, so its venv survives with it.
+#
+# Issue mode only — worktree-new.sh keys the venv by issue number and never
+# creates one for a name-mode worktree, so a name has no venv to find. The path
+# is built from a validated number (^[0-9]+$ above) under a non-empty, non-root
+# cache dir, so it can name neither the cache root nor anything outside it.
+# Best-effort: a failed removal warns and leaves `removed` alone, for the same
+# reason the tmux arm below does — teardown is past its destructive git steps,
+# so failing here would strand a removed worktree behind a non-zero exit.
+if [ "$wt_mode" = "issue" ] && [ -n "$GOLEM_UV_CACHE_DIR" ] &&
+    [ "$GOLEM_UV_CACHE_DIR" != "/" ]; then
+    uv_venv="${GOLEM_UV_CACHE_DIR%/}/issue-$N"
+    if [ -d "$uv_venv" ] && [ ! -L "$uv_venv" ]; then
+        if command rm -rf "$uv_venv" 2>/dev/null && [ ! -e "$uv_venv" ]; then
+            command echo "  removed uv venv $uv_venv"
+            removed=1
+        else
+            command echo "worktree-rm: WARNING: could not remove uv venv $uv_venv — delete it by hand" >&2
+        fi
     fi
 fi
 

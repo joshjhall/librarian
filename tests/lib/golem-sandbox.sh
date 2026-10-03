@@ -26,6 +26,8 @@
 #     suite would WRITE THERE and every worktree-new test would gain an extra
 #     output line. Same pin-the-ambient-dependency reasoning as GOLEM_PLUGIN_PROBE
 #     and TMUX_TMPDIR; the seed's own tests set it explicitly instead.
+#   * GOLEM_UV_CACHE_DIR likewise (#1091) — and here it guards a DELETE, not
+#     just a write: worktree-rm.sh removes <it>/issue-N on teardown.
 #   * GOLEM_PLUGIN_PROBE is pointed at a nonexistent path, so golem-launch.sh's
 #     plugin-resolvability guard (#946) reads as UNDETERMINABLE and skips. This
 #     is the truthful setting, not a mute: HOME already points at an empty
@@ -57,6 +59,13 @@ WORKDIR="$(cd "$WORKDIR" && command pwd -P)"
 # never bit (#932).
 TMUX_ROOT="$(command mktemp -d /tmp/lgtmux.XXXXXX 2>/dev/null)" || TMUX_ROOT=""
 trap 'command rm -rf "$WORKDIR" ${TMUX_ROOT:+"$TMUX_ROOT"}' EXIT
+# worktree-rm.sh DELETES <GOLEM_UV_CACHE_DIR>/issue-N on teardown (#1091), and
+# most worktree-rm tests call it directly rather than through run_in. Inherit
+# the real default (/cache/venv) and a suite tearing down "issue 62" would
+# rm -rf a real golem's venv on any machine that has one. Exported at module
+# level so EVERY call site in every suite sourcing this file is hermetic, not
+# just the ones that remembered a per-call pin.
+export GOLEM_UV_CACHE_DIR="$WORKDIR/no-uv-cache"
 
 # new_sandbox <varname>
 # Creates a fresh git repo sandbox with one seed commit (so HEAD exists and can
@@ -124,6 +133,7 @@ run_in() {
             GOLEM_BASE_REF=HEAD \
             GOLEM_WORKTREE_LOCAL_FILES="" \
             GOLEM_CARGO_CACHE_DIR="$dir/no-cargo-cache" \
+            GOLEM_UV_CACHE_DIR="$dir/no-uv-cache" \
             "$REAL_BASH" "$script" "$@" 2>&1)" || RUN_RC=$?
 }
 

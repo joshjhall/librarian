@@ -285,6 +285,16 @@
 # Override to relocate it, or to a nonexistent path to disable the seed.
 : "${GOLEM_CARGO_CACHE_DIR:=/cache/target}"
 
+# Root under which each worktree of a uv project gets its own Python virtualenv
+# (worktree-new.sh seeds UV_PROJECT_ENVIRONMENT=<this>/issue-N, #1091;
+# worktree-rm.sh removes it). Same mount, same reason, different symptom: a uv
+# `.venv` holds `lib/` plus the symlink `lib64 -> lib`, and on the
+# case-insensitive virtiofs+bindfs stack teardown leaves a phantom `.venv/Lib`
+# that readdir lists but rmdir/rename/unlink answer ENOENT (containers#1004).
+# Same contract as GOLEM_CARGO_CACHE_DIR: a probed DEFAULT, and a nonexistent
+# path disables the seed.
+: "${GOLEM_UV_CACHE_DIR:=/cache/venv}"
+
 # Liveness/heartbeat (SOFT, advisory — never auto-kills a golem):
 # how long a golem may show no progress before it is flagged a possible stall,
 # and the poll interval of the liveness stream.

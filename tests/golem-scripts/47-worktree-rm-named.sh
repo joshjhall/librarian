@@ -341,9 +341,10 @@ test_worktree_rm_named_unresolvable_base_ref_keeps_branch() {
 # were covered by no passing test. That is the silence-reads-as-a-pass shape, so
 # the arms get driven directly.
 #
-# Mirrors run_in's variable set rather than a hand-picked subset: GOLEM_PLUGIN_PROBE
-# and GOLEM_CARGO_CACHE_DIR are included because omitting them lets the script see
-# the REAL host's values, which is how a sandbox stops being hermetic.
+# Mirrors run_in's variable set rather than a hand-picked subset: GOLEM_PLUGIN_PROBE,
+# GOLEM_CARGO_CACHE_DIR and GOLEM_UV_CACHE_DIR are included because omitting them
+# lets the script see the REAL host's values, which is how a sandbox stops being
+# hermetic.
 run_wt_rm_with_base() {
     local dir="$1" base="$2" arg="$3"
     RUN_RC=0
@@ -357,6 +358,7 @@ run_wt_rm_with_base() {
             GOLEM_BASE_REF="$base" \
             GOLEM_WORKTREE_LOCAL_FILES="" \
             GOLEM_CARGO_CACHE_DIR="$dir/no-cargo-cache" \
+            GOLEM_UV_CACHE_DIR="$dir/no-uv-cache" \
             "$REAL_BASH" "$WT_RM" "$arg" 2>&1)" || RUN_RC=$?
 }
 

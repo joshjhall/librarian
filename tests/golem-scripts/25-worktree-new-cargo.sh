@@ -379,7 +379,7 @@ test_worktree_new_cargo_malformed_settings_leaves_original_intact() {
         "the malformed original is left byte-intact, never half-written"
     # And the temp file must not be left behind.
     local leftovers
-    leftovers="$(command find "$sb/.worktrees/issue-50/.claude" -name '*.944.*' 2>/dev/null)"
+    leftovers="$(command find "$sb/.worktrees/issue-50/.claude" -name '*.seed.*' 2>/dev/null)"
     assert_equals "" "$leftovers" "the failed write's temp file is cleaned up"
 }
 
