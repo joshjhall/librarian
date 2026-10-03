@@ -311,6 +311,53 @@ test_worktree_rm_refuses_symlinked_uv_venv() {
     assert_true "[ -L \"$venv\" ]" "The symlink itself is left in place"
 }
 
+# The INTERMEDIATE component is checked too (#1091 review c2), not just the
+# leaf: a planted `<cache>/<repo-key> -> elsewhere` must not let teardown follow
+# it and rm -rf `elsewhere/issue-N`. The cache is a shared mount and the key is
+# predictable, so this is the link an attacker would actually plant.
+test_worktree_rm_refuses_symlinked_uv_repo_key_dir() {
+    local sb
+    new_sandbox sb
+    local cache="$sb/venvs" venv
+    venv="$(_uv_venv "$sb" "$cache" 94)"
+    command mkdir -p "$cache" "$sb/elsewhere/issue-94"
+    command printf 'keep\n' >"$sb/elsewhere/issue-94/file"
+    command ln -s "$sb/elsewhere" "${venv%/*}"
+    assert_true "[ -d \"$venv\" ] && [ ! -L \"$venv\" ]" \
+        "fixture: the LEAF resolves as a real dir, so only a parent check can refuse"
+    _uv_run "$WT_NEW" "$sb" "$cache" 94
+
+    _uv_run "$WT_RM" "$sb" "$cache" 94
+    assert_exit 0 "$RUN_RC" "teardown exits 0 with a symlinked repo-key dir"
+    assert_not_contains "$RUN_OUT" "removed uv venv" "does not delete through the link"
+    assert_true "[ -f \"$sb/elsewhere/issue-94/file\" ]" \
+        "The link target's issue dir survives"
+}
+
+# golem_repo_key's uniqueness rests on the cksum suffix: two repos that share a
+# BASENAME (two checkouts of one project) must still get different keys. The
+# cross-repo teardown test uses mktemp-named sandboxes whose basenames already
+# differ, so it cannot see a regression that drops the cksum — this can.
+test_golem_repo_key_separates_same_basename() {
+    local a b
+    a="$(
+        # shellcheck source=/dev/null
+        . "$SCRIPTS/config.sh"
+        golem_repo_key /one/proj
+    )"
+    b="$(
+        # shellcheck source=/dev/null
+        . "$SCRIPTS/config.sh"
+        golem_repo_key /two/proj
+    )"
+    assert_contains "$a" "proj-" "the key leads with the repo basename"
+    assert_true "[ -n \"$a\" ] && [ \"$a\" != \"$b\" ]" \
+        "Two repos with the SAME basename get DIFFERENT keys"
+    case "$a" in
+        */*) assert_true "false" "the key is a single path segment (no '/')" ;;
+    esac
+}
+
 # A removal that fails must warn and still exit 0 — teardown is past its
 # destructive git steps, so failing here would strand a removed worktree behind
 # a non-zero exit. A read-only parent makes the rm fail; root defeats that, so
