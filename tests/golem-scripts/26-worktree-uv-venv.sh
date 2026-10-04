@@ -429,6 +429,50 @@ test_worktree_new_uv_refuses_symlinked_repo_key_dir() {
         "Nothing is created in the link target"
 }
 
+# The seed refuses a planted LEAF link too, not only a planted key dir: an
+# `<cache>/<key>/issue-N -> elsewhere` would otherwise be "created" by mkdir -p
+# (a no-op on an existing link) and seeded, sending uv's venv to elsewhere.
+test_worktree_new_uv_refuses_symlinked_venv_leaf() {
+    local sb
+    new_sandbox sb
+    _uv_need_jq || return 0
+    _uv_project "$sb"
+    local cache="$sb/venvs" venv
+    venv="$(_uv_venv "$sb" "$cache" 77)"
+    command mkdir -p "${venv%/*}" "$sb/elsewhere"
+    command ln -s "$sb/elsewhere" "$venv"
+
+    _uv_run "$WT_NEW" "$sb" "$cache" 77
+    assert_exit 0 "$RUN_RC" "worktree-new exits 0 with a planted leaf link"
+    assert_not_contains "$RUN_OUT" "UV_PROJECT_ENVIRONMENT" "does not seed through a leaf link"
+    assert_equals "" "$(_uv_key_of "$sb" 77)" "writes no UV_PROJECT_ENVIRONMENT"
+}
+
+# The gitignore refusal reaches the uv call site too: in a uv project whose
+# settings file is NOT ignored, writing it would dirty the worktree and block
+# teardown. Nothing is seeded and nothing is provisioned under the cache.
+# Positive control: test_worktree_new_uv_seeds_project_environment, identical
+# but with the settings file ignored.
+test_worktree_new_uv_unignored_settings_is_noop() {
+    local sb
+    new_sandbox sb
+    _uv_need_jq || return 0
+    command printf '# pyproject\n' >"$sb/pyproject.toml"
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" git -C "$sb" add pyproject.toml 2>/dev/null
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
+        git -C "$sb" -c commit.gpgsign=false commit -qm pyproject 2>/dev/null
+    local cache="$sb/venvs"
+    command mkdir -p "$cache"
+
+    _uv_run "$WT_NEW" "$sb" "$cache" 76
+    assert_exit 0 "$RUN_RC" "worktree-new exits 0 in a uv repo that does not ignore the settings"
+    assert_not_contains "$RUN_OUT" "UV_PROJECT_ENVIRONMENT" "does not seed an un-ignored settings file"
+    local st
+    st="$(cd "$sb/.worktrees/issue-76" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" git status --porcelain 2>&1)"
+    assert_equals "" "$st" "the worktree stays CLEAN"
+}
+
 # golem_repo_key's uniqueness rests on the cksum suffix: two repos that share a
 # BASENAME (two checkouts of one project) must still get different keys. The
 # cross-repo teardown test uses mktemp-named sandboxes whose basenames already
