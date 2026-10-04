@@ -443,6 +443,7 @@ run_fragment_test test_relaunch_unknown_when_marker_has_no_at "golem-handoff-rel
 run_fragment_test test_relaunch_stale_cleared_stamp_does_not_strand_new_handoff "golem-handoff-relaunch: a stale cleared stamp never strands a new handoff (#1057)"
 run_fragment_test test_relaunch_resume_due_refuses_a_working_session "golem-handoff-relaunch: resume-due never types into a working session (#1057)"
 run_fragment_test test_relaunch_resume_due_on_fresh_cleared_transcript "golem-handoff-relaunch: a /clear-only transcript is resume-due (#1057)"
+run_fragment_test test_relaunch_resume_due_unknown_on_other_indeterminate "golem-handoff-relaunch: the cleared path fails closed on any other indeterminate (#1057)"
 run_fragment_test test_status_renders_each_golem_independently "golem-status: each golem's row is independent across the render loop (#784)"
 run_fragment_test test_status_does_not_leak_the_scripts_stderr "golem-status: context-budget stderr does not leak into the table (#784)"
 run_fragment_test test_status_sources_the_signals_fragment "golem-status: the per-golem signals fragment is sourced and wired in (#800)"

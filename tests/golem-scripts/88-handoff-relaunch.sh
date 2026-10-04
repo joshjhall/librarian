@@ -527,3 +527,22 @@ test_relaunch_resume_due_on_fresh_cleared_transcript() {
     run_relaunch "$sb" check 42
     assert_contains "$RUN_OUT" "state=resume-due" "a session holding only /clear is resume-due"
 }
+
+# The cleared-stamp path fails CLOSED on any OTHER indeterminate liveness: only
+# "no top-level turn" is the fresh-cleared shape. A stale `working` transcript
+# (exit 2, a different message) is unknown and nothing is typed.
+test_relaunch_resume_due_unknown_on_other_indeterminate() {
+    _hr_need_jq || return 0
+    local sb
+    new_sandbox sb
+    _hr_golem "$sb" 42 "$_HR_WORKING_HANDOFF" "$(_hr_state_open 42)"
+    command touch -t 200001010000 "$sb/projects/$(slug_for "$sb/.worktrees/issue-42")/session.jsonl"
+    command mkdir -p "$sb/.worktrees/.status"
+    command printf 'cleared 2026-10-03T12:00:00Z\n' >"$sb/.worktrees/.status/handoff-relaunched-golem-42"
+    plant_relaunch_tmux "$sb"
+    run_relaunch "$sb" relaunch 42
+    assert_exit 1 "$RUN_RC" "an indeterminate cleared session is not relaunched"
+    assert_contains "$RUN_OUT" "state=unknown" "it is unknown, not resume-due"
+    assert_contains "$RUN_OUT" "liveness indeterminate" "and says why"
+    assert_true "[ ! -s \"$sb/send-keys.log\" ]" "nothing was typed"
+}
