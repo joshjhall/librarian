@@ -399,9 +399,9 @@ otherwise.
 
 **Graceful degradation**: if `review-convergence.sh` is missing or exits
 non-zero, fall back to the plain `cycle` vs `cap` comparison **plus** the
-`attempt` vs `attempt_cap` one, advancing `cycle` on every trip (there is no
-`charged=` to read — clear it before each call so a stale value cannot carry
-over), with a one-line note — the same posture as a
+`attempt` vs `attempt_cap` one, with a one-line note: set `charged=true` for
+that trip, so the counter snippet advances `cycle` on every trip (there is no
+helper verdict to charge from) — the same posture as a
 missing `workflow-wall-timeout.sh`. Keep both comparisons: without the attempts
 bound, a fallback that also stops charging crashed cycles would be unbounded. The
 loop stays bounded either way; it only loses the early-stop, the narrow-zero
