@@ -327,8 +327,8 @@ test_relaunch_not_due_when_pane_shows_plan_gate() {
     done
 }
 
-# On the disambiguated path the pane is the only witness left, so an unreadable
-# pane is UNKNOWN — not a pass.
+# The overlay check is a safety guard, so an unreadable pane is UNKNOWN — never a
+# pass — on BOTH liveness paths, and nothing is sent or stamped.
 test_relaunch_unknown_when_pane_unreadable() {
     _hr_need_jq || return 0
     local sb body
