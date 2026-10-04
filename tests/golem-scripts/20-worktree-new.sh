@@ -47,8 +47,8 @@ test_worktree_new_launch_hint_asserts_no_level() {
     new_sandbox sb
     GOLEM_LEVEL=3 run_in "$sb" "$WT_NEW" 31
     assert_exit 0 "$RUN_RC" "worktree-new exits 0 on a fresh issue"
-    assert_contains "$RUN_OUT" "golem-launch.sh launch 31 --level <L>" \
-        "the hint delegates to golem-launch.sh with a <L> level placeholder"
+    assert_contains "$RUN_OUT" "golem-launch.sh\" launch 31 --level <L>" \
+        "the hint delegates to a quoted golem-launch.sh path with a <L> level placeholder"
     local concrete_level=no level_re='--level [0-9]'
     [[ "$RUN_OUT" =~ $level_re ]] && concrete_level=yes
     assert_equals "no" "$concrete_level" \

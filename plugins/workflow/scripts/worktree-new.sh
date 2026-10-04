@@ -517,5 +517,5 @@ command echo "Launch a golem there with:"
 # the run's level, and config.sh defaults GOLEM_LEVEL to 4, so any concrete
 # value here would be one the caller never chose — and a pasted L4 line skips
 # the plan gate and merges unasked.
-command echo "  $SCRIPT_DIR/golem-launch.sh launch $N --level <L>"
+command echo "  \"$SCRIPT_DIR/golem-launch.sh\" launch $N --level <L>"
 command echo "  (<L> = this run's autonomy level, 1-4 — no default is assumed here)"
