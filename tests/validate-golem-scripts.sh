@@ -51,6 +51,7 @@ SCRIPTS="$REPO_ROOT/plugins/workflow/scripts"
     WT_NEW="$SCRIPTS/worktree-new.sh"
     WT_RM="$SCRIPTS/worktree-rm.sh"
     WT_RM_LEFTOVER="$SCRIPTS/worktree-rm-leftover.sh"
+    CACHE_ENTRY="$SCRIPTS/cache-entry.sh"
     ATTACH="$SCRIPTS/golem-attach.sh"
     STATUS="$SCRIPTS/golem-status.sh"
     SCRAPE="$SCRIPTS/golem-token-scrape.sh"
@@ -105,6 +106,7 @@ source_fragments "$SCRIPT_DIR/golem-scripts" \
     20-worktree-new.sh \
     25-worktree-new-cargo.sh \
     26-worktree-uv-venv.sh \
+    27-cache-entry.sh \
     30-config-repo-root.sh \
     40-worktree-rm.sh \
     42-worktree-rm-wedged.sh \
@@ -258,6 +260,13 @@ run_fragment_test test_worktree_uv_relative_cache_root_is_refused "worktree-new/
 run_fragment_test test_worktree_rm_without_uv_venv_is_quiet "worktree-rm: no uv venv present — no venv line (#1091)"
 run_fragment_test test_worktree_rm_dirty_refusal_keeps_uv_venv "worktree-rm: a dirty refusal keeps the uv venv (#1091)"
 run_fragment_test test_worktree_rm_name_mode_leaves_uv_cache_alone "worktree-rm: name mode never touches the uv cache (#1091)"
+run_fragment_test test_cache_entry_path_accepts_plain_and_keyless_paths "cache-entry: a plain and a keyless (cargo-shape) entry verify (#1113)"
+run_fragment_test test_cache_entry_path_refuses_symlinks_below_the_root "cache-entry: a symlinked key dir or leaf is refused, path still printed (#1113)"
+run_fragment_test test_cache_entry_path_follows_a_symlinked_root "cache-entry: a symlinked cache ROOT verifies — positive control (#1113)"
+run_fragment_test test_cache_entry_path_refuses_a_root_that_is_slash "cache-entry: a keyless root canonicalizing to '/' is refused (#1113)"
+run_fragment_test test_cache_entry_path_refuses_a_non_numeric_issue "cache-entry: a non-numeric or traversing issue number is refused (#1113 review c2)"
+run_fragment_test test_cache_entry_path_refuses_unverifiable_paths "cache-entry: a missing cache root is unverifiable and refused (#1113)"
+run_fragment_test test_cache_entry_path_is_the_one_derivation "cache-entry: worktree-new.sh and worktree-rm.sh both route through it (#1113 AC1)"
 run_fragment_test test_config_repo_root_no_hardcoded_usr_bin "config.sh: repo_root has no hardcoded /usr/bin/* tool paths (#278)"
 run_fragment_test test_config_repo_root_honors_path "config.sh: repo_root resolves via PATH, not command git (#278)"
 run_fragment_test test_config_repo_root_dirname_root_edge "config.sh: repo_root returns '/' for a /.git common dir (#278)"

@@ -55,6 +55,11 @@ test_skip_patterns:
   # (#1096). Covered through validate-golem-scripts.sh's worktree-rm areas.
   - "plugins/workflow/scripts/worktree-rm-leftover.sh"
 
+  # The per-issue cache-entry derive-and-verify shared by worktree-new.sh's seed
+  # and worktree-rm.sh's uv teardown (#1113). Sourced by both; covered through
+  # validate-golem-scripts.sh's 25-/26-/27- areas.
+  - "plugins/workflow/scripts/cache-entry.sh"
+
   # check-okf-conformance's slice-B pass (bundle graph + health), extracted from
   # patterns.sh when it went over its production-LOC budget (#991). Sourced, not
   # executed: it reads `$TAB`/`$_here` and calls `emit` from its parent, and

@@ -19,6 +19,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(command dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=./config.sh
 . "$SCRIPT_DIR/config.sh"
+# shellcheck source=./cache-entry.sh
+. "$SCRIPT_DIR/cache-entry.sh"
 
 # Scrub git's hook-exported environment process-wide (#328). repo_root()
 # (config.sh) already scrubs its OWN rev-parse subshell (#279), but this script
@@ -366,7 +368,6 @@ cargo_cache_fstype() {
 seed_cache_env() {
     local cache_root="$1" key="$2" sub="${3:-}"
     local target probe_dir fs settings tmp
-    target="$cache_root/${sub:+$sub/}issue-$N"
     # ABSOLUTE only. A relative root resolves against this script's cwd — the
     # repo checkout, i.e. the very mount the seed exists to stay off.
     case "$cache_root" in
@@ -422,28 +423,20 @@ seed_cache_env() {
     command git -C "$wt" check-ignore -q ".claude/settings.local.json" \
         2>/dev/null || return 0
     # The target must sit where its path SAYS (#1091 review c5), and that is
-    # verified BEFORE anything is created. The cache root is a shared mount and
-    # a subdir key is predictable, so a planted `<cache>/<key> -> /elsewhere`
+    # verified BEFORE anything is created: a planted `<cache>/<key> -> /elsewhere`
     # would make `mkdir -p` create — and the seeded env send uv's whole venv to
-    # — /elsewhere/issue-N. So: create only the subdir (a plain mkdir of one
-    # component), refuse a subdir or target that is a link, and require the canonical parent to equal the
-    # canonical cache root plus the subdir. Same rule worktree-rm.sh applies
-    # before its rm -rf, so the two sides agree on which paths are ours. A
-    # target this cannot verify is not seeded.
-    local root_real parent_real parent="${target%/*}"
-    if [ -n "$sub" ] && [ ! -e "$parent" ] && [ ! -L "$parent" ]; then
-        command mkdir "$parent" 2>/dev/null || return 0
+    # — /elsewhere/issue-N. So create only the subdir (a plain mkdir of one
+    # component), then hand the path to cache_entry_path (cache-entry.sh) — the
+    # SAME derive-and-verify worktree-rm.sh runs before its rm -rf, so the two
+    # sides agree on which paths are ours by construction (#1113). A target it
+    # cannot verify is not seeded.
+    if [ -n "$sub" ]; then
+        local parent="${cache_root%/}/$sub"
+        if [ ! -e "$parent" ] && [ ! -L "$parent" ]; then
+            command mkdir "$parent" 2>/dev/null || return 0
+        fi
     fi
-    # The link test covers only what lies BELOW the configured root: the root
-    # itself may legitimately be a symlink (an operator pointing /cache/target
-    # at a bigger disk — #944's own symlinked-cache test pins that), and the
-    # canonical comparison below already accounts for it.
-    if [ -n "$sub" ] && [ -L "$parent" ]; then return 0; fi
-    [ ! -L "$target" ] || return 0
-    root_real="$(command readlink -f "$cache_root" 2>/dev/null)" || root_real=""
-    parent_real="$(command readlink -f "$parent" 2>/dev/null)" || parent_real=""
-    [ -n "$root_real" ] && [ "$parent_real" = "$root_real${sub:+/$sub}" ] ||
-        return 0
+    target="$(cache_entry_path "$cache_root" "$sub" "$N")" || return 0
     command mkdir -p "$target" 2>/dev/null || return 0
     settings="$wt/.claude/settings.local.json"
     command mkdir -p "$wt/.claude"
