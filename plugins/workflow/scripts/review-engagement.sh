@@ -76,6 +76,13 @@ fi
 emit_row() {
     # $1 = agent id. Reads its meta + jsonl; prints a row if it is a review agent.
     local id="$1" meta jsonl desc dim model
+    # The id comes from journal.jsonl content and becomes part of a path, so a
+    # `/` or `..` in it would read a file outside the transcript dir. Real ids
+    # are `a` + hex; accept only that alphabet (a case glob: bash-3.2 and BSD
+    # safe, no regex engine).
+    case "$id" in
+        '' | *[!A-Za-z0-9_-]*) return 0 ;;
+    esac
     meta="$dir/agent-$id.meta.json"
     jsonl="$dir/agent-$id.jsonl"
     [ -r "$meta" ] && [ -r "$jsonl" ] || return 0
@@ -84,7 +91,11 @@ emit_row() {
         review:*) dim="${desc#review:}" ;;
         *) return 0 ;;
     esac
-    model="$(command jq -r '.model // "unknown"' "$meta")"
+    # The model is read from the transcript's own `message.model` — the model
+    # that actually answered. `meta.json` carries a `model` key only when the
+    # dispatch passed an explicit override (measured on a live review run: an
+    # inheriting dimension's meta has none), so it is the fallback, not the source.
+    model="$(command jq -r '.model // ""' "$meta")"
     # Same reading idiom as golem-token-scrape.sh: `-R` + `fromjson?` skips a
     # partial trailing line (a transcript captured mid-write), and usage — which
     # repeats once per content block — is summed ONE value per message.id, with
@@ -98,7 +109,8 @@ emit_row() {
         | ([ $msgs | to_entries[] | select(.value.usage.output_tokens != null) ]
              | group_by(.value.id // "__noid__\(.key)")
              | map(.[0].value.usage.output_tokens) | add // 0) as $tokens
-        | [$dim, ($tools | tostring), ($tokens | tostring), $model] | @tsv
+        | ([ $msgs[] | .model // empty ] | last // (if $model == "" then "unknown" else $model end)) as $m
+        | [$dim, ($tools | tostring), ($tokens | tostring), $m] | @tsv
     ' "$jsonl"
 }
 

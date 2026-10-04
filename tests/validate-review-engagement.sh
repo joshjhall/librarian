@@ -56,6 +56,8 @@ agent() {
 # repeating that turn's usage — the shape that makes a naive sum over-count.
 user='{"type":"user","message":{"role":"user","content":"x"}}'
 so() { command printf '{"type":"assistant","message":{"id":"%s","content":[{"type":"tool_use","name":"StructuredOutput"}],"usage":{"output_tokens":%s}}}' "$1" "$2"; }
+# A turn that records the answering model, as real transcripts do.
+som() { command printf '{"type":"assistant","message":{"id":"%s","model":"%s","content":[{"type":"tool_use","name":"StructuredOutput"}],"usage":{"output_tokens":%s}}}' "$1" "$2" "$3"; }
 tool() { command printf '{"type":"assistant","message":{"id":"%s","content":[{"type":"tool_use","name":"%s"}],"usage":{"output_tokens":%s}}}' "$1" "$2" "$3"; }
 text() { command printf '{"type":"assistant","message":{"id":"%s","content":[{"type":"text","text":"t"}],"usage":{"output_tokens":%s}}}' "$1" "$2"; }
 
@@ -144,6 +146,37 @@ test_opus_retry_judged_on_last_run() {
     assert_equals "1" "$(val unengaged "$out")" "an empty retry leaves the dimension unengaged"
 }
 
+test_model_read_from_transcript() {
+    # Measured on a live review run: an inheriting dimension's meta.json has NO
+    # `model` key; the model that answered is on each assistant message.
+    local d="$SANDBOX/model" r="$SANDBOX/model.json"
+    command mkdir -p "$d"
+    command printf '{"description":"review:tests"}\n' >"$d/agent-k1.meta.json"
+    command printf '%s\n%s\n' "$(tool v1 Read 10)" "$(som v2 claude-sonnet-5-5 20)" >"$d/agent-k1.jsonl"
+    clean_result "$r"
+    "$RE" "$d" "$r" >/dev/null
+    assert_equals "claude-sonnet-5-5" "$(command jq -r '.dimension_metrics.tests[0].model' "$r")" "the transcript's message.model is reported"
+}
+
+test_journal_id_cannot_escape_the_dir() {
+    # A journal agentId is file content that becomes a path: `$dir/agent-$id`.
+    # The id `x/../../agent-out` resolves from run/ to ../agent-out.*, a review
+    # agent OUTSIDE the transcript dir. Without the id guard it is measured and
+    # flags `security` — verified by deleting the guard (this case went red).
+    local base="$SANDBOX/escape" d="$SANDBOX/escape/run" r="$SANDBOX/escape.json" out
+    command mkdir -p "$d/agent-x"
+    command printf '{"description":"review:security"}\n' >"$base/agent-out.meta.json"
+    command printf '%s\n' "$(so x1 53)" >"$base/agent-out.jsonl"
+    command printf '{"type":"started","agentId":"x/../../agent-out"}\n' >"$d/journal.jsonl"
+    # Precondition: the traversal really resolves, so a pass is the guard's
+    # doing and not a path that never existed.
+    assert_equals "yes" "$([ -r "$d/agent-x/../../agent-out.meta.json" ] && echo yes || echo no)" "fixture: the traversal path resolves outside the dir"
+    clean_result "$r"
+    out="$("$RE" "$d" "$r" 2>/dev/null)"
+    assert_equals "false" "$(val measured "$out")" "a traversal id is skipped, so nothing outside the dir is measured"
+    assert_equals "true" "$(command jq -r '.clean' "$r")" "and the outside agent cannot flag a dimension"
+}
+
 test_no_review_agents_is_not_a_clean_measurement() {
     local d="$SANDBOX/none" r="$SANDBOX/none.json" out err
     command mkdir -p "$d"
@@ -180,6 +213,8 @@ run_test test_dimension_with_a_finding_is_not_flagged "a dimension with a findin
 run_test test_usage_repeated_per_block_counts_once "usage dedupe by message id"
 run_test test_partial_trailing_line_is_tolerated "partial trailing transcript line"
 run_test test_opus_retry_judged_on_last_run "opus retry judged on the last run"
+run_test test_model_read_from_transcript "model comes from message.model, not meta"
+run_test test_journal_id_cannot_escape_the_dir "journal agentId cannot escape the transcript dir"
 run_test test_no_review_agents_is_not_a_clean_measurement "no review agents -> measured=false"
 run_test test_unreadable_input_fails_loud "unreadable input -> exit 2"
 
