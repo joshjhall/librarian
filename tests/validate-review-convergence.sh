@@ -1199,12 +1199,41 @@ test_warn_accounts_for_an_uncharged_cycle() {
     assert_equals "" "$(val warn "$narrow_zero")" "so the next full cycle is not the last — no warning"
 }
 
+# The attempt cap can end the loop before the cycle cap — more often now that
+# C3 spends attempts without cycles — and that final trip is just as final.
+# Each case is far from the CYCLE boundary, so only the attempt arm can warn.
+test_warn_fires_when_the_attempt_cap_binds_first() {
+    local crashed deferrable early
+    crashed="$("$RC" check --cycle 3 --max-cycles 5 --attempt 5 --max-attempts 6 \
+        --result "$FIXTURES/no-signal.json" --delta-lines 0)"
+    assert_equals "final-full-review" "$(val warn "$crashed")" \
+        "a crash whose retry is the last ATTEMPT warns, though cycle 3 is far from 5"
+    deferrable="$("$RC" check --cycle 2 --max-cycles 5 --attempt 5 --max-attempts 6 \
+        --result "$FIXTURES/next-scope-deferrable.json" --delta-lines 500)"
+    assert_equals "final-full-review" "$(val warn "$deferrable")" \
+        "a full-next continue at attempt max-1 warns"
+    early="$("$RC" check --cycle 2 --max-cycles 5 --attempt 4 --max-attempts 6 \
+        --result "$FIXTURES/next-scope-deferrable.json" --delta-lines 500)"
+    assert_equals "" "$(val warn "$early")" "attempt max-2 does not warn"
+}
+
+# One case per structurally distinct path, the early-exit ones (C0, C0b) included.
 test_warn_is_emitted_on_every_verdict() {
     local out
     out="$("$RC" check --cycle 5 --max-cycles 5 --result "$FIXTURES/novel.json" --delta-lines 500)"
     assert_contains "$out" "warn=" "warn is emitted on the C1-cap path"
     out="$("$RC" check --cycle 1 --max-cycles 5 --result "$FIXTURES/zero.json" --delta-lines 500)"
     assert_contains "$out" "warn=" "warn is emitted on a C4 stop"
+    out="$("$RC" check --cycle 1 --max-cycles 5 --attempt 10 --max-attempts 10 \
+        --result "$FIXTURES/novel.json" --delta-lines 500)"
+    assert_contains "$out" "warn=" "warn is emitted on the C0-attempt-cap path"
+    out="$("$RC" check --cycle 1 --max-cycles 5 --result "$FIXTURES/no-signal.json" --delta-lines 0)"
+    assert_contains "$out" "warn=" "warn is emitted on the C0b path"
+    out="$("$RC" check --cycle 1 --max-cycles 5 --result "$FIXTURES/zero.json" \
+        --delta-lines 500 --partial true)"
+    assert_contains "$out" "warn=" "warn is emitted on the C2-partial path"
+    out="$("$RC" check --cycle 2 --max-cycles 5 --result "$FIXTURES/refuted.json" --delta-lines 500)"
+    assert_contains "$out" "warn=" "warn is emitted on the C5 path"
 }
 
 # ANTI-TAUTOLOGY pair: identical C3 calls differing ONLY in whether --attempt was
@@ -1241,6 +1270,24 @@ test_every_other_rule_is_charged() {
     out="$("$RC" check --cycle 1 --max-cycles 5 --attempt 10 --max-attempts 10 \
         --result "$FIXTURES/novel.json" --delta-lines 500)"
     assert_equals "C0-attempt-cap|true" "$(val rule "$out")|$(val charged "$out")" "C0 is charged"
+    out="$("$RC" check --cycle 2 --max-cycles 5 --attempt 2 --result "$FIXTURES/refuted.json" --delta-lines 500)"
+    assert_equals "C5-refuted-only|true" "$(val rule "$out")|$(val charged "$out")" "C5 is charged"
+    out="$("$RC" check --cycle 2 --max-cycles 5 --attempt 2 --result "$FIXTURES/novel.json" \
+        --prev-result "$FIXTURES/novel.json" --delta-lines 500)"
+    assert_equals "C6-duplicate|true" "$(val rule "$out")|$(val charged "$out")" "C6 is charged"
+    # C0b needs no --attempt to go uncharged — unlike C3 — because it was
+    # uncharged before #1120 (the caller read no_review_signal itself), so this
+    # only reports existing behavior rather than introducing a new uncharged path.
+    out="$("$RC" check --cycle 2 --max-cycles 5 --result "$FIXTURES/no-signal.json" --delta-lines 0)"
+    assert_equals "C0b-no-signal|false" "$(val rule "$out")|$(val charged "$out")" \
+        "C0b is uncharged even without --attempt"
+    # An unmigrated (charged) C3 at max-1 warns — its next cycle is cycle+1 =
+    # max — the reverse of the uncharged C3 at the same position above.
+    out="$("$RC" check --cycle 4 --max-cycles 5 \
+        --result "$FIXTURES/zero.json" --delta-lines 39 --prev-delta-lines 500)"
+    assert_equals "C3-narrow-zero|true|final-full-review" \
+        "$(val rule "$out")|$(val charged "$out")|$(val warn "$out")" \
+        "a charged C3 at max-1 warns — its next cycle is the cap"
 }
 
 # drive_loop <max-cycles> <max-attempts> <fixture,delta;...> — run the caller's
@@ -1810,6 +1857,7 @@ run_test test_warn_fires_exactly_when_the_next_full_cycle_is_the_last "warn at c
 run_test test_warn_needs_a_full_next_scope_and_a_continue "warn needs next_scope=full and continue"
 run_test test_warn_accounts_for_an_uncharged_cycle "warn boundary is cycle == max after an uncharged cycle"
 run_test test_warn_is_emitted_on_every_verdict "warn is emitted on every verdict"
+run_test test_warn_fires_when_the_attempt_cap_binds_first "warn fires when the attempt cap binds first"
 run_test test_narrow_zero_is_uncharged_only_with_an_explicit_attempt "C3 uncharged only with explicit --attempt"
 run_test test_every_other_rule_is_charged "every other rule is charged"
 run_test test_observed_sequence_reviews_the_final_fix "#1057 replay: cap lands on a narrow re-check"

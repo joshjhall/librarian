@@ -166,10 +166,13 @@
 #   2. Nothing warned that `next_scope=full` had arrived with one slot left —
 #      the point where that full review becomes the final word and any blocking
 #      result it returns ships unreviewed. `warn=final-full-review` fires when
-#      the verdict is continue, the next scope is full, and the NEXT cycle's
-#      number equals --max-cycles (cycle+1 if this one was charged, cycle if
-#      not), so the caller decides to raise the cap or park BEFORE the fix, not
-#      after it. Advisory like next_scope: it changes no verdict and no rule.
+#      the verdict is continue, the next scope is full, and the next trip is
+#      the last one EITHER cap allows: its cycle number (cycle+1 if this one was
+#      charged, cycle if not) equals --max-cycles, OR its attempt number
+#      (attempt+1) reaches --max-attempts, where C0 stops it whatever it finds.
+#      The attempt arm matters more now that C3 spends attempts without cycles.
+#      So the caller decides to raise the cap or park BEFORE the fix, not after
+#      it. Advisory like next_scope: it changes no verdict and no rule.
 #
 # C2 sits directly under it and is the safety rule: a budget-exhausted or
 # wall-timed-out cycle can never be a convergence stop. It is partial, not
@@ -617,10 +620,12 @@ charged_of() {
     esac
 }
 
-# warn_of — `final-full-review` when the next cycle is the last one and must be
-# full scope (#1120, header), else empty. The next cycle's number is cycle+1
-# only if THIS cycle was charged: after an uncharged cycle the retry re-uses the
-# same number, so a C0b at cycle == max warns, and a C3 at max-1 does not.
+# warn_of — `final-full-review` when the next trip is the last one and must be
+# full scope (#1120, header), else empty. "Last" is either cap: C1 (the next
+# cycle's number reaches --max-cycles) or C0 (the next attempt reaches
+# --max-attempts). The next cycle's number is cycle+1 only if THIS cycle was
+# charged: after an uncharged cycle the retry re-uses the same number, so a C0b
+# at cycle == max warns, and a C3 at max-1 does not (unless attempts bind).
 warn_of() {
     if [ "$verdict" != "continue" ] || [ "$next_scope" != "full" ]; then
         return 0
@@ -629,7 +634,7 @@ warn_of() {
     if [ "$charged" = "true" ]; then
         _next_cycle=$((cycle + 1))
     fi
-    if [ "$_next_cycle" -eq "$max_cycles" ]; then
+    if [ "$_next_cycle" -ge "$max_cycles" ] || [ $((attempt + 1)) -ge "$max_attempts" ]; then
         command printf 'final-full-review'
     fi
 }
