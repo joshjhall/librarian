@@ -58,7 +58,8 @@ source_fragments "$SCRIPT_DIR/gate-watch" \
     30-helpers-and-modes.sh \
     40-stream-dedup.sh \
     50-prompt-line.sh \
-    60-pane-registry.sh
+    60-pane-registry.sh \
+    70-classifiers-load.sh
 
 # --- Run all tests ----------------------------------------------------------
 
@@ -90,7 +91,6 @@ run_fragment_test test_liveness_transcript_unregistered_background_falls_through
 run_fragment_test test_liveness_transcript_background_renders_item_count "Liveness registry (#949): the rendered line carries the open-item count"
 run_fragment_test test_liveness_transcript_background_singular_item "Liveness registry (#949): one open item renders in the singular"
 run_fragment_test test_unknown_mode_exits_2 "Unknown mode exits 2 with a usage message"
-run_fragment_test test_missing_classifiers_fails_loud "Missing classifiers fragment fails loud; handoff-relaunch refuses (#1109)"
 run_fragment_test test_no_arg_defaults_to_once "No argument defaults to --once (not the error path)"
 run_fragment_test test_fmt_age_formats "_fmt_age: seconds vs whole-minute formatting"
 run_fragment_test test_pane_is_plan_gate "pane_is_plan_gate matches plan overlays, not work output"
@@ -169,5 +169,6 @@ run_fragment_test test_pane_registry_liveness_consistent "pane registry (#1097):
 run_fragment_test test_pane_registry_mutation_removes_guard "pane registry (#1097): mutant without the guard reports idle (AC1 not vacuous)"
 run_fragment_test test_pane_registry_bounded_read_fails_open "pane registry (#1097): a hung registry read is bounded and fails open"
 run_fragment_test test_pane_registry_garbage_answer_fails_open "pane registry (#1097): a non-numeric or failing registry answer fails open"
+run_fragment_test test_missing_classifiers_fails_loud "Missing classifiers fragment fails loud; handoff-relaunch refuses (#1109)"
 
 generate_report
