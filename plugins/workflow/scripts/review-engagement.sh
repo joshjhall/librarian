@@ -154,6 +154,11 @@ fi
 #   - several, no harness signal      -> flag only if EVERY run made zero calls,
 #     (an older harness)                  so ambiguity can never manufacture an
 #                                         unengaged verdict.
+#   - several, harness signal, but    -> the no-signal rule above, plus a
+#     NO run matches its model filter     WARNING naming the dimension (#1133):
+#     (model unattributable: `unknown`)   an empty subset used to SKIP the
+#                                         dimension, so an unengaged kept retry
+#                                         went unflagged.
 command jq --rawfile rows "$rows" '
     ($rows | split("\n") | map(select(length > 0) | split("\t")
         | {dim: .[0], tool_calls: (.[1] | tonumber), output_tokens: (.[2] | tonumber), model: .[3]})) as $r
@@ -172,18 +177,27 @@ command jq --rawfile rows "$rows" '
         | ($e.value | if length == 1 then .
             elif $de.retry_succeeded == true then map(select(.model | test("opus")))
             elif $de.retry_attempted == true then map(select(.model | test("opus") | not))
-            else . end) as $kept
-        | select(($kept | length) > 0 and ($kept | all(.tool_calls == 0)))
-        | select(($withFindings | index($e.key)) == null)
-        | select($eng[$e.key].requires_code_reading == true)
-        | $e.key]) as $flag
+            else . end) as $selected
+        | {key: $e.key, unattributed: (($selected | length) == 0),
+           kept: (if ($selected | length) > 0 then $selected else $e.value end)}]) as $judged
+    | ([$judged[] | select(.kept | all(.tool_calls == 0)) | .key as $k
+        | select(($withFindings | index($k)) == null)
+        | select($eng[$k].requires_code_reading == true)
+        | $k]) as $flag
+    | ([$judged[] | select(.unattributed) | .key]) as $unattributed
     | .dimension_metrics = $metrics
     | .engagement_measured = true
+    | ._unattributed = $unattributed
     | .unengaged_dimensions = (((.unengaged_dimensions // []) + $flag) | unique)
     | .dimensions_skipped = (((.dimensions_skipped // []) + $flag) | unique)
     | if ($flag | length) > 0 then .clean = false | .budget_exhausted = true else . end
 ' "$result" >"$tmp_out" || die "review-engagement: failed to fold metrics into '$result'"
-command cat "$tmp_out" >"$result"
+# The fold hands the fallback dims out through a scratch key (jq's `stderr`
+# builtin varies by version); warn on each, then strip the key.
+command jq -r '._unattributed[]' "$tmp_out" | while IFS= read -r ua; do
+    command printf 'WARNING: review-engagement: could not attribute a model to the kept run of %s — judged on every run\n' "$ua" >&2
+done
+command jq 'del(._unattributed)' "$tmp_out" >"$result"
 
 command printf 'measured=true\n'
 command printf 'dimensions=%s\n' "$(command jq -r '.dimension_metrics | length' "$result")"
