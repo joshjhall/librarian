@@ -127,6 +127,7 @@ them as `${CLAUDE_PLUGIN_ROOT}/scripts/<name>.sh`.
 | `seed-worktree-trust.sh` | Seed Claude Code workspace trust for a worktree |
 | `recover-journal-partials.sh <journal>` | Recover finding-shaped partials from a `TaskStop`-ped review harness's `journal.jsonl` (#224) |
 | `review-convergence.sh check …` | Decide whether the review loop has converged or should run another cycle — the ordered rule list that replaced the bare `REVIEW_MAX_CYCLES` counter (#596) |
+| `review-engagement.sh <transcript-dir> <result.json>` | Measure each review dimension's tool calls and output tokens from the Workflow transcript and mark a code-reading dimension that answered `findings: []` without investigating as unengaged, so the cycle cannot read clean (#1111) |
 | `review-route.sh check …` | Decide whether a review cycle needs the full fan-out or the cheap doc-only path — an ordered rule list whose every ambiguity resolves to `full` (#550). Inert until a caller passes its verdict to the harness |
 | `ci-wait-timeout.sh check …` | Decide whether to keep polling pending CI, extend, checkpoint, or stop — mechanizes the `LIBRARIAN_CI_WAIT_*` bound that was prose-only until #588 |
 | `workflow-wall-timeout.sh check …` | The same decision for one bounded `Workflow` invocation, over `LIBRARIAN_WORKFLOW_WALL_*` (#327) |

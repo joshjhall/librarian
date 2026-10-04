@@ -175,8 +175,14 @@ export async function run() {
     /const reviewResults = await parallel\(/.test(orch),
     "ship-issue: dimensions run under parallel(), which nulls a thrown thunk (#646 AC2)",
   );
-  const nullBranchIdx = orch.indexOf("reviewResults.forEach((res, i) => {");
-  const nullBranch = orch.slice(nullBranchIdx, nullBranchIdx + 1200);
+  // Anchored on the MAIN results loop (`const rawFindings = []` opens it), not
+  // the first `reviewResults.forEach`: #1111 added an earlier engagement pass
+  // over the same array, and a first-match anchor silently re-pointed this pin at
+  // a loop with no null branch. `slice(idx)` on a -1 would scan from the end, so
+  // the anchor's presence is asserted separately rather than assumed.
+  const nullBranchIdx = orch.indexOf("const rawFindings = []\nreviewResults.forEach((res, i) => {");
+  ok(nullBranchIdx >= 0, "ship-issue: the main dimension-results loop is locatable (#646 AC2, #1111)");
+  const nullBranch = orch.slice(nullBranchIdx, nullBranchIdx + 2000);
   ok(
     nullBranch.includes("budgetExhausted = true") && nullBranch.includes("dimensionsSkipped.push("),
     "ship-issue: a nulled dimension still marks the cycle partial — a throw there is already handled (#646 AC2)",

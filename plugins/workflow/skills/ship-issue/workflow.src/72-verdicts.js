@@ -179,5 +179,44 @@ const applyJudgeVerdicts = (rawFindings, judged, budgetExhausted) => {
 const computeAllDimensionsFailed = (reviewResults, dimensionsSkipped) =>
   (reviewResults.length > 0 || dimensionsSkipped.length > 0) && reviewResults.every((r) => !r)
 
+// The dimensions whose job REQUIRES reading code (#1111). For these, an empty
+// answer formed from the inline diff alone is not a review: security,
+// correctness, and test coverage are all questions about code the diff hunks only
+// partly show. The other dimensions are legitimately diff-only — `scope-drift`
+// compares the diff against the issue, and `decomposition` judges the pre-scan's
+// size numbers — so a diff-only answer from them IS engagement. Classifying them
+// unengaged would fire every cycle, force a retry every cycle, and block
+// convergence forever (operator correction on the #1111 plan).
+//
+// This list is the ONE source for that distinction. The caller-side transcript
+// detector (scripts/review-engagement.sh) applies its zero-tool-call rule only
+// where the cycle result's `dimension_engagement.<dim>.requires_code_reading` is
+// true, which buildResult stamps from here — so the two detectors cannot drift
+// into disagreeing about which dimensions may be diff-only.
+const CODE_READING_DIMENSIONS = ['security', 'correctness', 'tests']
+
+// classifyEngagement — did a dimension that RETURNED actually review anything?
+//
+// The success-side sibling of `computeAllDimensionsFailed` (#846 covers a
+// dimension that dies; this covers one that succeeds having said nothing).
+// Returns 'failed' | 'engaged' | 'unengaged':
+//   - null result -> 'failed'. Kept distinct so the existing partial-cycle path
+//     (budgetExhausted + dimensionsSkipped) owns it unchanged.
+//   - any finding -> 'engaged'. A finding is evidence of looking by itself.
+//   - empty findings AND empty `checked` -> 'unengaged', for EVERY dimension: the
+//     answer names nothing it examined.
+//   - empty findings, and every `checked` entry is `diff-only` -> 'unengaged'
+//     ONLY for a CODE_READING_DIMENSIONS member; 'engaged' for the rest.
+const classifyEngagement = (dimName, result) => {
+  if (!result) return 'failed'
+  const findings = Array.isArray(result.findings) ? result.findings : []
+  const checked = Array.isArray(result.checked) ? result.checked : []
+  if (findings.length > 0) return 'engaged'
+  if (checked.length === 0) return 'unengaged'
+  const diffOnly = checked.every((c) => c && c.how === 'diff-only')
+  if (diffOnly && CODE_READING_DIMENSIONS.includes(dimName)) return 'unengaged'
+  return 'engaged'
+}
+
 const computeClean = (blockingLen, unresolvedLen, budgetExhausted) =>
   blockingLen === 0 && unresolvedLen === 0 && !budgetExhausted

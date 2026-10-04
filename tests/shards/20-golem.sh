@@ -56,6 +56,7 @@ run_stage "workflow wall-time stop decision" bash "$SCRIPT_DIR/validate-workflow
 run_stage "CI-wait stop decision" bash "$SCRIPT_DIR/validate-ci-wait-timeout.sh"
 run_stage "shared threshold-check library units" bash "$SCRIPT_DIR/validate-threshold-check.sh"
 run_stage "review convergence stop decision" bash "$SCRIPT_DIR/validate-review-convergence.sh"
+run_stage "review dimension engagement measurement" bash "$SCRIPT_DIR/validate-review-engagement.sh"
 run_stage "review routing decision" bash "$SCRIPT_DIR/validate-review-route.sh"
 run_stage "review scratch dir per run" bash "$SCRIPT_DIR/validate-review-scratch.sh"
 run_stage "autonomy-resolver decision table + parity" bash "$SCRIPT_DIR/validate-autonomy-resolve.sh"
