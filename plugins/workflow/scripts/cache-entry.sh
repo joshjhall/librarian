@@ -41,6 +41,16 @@
 # (e.g. `//`) is refused, and where `readlink -f` cannot run the path is
 # unverifiable and refused: an unverifiable path is neither seeded nor deleted.
 #
+# What it does NOT cover: the check is one snapshot, and the caller then acts on
+# the path by NAME. A link swapped in AFTER the check (between it and the
+# caller's `mkdir -p` / `rm -rf`) is still followed — a check-then-act race the
+# inline copies this replaced had too. It refuses a link already present.
+#
+# <N> must be all digits: the check verifies only the PARENT, so an <N> carrying
+# `/` or `..` (`7/../..`) would verify against an existing issue-7 and aim the
+# caller at the cache root itself. Both callers validate <N> today; this keeps
+# the one shared check from trusting them to.
+#
 # A trailing `/` on the root is dropped, so `/cache/venv/` and `/cache/venv`
 # name the same entry on both sides.
 cache_entry_path() {
@@ -49,6 +59,9 @@ cache_entry_path() {
     target="$root/${sub:+$sub/}issue-$n"
     parent="${target%/*}"
     command printf '%s\n' "$target"
+    case "$n" in
+        '' | *[!0-9]*) return 1 ;;
+    esac
     [ ! -L "$target" ] || return 1
     if [ -n "$sub" ] && [ -L "$parent" ]; then return 1; fi
     root_real="$(command readlink -f "$root" 2>/dev/null)" || root_real=""

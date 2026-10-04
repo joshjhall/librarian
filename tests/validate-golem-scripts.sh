@@ -260,6 +260,7 @@ run_fragment_test test_cache_entry_path_accepts_plain_and_keyless_paths "cache-e
 run_fragment_test test_cache_entry_path_refuses_symlinks_below_the_root "cache-entry: a symlinked key dir or leaf is refused, path still printed (#1113)"
 run_fragment_test test_cache_entry_path_follows_a_symlinked_root "cache-entry: a symlinked cache ROOT verifies — positive control (#1113)"
 run_fragment_test test_cache_entry_path_refuses_a_root_that_is_slash "cache-entry: a keyless root canonicalizing to '/' is refused (#1113)"
+run_fragment_test test_cache_entry_path_refuses_a_non_numeric_issue "cache-entry: a non-numeric or traversing issue number is refused (#1113 review c2)"
 run_fragment_test test_cache_entry_path_refuses_unverifiable_paths "cache-entry: a missing cache root is unverifiable and refused (#1113)"
 run_fragment_test test_cache_entry_path_is_the_one_derivation "cache-entry: worktree-new.sh and worktree-rm.sh both route through it (#1113 AC1)"
 run_fragment_test test_config_repo_root_no_hardcoded_usr_bin "config.sh: repo_root has no hardcoded /usr/bin/* tool paths (#278)"

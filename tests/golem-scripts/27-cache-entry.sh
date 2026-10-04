@@ -75,6 +75,20 @@ test_cache_entry_path_refuses_a_root_that_is_slash() {
     assert_equals 1 "$CE_RC" "a keyless '/.' root (canonically '/') is refused"
 }
 
+# The check verifies only the PARENT, so a traversing <N> with an existing
+# issue-7 would otherwise verify and print a path resolving to the cache ROOT —
+# the very thing a caller then `rm -rf`s. Measured before the digit guard:
+# `7/../..` returned 0.
+test_cache_entry_path_refuses_a_non_numeric_issue() {
+    local sb n
+    new_sandbox sb
+    command mkdir -p "$sb/cache/key/issue-7"
+    for n in '7/../..' '7/..' 'x' ''; do
+        _ce "$sb/cache" key "$n"
+        assert_equals 1 "$CE_RC" "issue number '$n' is refused — digits only"
+    done
+}
+
 # A cache root that does not exist leaves nothing to canonicalize the parent
 # against, so the entry is unverifiable and refused. (A missing <key> parent
 # under an EXISTING root is deliberately not pinned: GNU `readlink -f` resolves
