@@ -236,9 +236,11 @@ use the worktree-aware variant:
 
 > Exploration/planning phase complete. Context can be safely cleared — state
 > saved to `.claude/memory/tmp/next-issue-{N}.json`. `/clear` may return you to
-> the main checkout, so after it re-enter this worktree with
-> `EnterWorktree({ path: ".worktrees/issue-{N}" })`, then run `/workflow:next-issue` to
-> resume from {next_phase}.
+> the main checkout — from there, run `/workflow:golem {N}`: it finds
+> `.worktrees/issue-{N}`, offers to re-enter it, and resumes from {next_phase}.
+> If you are still inside the worktree (golem refuses to nest), run
+> `/workflow:next-issue {N}` instead, re-entering first with
+> `EnterWorktree({ path: ".worktrees/issue-{N}" })` if the cwd was dropped.
 
 If the user declines, continue normally — the suggestion is advisory.
 

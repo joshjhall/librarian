@@ -97,8 +97,9 @@ than by phase.
    describe.
 
 1. **Resume.** A fresh `/workflow:next-issue {N}` reads the state file, sees a
-   populated checkpoint, and picks up at `next_action`. Inside a worktree, re-enter
-   it first — `EnterWorktree({ path: ".worktrees/issue-{N}" })` — exactly as the
+   populated checkpoint, and picks up at `next_action`. For a worktree run, prefer
+   `/workflow:golem {N}` from the main checkout (it re-enters the worktree), with
+   `EnterWorktree` + `/workflow:next-issue {N}` as the fallback — exactly as the
    worktree-aware reset suggestion in `state-format.md` describes.
 
 ## Why the threshold is 175k
