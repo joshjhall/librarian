@@ -56,6 +56,7 @@ SCRIPTS="$REPO_ROOT/plugins/workflow/scripts"
     TRANSCRIPT_LIVENESS="$SCRIPTS/golem-transcript-liveness.sh"
     WORK="$SCRIPTS/golem-work.sh"
     MODE_CHECK="$SCRIPTS/golem-mode-check.sh"
+    HANDOFF_RELAUNCH="$SCRIPTS/golem-handoff-relaunch.sh"
     RUNBOOK="$SCRIPTS/tracks-runbook.sh"
     INBOX="$SCRIPTS/golem-inbox.sh"
     CONFIG="$SCRIPTS/config.sh"
@@ -111,6 +112,7 @@ source_fragments "$SCRIPT_DIR/golem-scripts" \
     70-status-checkpoint.sh \
     80-token-scrape.sh \
     85-context-budget.sh \
+    88-handoff-relaunch.sh \
     90-transcript-liveness.sh \
     95-work-registry.sh \
     100-mode-check.sh \
@@ -415,6 +417,24 @@ run_fragment_test test_status_rejects_a_traversal_issue_field "golem-status: a t
 run_fragment_test test_status_rejects_malformed_budget_output "golem-status: a malformed budget row degrades to unknown, never half-parsed (#784)"
 run_fragment_test test_status_handles_a_missing_context_budget_script "golem-status: a missing context-budget.sh degrades to unknown (#784)"
 run_fragment_test test_status_handles_a_non_executable_context_budget "golem-status: a non-executable context-budget.sh degrades without leaking (#784)"
+run_fragment_test test_relaunch_check_due_when_all_signals_hold "golem-handoff-relaunch: handoff verdict + open marker + idle is due (#1057)"
+run_fragment_test test_relaunch_not_due_under_threshold "golem-handoff-relaunch: an ok budget vetoes (#1057)"
+run_fragment_test test_relaunch_not_due_without_handoff_marker "golem-handoff-relaunch: no handoff_marker vetoes (a large golem at a human gate is never cleared) (#1057)"
+run_fragment_test test_relaunch_not_due_when_marker_already_resumed "golem-handoff-relaunch: a resumed marker vetoes (#1057)"
+run_fragment_test test_relaunch_not_due_when_working "golem-handoff-relaunch: a working golem vetoes (#1057)"
+run_fragment_test test_relaunch_unknown_when_no_transcript "golem-handoff-relaunch: an unreadable budget is unknown, never not-due (#1057)"
+run_fragment_test test_relaunch_unknown_when_no_worktree "golem-handoff-relaunch: a missing worktree is unknown (#1057)"
+run_fragment_test test_relaunch_rejects_bad_args "golem-handoff-relaunch: bad args are usage errors (#1057)"
+run_fragment_test test_relaunch_sends_clear_then_resume "golem-handoff-relaunch: /clear then the resume, as separate confirmed sends (#1057)"
+run_fragment_test test_relaunch_is_idempotent_per_handoff "golem-handoff-relaunch: never re-sent for the same handoff (#1057)"
+run_fragment_test test_relaunch_sends_nothing_when_not_due "golem-handoff-relaunch: a not-due golem is never typed into (#1057)"
+run_fragment_test test_relaunch_due_on_real_handoff_tail_ending_in_write "golem-handoff-relaunch: a real handoff tail ending in Write is due via the marker (#1057)"
+run_fragment_test test_relaunch_unknown_on_write_tail_without_marker "golem-handoff-relaunch: the Write tail without a marker is never due (#1057)"
+run_fragment_test test_relaunch_not_due_when_pane_shows_plan_gate "golem-handoff-relaunch: every gate overlay kind vetoes on both liveness paths (#1057)"
+run_fragment_test test_relaunch_unknown_on_write_tail_when_pane_unreadable "golem-handoff-relaunch: an unreadable pane on the indeterminate path is unknown (#1057)"
+run_fragment_test test_relaunch_not_due_on_write_tail_with_background_work "golem-handoff-relaunch: registered background work still vetoes (#1057)"
+run_fragment_test test_relaunch_unknown_on_other_indeterminate_with_marker "golem-handoff-relaunch: only the #890 turn-ended indeterminate is disambiguated (#1057)"
+run_fragment_test test_relaunch_refuses_when_gate_matchers_unavailable "golem-handoff-relaunch: unloadable gate matchers refuse, never pass (#1057)"
 run_fragment_test test_status_renders_each_golem_independently "golem-status: each golem's row is independent across the render loop (#784)"
 run_fragment_test test_status_does_not_leak_the_scripts_stderr "golem-status: context-budget stderr does not leak into the table (#784)"
 run_fragment_test test_status_sources_the_signals_fragment "golem-status: the per-golem signals fragment is sourced and wired in (#800)"

@@ -211,48 +211,13 @@ serial subagent cycle (measured on PR #642). Reach for the harness by name; do n
 pattern-match on the adjective. `tests/lint-harness-refs.sh` enforces that every
 mention of this review names the harness beside it.
 
-**Context budget — check it at each phase boundary (#784).** A golem is the shape
-that runs 400–800 turns unattended, and a session that runs to exhaustion pays
-~3x per turn at the end for what the start did cheaply. So at each boundary of
-the pipeline above (plan approved, implementation done, review cycle complete):
-
-```bash
-<skill-base-dir>/../../scripts/context-budget.sh check .
-```
-
-**Spell it with NO shell variables — this recipe is the one that runs while
-worktree-isolated (#809).** Substitute `<skill-base-dir>` with the literal path
-in this skill's own invocation header (`Base directory for this skill: …`), so
-the command contains only literal text and `.`. That is deliberate and must not
-be "corrected" back to the repo-wide `${CLAUDE_PLUGIN_ROOT}` convention
-(CLAUDE.md § Key conventions): after Phase B this session is inside the
-worktree, and the Claude Code harness **refuses** a Bash command it cannot
-statically verify stays in-tree — measured, deterministic, and triggered by the
-variable *spelling* rather than by the script. `${CLAUDE_PLUGIN_ROOT}/…` and
-`"$PWD"` are both refused; so is a bare `echo "${HOME}"`. `CLAUDE_PLUGIN_ROOT`
-is also **not exported into the Bash environment at all** (verified: `env |
-grep -c` → 0), so that spelling had two independent reasons to fail and the
-`handoff` verdict never fired in any golem run. The refusal is easy to miss
-because it looks like one stray denial line and the run continues — the failure
-mode this whole block exists to prevent, arriving silently.
-
-`.` is safe as the argument because Phase B left this session's cwd **in** the
-worktree being measured, and `context-budget.sh` normalizes a trailing `/.` or
-`/` before deriving the transcript slug (#809 — without that it probed a
-`…-809--` path and exited 2 on a transcript sitting right there).
-
-On `handoff`, do **not** start the next step: write the `checkpoint` into the
-existing `.claude/memory/tmp/next-issue-{N}.json` and end the session, so the
-resumed run starts at the ~104k floor instead of at 400k. On `advise`, finish the
-step you are on but do not begin a new one. Resume with `/workflow:golem N` from
-the main checkout (or `/workflow:next-issue N` if still inside the worktree) — the checkpoint's
-`next_action` is what stops the fresh session re-deriving the plan. A non-zero
-exit means the budget is **unknown**, not fine: proceed, but say so in one line.
-Full protocol and the threshold's derivation: `next-issue/handoff-protocol.md`.
-
-This is the one place `/workflow:golem` acts on the budget automatically. `/workflow:golem`
-is by definition unattended-shaped work with all its state already in the state
-file; an interactive session is **advised, never cycled** (#784 AC5).
+**Context budget (#784, #1057).** The check runs at the pipeline's own
+boundaries — `next-issue/phase2-plan.md` (plan approved, implementation done) and
+`ship-issue/ci-review-protocol.md` (each review cycle) — so this session runs it
+by executing Phase C; there is no separate golem-only site. Spell it with a
+literal path and `.` (worktree-isolated, #809/#815); on `handoff` write the
+checkpoint with `handoff_marker` and end the turn. Full protocol, the one-line
+report, and the relaunch: `next-issue/handoff-protocol.md` § *Where the check runs*.
 
 ### Phase D — Teardown (auto after merge, prompt otherwise)
 

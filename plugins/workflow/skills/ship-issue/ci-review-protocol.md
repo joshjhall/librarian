@@ -270,6 +270,18 @@ e. **If any fixes were applied this cycle**: commit
 `fix(review): address cycle {cycle} findings`, `git push`, and re-run the
 CI-monitor sub-step above (wait for green, auto-fix via `ci-fixer`).
 
+<!-- budget-check-site: review-cycle -->
+**Context budget, every cycle (#1057)** — the loop is where a golem grows most:
+
+```bash
+<skill-base-dir>/../../scripts/context-budget.sh check .
+```
+
+Print the one-line report; on `handoff` in a golem, checkpoint with
+`handoff_marker` (`next_action` names the next cycle) and end the turn.
+`next-issue/handoff-protocol.md` § *Where the check runs*.
+<!-- end-budget-check-site -->
+
 f. **Consult the convergence predicate** — do NOT decide "have reviewers run out
 of material?" by hand, and do NOT read the cycle counter as that answer. Call the
 bundled helper once per cycle, exactly as the wall-time bound is called in

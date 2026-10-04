@@ -108,6 +108,12 @@ anywhere in the observed corpus. *(That non-adherence is a real defect, but a
 different one — it concerns whether the skill acts on the verdict, not what the
 verdict's threshold should be. Filed separately.)*
 
+*(Diagnosed in #1057: the check was not ignored but never reached — its only
+site was `golem/SKILL.md` § Phase C, which an orchestrated golem never loads, and
+the L3–L4 reset bypass skipped the rest. Five later golems ran to 170k–400k with
+zero checks. Fixed by pinning the check to `budget-check-site` markers every golem
+executes, plus an orchestrator-side relaunch, `golem-handoff-relaunch.sh`.)*
+
 `R` was therefore obtained by **instrumenting and performing** a handoff rather
 than mining one: the #1056 planning session ended at its plan-approved phase
 boundary, writing a `handoff_marker` into its checkpoint; the resumed session
