@@ -406,13 +406,23 @@ if ! command mkdir -p "$root/$GOLEM_STATUS_DIR" 2>/dev/null; then
     exit 1
 fi
 if [ "$_state" = "due" ]; then
+    # Prove the stamp is writable BEFORE anything irreversible: `/clear` without
+    # a durable `cleared` record is the stranding this file exists to prevent. A
+    # `pending` body matches neither `<at>` nor `cleared …`, so a /clear that then
+    # fails reads as `due` again next sweep.
+    if ! command printf 'pending %s\n' "$_at" 2>/dev/null >"$stamp"; then
+        command echo "golem-handoff-relaunch: cannot write $stamp — refusing to /clear without a stamp" >&2
+        exit 1
+    fi
     if ! "$modecheck" verify-text "$n" "/clear"; then
         command echo "golem-handoff-relaunch: /clear not confirmed for golem-$n — not sending the resume" >&2
         exit 1
     fi
     # Recorded BEFORE the resume, so a resume that fails is found next sweep as
     # resume-due rather than lost behind an `ok` budget (see HALF-RELAUNCH).
-    command printf 'cleared %s\n' "$_at" >"$stamp"
+    if ! command printf 'cleared %s\n' "$_at" 2>/dev/null >"$stamp"; then
+        command echo "golem-handoff-relaunch: /clear landed but $stamp could not be updated — if the resume below fails, golem-$n is stranded: attach and resume it by hand" >&2
+    fi
 fi
 if ! "$modecheck" verify-text "$n" "/workflow:next-issue $n --level $_level"; then
     command echo "golem-handoff-relaunch: resume command not confirmed for golem-$n — next sweep reports resume-due" >&2

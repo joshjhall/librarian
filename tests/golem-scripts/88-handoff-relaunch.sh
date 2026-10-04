@@ -394,7 +394,7 @@ test_relaunch_refuses_when_gate_matchers_unavailable() {
 # --- delivery failures and the half-relaunch (#1057 review) ------------------
 
 # A /clear that never lands must not be followed by the resume, and leaves no
-# stamp — the next sweep sees the same `due` golem and retries cleanly.
+# completed stamp — the next sweep sees the same `due` golem and retries.
 test_relaunch_clear_not_confirmed_sends_no_resume() {
     _hr_need_jq || return 0
     local sb
@@ -405,7 +405,9 @@ test_relaunch_clear_not_confirmed_sends_no_resume() {
     assert_exit 1 "$RUN_RC" "an unconfirmed /clear fails the relaunch"
     assert_contains "$RUN_OUT" "/clear not confirmed" "and says which send failed"
     assert_not_contains "$(command cat "$sb/send-keys.log" 2>/dev/null)" "next-issue" "the resume was never sent"
-    assert_true "[ ! -e \"$sb/.worktrees/.status/handoff-relaunched-golem-42\" ]" "nothing was stamped"
+    plant_pane_tmux "$sb" "$_HR_PANE_IDLE"
+    run_relaunch "$sb" check 42
+    assert_contains "$RUN_OUT" "state=due" "the provisional stamp does not block the retry"
 }
 
 # /clear lands, the resume does not: the golem is cleared, so its budget now
@@ -545,4 +547,20 @@ test_relaunch_resume_due_unknown_on_other_indeterminate() {
     assert_contains "$RUN_OUT" "state=unknown" "it is unknown, not resume-due"
     assert_contains "$RUN_OUT" "liveness indeterminate" "and says why"
     assert_true "[ ! -s \"$sb/send-keys.log\" ]" "nothing was typed"
+}
+
+# The stamp is the only record that survives a /clear, so an unwritable stamp
+# refuses BEFORE /clear is sent — never clear first and hope.
+test_relaunch_refuses_clear_when_stamp_unwritable() {
+    _hr_need_jq || return 0
+    local sb
+    new_sandbox sb
+    _hr_golem "$sb" 42 "$_HR_HANDOFF_WRITE_TAIL" "$(_hr_state_open 42)"
+    plant_relaunch_tmux "$sb"
+    # A directory where the stamp file belongs: every write to it fails.
+    command mkdir -p "$sb/.worktrees/.status/handoff-relaunched-golem-42"
+    run_relaunch "$sb" relaunch 42
+    assert_exit 1 "$RUN_RC" "an unwritable stamp refuses the relaunch"
+    assert_contains "$RUN_OUT" "refusing to /clear without a stamp" "and says why"
+    assert_true "[ ! -s \"$sb/send-keys.log\" ]" "/clear was never sent"
 }
