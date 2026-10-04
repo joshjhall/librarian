@@ -82,6 +82,15 @@ test_worktree_rm_post_remove_hook_runs_once_with_args() {
     assert_equals "1" "$(_line_count "$log")" "the hook ran exactly once"
     assert_equals "issue|71|$root|$root/.worktrees/issue-71" "$(command cat "$log" 2>/dev/null)" \
         "the hook got mode, issue number, main-checkout root and worktree path"
+
+    # The header promises cwd = the main-checkout root. Pinned separately so
+    # _write_hook's record stays one stable shape for every other case.
+    command printf '#!/usr/bin/env bash\npwd -P >"%s"\n' "$sb/cwd.log" >"$sb/hooks/cwd"
+    command chmod +x "$sb/hooks/cwd"
+    run_in "$sb" "$WT_NEW" 88
+    _hook_rm "$sb" "$sb/hooks/cwd" 88
+    assert_equals "$(cd "$root" && command pwd -P)" "$(command cat "$sb/cwd.log" 2>/dev/null)" \
+        "the hook runs with the main-checkout root as its cwd"
 }
 
 # The directory-name spelling normalizes to issue mode, so the hook sees `71`.
@@ -313,4 +322,20 @@ test_worktree_rm_post_remove_hook_skipped_on_repair_only() {
     assert_contains "$RUN_OUT" "repaired stale core.worktree" \
         "the repair happened (guards a vacuous pass)"
     assert_true "[ ! -e '$log' ]" "the hook did not run on a repair-only run"
+}
+
+# A repo-local hook that is a SYMLINK to an executable runs — the `-L` arm exists
+# for the dangling case, and must not break the ordinary linked one.
+test_worktree_rm_post_remove_hook_repo_local_symlink_runs() {
+    local sb log
+    new_sandbox sb
+    log="$sb/hook.log"
+    _write_hook "$sb/hooks/real" "$log"
+    command mkdir -p "$sb/.golem"
+    command ln -s "$sb/hooks/real" "$sb/.golem/post-remove"
+    run_in "$sb" "$WT_NEW" 89
+
+    _hook_rm "$sb" "" 89
+    assert_exit 0 "$RUN_RC" "teardown with a linked repo-local hook exits 0"
+    assert_equals "1" "$(_line_count "$log")" "the linked repo-local hook ran once"
 }

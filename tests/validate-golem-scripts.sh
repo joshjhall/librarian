@@ -379,6 +379,7 @@ run_fragment_test test_worktree_rm_post_remove_hook_name_mode_args "worktree-rm:
 run_fragment_test test_worktree_rm_post_remove_hook_bad_timeout_falls_back "worktree-rm: a bad hook timeout warns and falls back to 300 (#1092 review)"
 run_fragment_test test_worktree_rm_post_remove_hook_repo_local_unrunnable_warns "worktree-rm: a dangling or non-executable .golem/post-remove warns (#1092 review)"
 run_fragment_test test_worktree_rm_post_remove_hook_skipped_on_repair_only "worktree-rm: a core.worktree repair alone never runs the hook (#1092 review)"
+run_fragment_test test_worktree_rm_post_remove_hook_repo_local_symlink_runs "worktree-rm: a .golem/post-remove symlink to an executable runs (#1092 review)"
 run_fragment_test test_attach_non_integer_exits_2 "golem-attach: non-integer arg exits 2"
 run_fragment_test test_attach_no_session_exits_1 "golem-attach: no session/container exits 1"
 run_fragment_test test_status_empty_reports_no_golems "golem-status: empty state reports no active golems"
