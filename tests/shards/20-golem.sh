@@ -79,6 +79,7 @@ run_stage "token-cost reconciliation harness" bash "$SCRIPT_DIR/validate-token-r
 run_stage "token attribution trap fixtures" bash "$SCRIPT_DIR/validate-token-attribute.sh"
 run_stage "context-budget session-length signal" bash "$SCRIPT_DIR/validate-context-budget.sh"
 run_stage "context-budget check sites + relaunch step" bash "$SCRIPT_DIR/lint-budget-check-sites.sh"
+run_stage "handoff-marker read side (fail-open)" bash "$SCRIPT_DIR/validate-handoff-marker.sh"
 run_stage "ephemeral-port allocation + retry" bash "$SCRIPT_DIR/validate-free-port.sh"
 # The ORDERING of a status-label transition (#636/#921): add first, remove only
 # on success, so a failed add can never strip the existing label and leave an
