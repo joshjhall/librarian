@@ -106,6 +106,7 @@ source_fragments "$SCRIPT_DIR/golem-scripts" \
     40-worktree-rm.sh \
     42-worktree-rm-wedged.sh \
     43-worktree-rm-deregistered.sh \
+    44-worktree-rm-rename-bound.sh \
     45-worktree-rm-symlink.sh \
     47-worktree-rm-named.sh \
     48-worktree-rm-post-remove-hook.sh \
@@ -342,6 +343,12 @@ run_fragment_test test_worktree_rm_failed_unwedge_fallback_reports_occupied "wor
 run_fragment_test test_worktree_rm_unwedge_success_without_move_reports_occupied "worktree-rm: an exit-0 unwedge-worktree that moved nothing is not reported as success (#1088 review)"
 run_fragment_test test_worktree_rm_reread_matches_a_bracketed_repo_path "worktree-rm: the registration re-read is a fixed-string match, safe under a bracketed repo path (#1088 review)"
 run_fragment_test test_worktree_rm_unwedge_output_is_sanitized "worktree-rm: relayed unwedge-worktree output is stripped of control characters (#1088 review)"
+run_fragment_test test_worktree_rm_occupied_quarantine_falls_back_to_unwedge_worktree "worktree-rm: an occupied quarantine destination falls back to unwedge-worktree, never nesting (#1096)"
+run_fragment_test test_worktree_rm_hanging_quarantine_rename_is_bounded "worktree-rm: a hung quarantine rename is bounded and reported as a timeout (#1096)"
+run_fragment_test test_worktree_rm_rename_landed_before_timeout_reports_the_quarantine "worktree-rm: a rename that landed before the bound fired is reported as the quarantine (#1096)"
+run_fragment_test test_worktree_rm_hanging_unwedge_fallback_is_bounded "worktree-rm: a hung unwedge-worktree is bounded, path reported occupied (#1096)"
+run_fragment_test test_worktree_rm_unwedge_timeout_after_move_reports_path_free "worktree-rm: an unwedge-worktree killed after its rename reports the path free (#1096)"
+run_fragment_test test_worktree_rm_invalid_rename_timeout_warns_and_defaults "worktree-rm: a malformed GOLEM_RENAME_TIMEOUT warns and uses 30 (#1096)"
 run_fragment_test test_worktree_new_already_exists_matches_a_bracketed_repo_path "worktree-new: the already-exists guard is a fixed-string match, safe under a bracketed repo path (#1088 review)"
 run_fragment_test test_worktree_rm_repairs_stale_core_worktree "worktree-rm: repairs a stale main-repo core.worktree (#258)"
 run_fragment_test test_worktree_rm_preserves_valid_core_worktree "worktree-rm: preserves a valid core.worktree (#258)"

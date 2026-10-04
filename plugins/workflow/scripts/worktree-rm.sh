@@ -34,6 +34,7 @@
 #   GOLEM_WORKTREE_DIR (.worktrees)   GOLEM_BRANCH_PREFIX (feature/issue-)
 #   GOLEM_UV_CACHE_DIR (/cache/venv) — the per-issue venv removed on teardown
 #   GOLEM_POST_REMOVE_HOOK ("") / GOLEM_POST_REMOVE_HOOK_TIMEOUT (300) — below
+#   GOLEM_RENAME_TIMEOUT (30) — bounds each rename-aside of a wedged leftover
 #
 # POST-REMOVE HOOK (#1092) — the one extension point for a CONSUMER repo. A repo
 # that keeps per-checkout artifacts OFF the worktree (venvs, `target/`, CMake

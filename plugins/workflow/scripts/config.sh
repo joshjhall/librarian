@@ -303,6 +303,11 @@
 : "${GOLEM_POST_REMOVE_HOOK:=}"
 : "${GOLEM_POST_REMOVE_HOOK_TIMEOUT:=300}"
 
+# Bound (seconds) on each rename worktree-rm.sh uses to free a wedged leftover's
+# path — its own `mv` to the `.wedged-*` quarantine and the `unwedge-worktree`
+# fallback (#1096). A timeout is reported, never read as the path being freed.
+: "${GOLEM_RENAME_TIMEOUT:=30}"
+
 # Liveness/heartbeat (SOFT, advisory — never auto-kills a golem):
 # how long a golem may show no progress before it is flagged a possible stall,
 # and the poll interval of the liveness stream.
@@ -368,7 +373,7 @@ export CONTEXT_BUDGET_THRESHOLD CONTEXT_BUDGET_FLOOR
 
 export GOLEM_WORKTREE_DIR GOLEM_STATUS_DIR GOLEM_BRANCH_PREFIX GOLEM_LEVEL \
     GOLEM_MODEL GOLEM_BASE_REF GOLEM_WORKTREE_LOCAL_FILES GOLEM_CARGO_CACHE_DIR \
-    GOLEM_POST_REMOVE_HOOK GOLEM_POST_REMOVE_HOOK_TIMEOUT \
+    GOLEM_POST_REMOVE_HOOK GOLEM_POST_REMOVE_HOOK_TIMEOUT GOLEM_RENAME_TIMEOUT \
     GOLEM_STALL_THRESHOLD \
     GOLEM_HEARTBEAT_INTERVAL GOLEM_LIVENESS_SUMMARY_INTERVAL \
     GOLEM_INBOX_WAIT GOLEM_INBOX_POLL GOLEM_WORK_MAX_AGE \

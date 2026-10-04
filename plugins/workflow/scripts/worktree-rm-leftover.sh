@@ -8,7 +8,7 @@
 #     # shellcheck source=./worktree-rm-leftover.sh
 #     . "$SCRIPT_DIR/worktree-rm-leftover.sh"
 #
-# WHY THESE SIX TOGETHER. Every function here disposes of what is left on disk
+# WHY THESE TOGETHER. Every function here disposes of what is left on disk
 # after git has DEREGISTERED a worktree, and they share one safety model —
 # residue guard first, then remove, then quarantine (rename aside), then the
 # `unwedge-worktree` fallback, never claiming a path freed unless it is:
@@ -19,16 +19,19 @@
 #   unwedge_fallback              last resort when our own rename cannot run
 #   cleanup_leftover_dir          guard + remove, refusing loudly on non-residue
 #   adopt_if_deregistered         a failed `git worktree remove` that DID deregister
+#   rename_timeout/bounded_rename the time bound on both renames (#1096)
 #
 # THE PARENT'S GLOBALS this file touches (do not add more without listing them):
 #
 #   reads   root     the main-checkout root (adopt_if_deregistered)
 #           wt       the worktree path relative to root (adopt_if_deregistered)
+#           GOLEM_RENAME_TIMEOUT  the rename bound, defaulted by config.sh
 #   writes  removed  set to 1 once something was torn down (remove_leftover_dir,
 #                    adopt_if_deregistered); worktree-rm.sh initializes it to 0
 #
-# Every function is only DEFINED here; nothing runs at source time, so the
-# globals need only be assigned before the first call, not before the source.
+# It calls bounded_run / bounded_run_available, so bounded-run.sh is sourced
+# first. Every function is only DEFINED here; nothing runs at source time, so
+# the globals need only be assigned before the first call, not the source.
 #
 # bash-3.2 clean, BSD-tool clean, per CLAUDE.md § Runtime policy.
 #
@@ -262,7 +265,7 @@ leftover_is_worktree_residue() {
 # a name with no reachable inode. The multi-GB figure an operator sees is
 # host-side space that only a host unlink or a Docker VM restart releases.
 remove_leftover_dir() {
-    local wtdir="$1" survivors quarantine
+    local wtdir="$1" survivors quarantine secs mv_rc
 
     command find "$wtdir" -mindepth 1 -maxdepth 1 ! -name .git \
         -exec rm -rf {} + 2>/dev/null || true
@@ -323,6 +326,7 @@ remove_leftover_dir() {
     # `mv` onto an existing directory moves the source INSIDE it — reintroducing
     # the nesting this naming exists to prevent.
     quarantine="$(command dirname "$wtdir")/.wedged-$(command basename "$wtdir")-$(command date -u +%s 2>/dev/null || command echo 0)-$$"
+    secs="$(rename_timeout)"
     if [ -e "$quarantine" ] || [ -L "$quarantine" ]; then
         # Belt-and-suspenders against the one failure mode this naming exists to
         # prevent. epoch+pid should never collide (one quarantine per process),
@@ -330,24 +334,39 @@ remove_leftover_dir() {
         # it — so an occupied destination must never be handed to `mv` on the
         # strength of "should never happen". Refuse rather than nest.
         command echo "  $wtdir could not be moved aside ($quarantine is occupied)"
-        unwedge_fallback "$wtdir"
-    elif command mv "$wtdir" "$quarantine" 2>/dev/null; then
-        command echo "  the path was still occupied, so it was moved aside to $quarantine"
-        command echo "  $wtdir is free again (no disk space is reclaimed in-container —"
-        command echo "   those entries are names with no reachable inode; only a host"
-        command echo "   unlink or a Docker VM restart releases the space)"
+        unwedge_fallback "$wtdir" "$secs"
     else
-        # The rename is not assumed. Report the tree where it actually is rather
-        # than claiming a quarantine that did not happen.
-        command echo "  $wtdir could not be moved aside either"
-        unwedge_fallback "$wtdir"
+        # Bounded (#1096): the measured virtiofs fault (EBADF) returns at once,
+        # but a rename on a wedged mount is exactly the call that could block,
+        # and teardown is unattended. The verdict is read from the FILESYSTEM,
+        # not the exit status — a rename the bound interrupted may or may not
+        # have landed (rename(2) is atomic, so it is one or the other), and only
+        # the paths say which.
+        mv_rc=0
+        bounded_rename "$secs" command mv "$wtdir" "$quarantine" >/dev/null 2>&1 ||
+            mv_rc=$?
+        if [ ! -e "$wtdir" ] && [ ! -L "$wtdir" ] && [ -e "$quarantine" ]; then
+            command echo "  the path was still occupied, so it was moved aside to $quarantine"
+            command echo "  $wtdir is free again (no disk space is reclaimed in-container —"
+            command echo "   those entries are names with no reachable inode; only a host"
+            command echo "   unlink or a Docker VM restart releases the space)"
+        else
+            # The rename is not assumed. Report the tree where it actually is
+            # rather than claiming a quarantine that did not happen.
+            if [ "$mv_rc" -eq 124 ]; then
+                command echo "  moving $wtdir aside timed out after ${secs}s"
+            else
+                command echo "  $wtdir could not be moved aside either"
+            fi
+            unwedge_fallback "$wtdir" "$secs"
+        fi
     fi
     command echo "  (expected on the macOS virtiofs mount stack, and reproduced on a Linux"
     command echo "   devcontainer overlay — nothing git-tracked is at risk)"
     removed=1
 }
 
-# unwedge_fallback <worktree> — last resort when remove_leftover_dir's own
+# unwedge_fallback <worktree> <secs> — last resort when remove_leftover_dir's own
 # rename-aside did not happen (#1088): hand the path to the containers image's
 # `unwedge-worktree` (containers >= 4.20) when it is on PATH, and relay what it
 # says — it names the quarantine it chose, so the operator learns exactly where
@@ -358,19 +377,70 @@ remove_leftover_dir() {
 # ours; its timestamp format differs, which also gives it a fresh destination
 # when ours was the occupied one.
 #
+# Bounded by <secs> (GOLEM_RENAME_TIMEOUT, #1096) like our own rename. A
+# timeout is reported as one, and the path is re-checked rather than assumed —
+# a killed run whose rename already landed has freed it.
+#
 # Never `exit`s: whatever it reports, teardown continues — nothing git-tracked
 # is at risk here, and the path is reported occupied rather than assumed free.
 unwedge_fallback() {
-    local wtdir="$1" out
+    local wtdir="$1" secs="$2" out rc
     if command -v unwedge-worktree >/dev/null 2>&1; then
-        if out="$(command unwedge-worktree "$wtdir" 2>&1)" && [ ! -e "$wtdir" ]; then
+        rc=0
+        out="$(bounded_rename "$secs" command unwedge-worktree "$wtdir" 2>&1)" || rc=$?
+        if [ "$rc" -eq 0 ] && [ ! -e "$wtdir" ]; then
             command echo "  unwedge-worktree moved it aside instead:"
             command printf '%s\n' "$(sanitize_stderr "$out")" | command sed 's/^/    /'
             return 0
         fi
-        command echo "  unwedge-worktree could not move it either: $(sanitize_stderr "$out")"
+        if [ "$rc" -ne 124 ]; then
+            command echo "  unwedge-worktree could not move it either: $(sanitize_stderr "$out")"
+        elif [ -e "$wtdir" ] || [ -L "$wtdir" ]; then
+            command echo "  unwedge-worktree timed out after ${secs}s without moving it"
+        else
+            # Killed mid-run, yet the path is gone: its rename landed before the
+            # bound fired. Say both halves — the path IS free, but the report
+            # naming the destination never arrived, so do not invent one.
+            command echo "  unwedge-worktree timed out after ${secs}s, but $wtdir is gone —"
+            command echo "  the path is free; look for a .wedged-* sibling to find the tree"
+            return 0
+        fi
     fi
     command echo "  so the path $wtdir stays occupied"
+}
+
+# rename_timeout — echo the validated GOLEM_RENAME_TIMEOUT (seconds) bounding
+# both renames above (#1096). A non-integer falls back to 30 with a WARNING,
+# the same contract as GOLEM_POST_REMOVE_HOOK_TIMEOUT: a typo must neither
+# abort teardown nor silently unbound it. Also warns, once, when bounded_run
+# cannot bound anything on this host — the rename then runs UNBOUNDED rather
+# than being skipped, because the rename is what frees the path; skipping it
+# would cost the feature to protect it (the #543 shape).
+rename_timeout() {
+    local secs="${GOLEM_RENAME_TIMEOUT:-30}"
+    if ! [[ "$secs" =~ ^[1-9][0-9]*$ ]]; then
+        command echo "worktree-rm: WARNING: GOLEM_RENAME_TIMEOUT='$secs'" \
+            "is not a positive integer; using 30" >&2
+        secs=30
+    fi
+    if ! bounded_run_available; then
+        command echo "worktree-rm: WARNING: cannot bound the rename-aside" \
+            "(sleep/mktemp/cat missing); running it unbounded" >&2
+    fi
+    command echo "$secs"
+}
+
+# bounded_rename <secs> <command...> — bounded_run when it can bound, else the
+# bare command (rename_timeout has already warned). Status is bounded_run's:
+# the command's own, or 124 when the bound fired.
+bounded_rename() {
+    local secs="$1"
+    shift
+    if bounded_run_available; then
+        bounded_run "$secs" "$@"
+    else
+        "$@"
+    fi
 }
 
 # cleanup_leftover_dir <root> <worktree> — the whole leftover-directory
