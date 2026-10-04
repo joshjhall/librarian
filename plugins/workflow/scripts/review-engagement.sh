@@ -65,10 +65,10 @@ tmp_out="$(command mktemp)"
 # shellcheck disable=SC2064  # expand the paths now, at trap-set time
 trap "command rm -f '$rows' '$order' '$tmp_out'" EXIT
 
-# Run order: the journal records `started` with each agentId in dispatch order.
-# Absent journal -> fall back to file-name order (an opus retry is then not
-# guaranteed to be last; the harness's own
-# `dimension_engagement.<dim>.retry_succeeded` still says whether one ran).
+# Dispatch order: the journal records `started` with each agentId in order. It
+# only makes `dimension_metrics` read chronologically; the unengaged decision
+# below does NOT depend on it. Absent journal -> meta-file name order, which
+# is effectively random (ids are `a` + hex).
 if [ -r "$dir/journal.jsonl" ]; then
     command jq -r 'select(.type == "started") | .agentId' "$dir/journal.jsonl" 2>/dev/null >"$order" || : >"$order"
 fi
@@ -138,9 +138,22 @@ if [ ! -s "$rows" ]; then
     exit 0
 fi
 
-# Fold the rows into the result. A dimension is flagged when its LAST run had
-# zero investigative tool calls, the cycle carries no finding from it, and the
-# harness says it must read code. Already-flagged dimensions are not duplicated.
+# Fold the rows into the result. A code-reading dimension that produced no
+# finding is flagged when the run whose answer the harness KEPT made zero
+# investigative tool calls. Already-flagged dimensions are not duplicated.
+#
+# Which run was kept is decided WITHOUT run order (cycle-6 review: `[-1]` read
+# "last" from file-name order whenever the journal was absent, and could judge
+# the sonnet run while the harness had kept an engaged opus retry):
+#   - one run                        -> that run.
+#   - several, harness says the opus  -> the opus-model run(s); the retry is the
+#     retry succeeded (retry_succeeded)   only `opus` dispatch, so model, not
+#                                         position, identifies it.
+#   - several, retry did not succeed  -> the non-opus run(s): the sonnet result
+#                                         stayed in place.
+#   - several, no harness signal      -> flag only if EVERY run made zero calls,
+#     (an older harness)                  so ambiguity can never manufacture an
+#                                         unengaged verdict.
 command jq --rawfile rows "$rows" '
     ($rows | split("\n") | map(select(length > 0) | split("\t")
         | {dim: .[0], tool_calls: (.[1] | tonumber), output_tokens: (.[2] | tonumber), model: .[3]})) as $r
@@ -155,7 +168,12 @@ command jq --rawfile rows "$rows" '
     | ([$engRaw | to_entries[] | select((.value.findings // 0) > 0) | .key] + $inArrays | unique) as $withFindings
     | (.dimension_engagement // {}) as $eng
     | ([$metrics | to_entries[] | . as $e
-        | select($e.value[-1].tool_calls == 0)
+        | ($eng[$e.key] // {}) as $de
+        | ($e.value | if length == 1 then .
+            elif $de.retry_succeeded == true then map(select(.model | test("opus")))
+            elif $de.retry_attempted == true then map(select(.model | test("opus") | not))
+            else . end) as $kept
+        | select(($kept | length) > 0 and ($kept | all(.tool_calls == 0)))
         | select(($withFindings | index($e.key)) == null)
         | select($eng[$e.key].requires_code_reading == true)
         | $e.key]) as $flag

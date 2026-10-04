@@ -16,11 +16,26 @@ there are two detectors, and both report into one field.
 | Detector | Where | Signal |
 | --- | --- | --- |
 | Evidence contract | `workflow.js` (`classifyEngagement`) | `findings: []` with an empty `checked`, or a code-reading dimension whose `checked` is all `diff-only` |
-| Transcript measurement | `scripts/review-engagement.sh` | the dimension's last run made zero investigative tool calls and produced no finding |
+| Transcript measurement | `scripts/review-engagement.sh` | the run whose answer the harness kept made zero investigative tool calls, and the dimension produced no finding |
 
 A dimension that `classifyEngagement` flags is re-dispatched **once on opus**
 before it is reported. Only flagged dimensions are retried, so an engaged cycle
 costs nothing extra.
+
+## Which run is judged
+
+A dimension the harness retried has two runs in the transcript. The script
+judges the run whose answer the harness **kept**, and it decides that without
+relying on run order. File-name order is effectively random, and the journal
+can be absent.
+
+- **One run:** that run.
+- **`retry_succeeded: true`:** the opus run. The retry is the only `opus`
+  dispatch, so the script identifies it by model, not by position.
+- **`retry_attempted: true` but not succeeded:** the sonnet run. Its result
+  stayed in place.
+- **No retry signal** (an older harness): flagged only if **every** run made
+  zero calls. An ambiguous case can never produce an unengaged verdict.
 
 ## Which dimensions may be diff-only
 

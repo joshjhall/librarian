@@ -188,6 +188,109 @@ test_journal_id_cannot_escape_the_dir() {
     assert_equals "true" "$(command jq -r '.clean' "$r")" "and the outside agent cannot flag a dimension"
 }
 
+# noj_agent <dir> <id> <dim> <model> <lines...> — like agent(), but writes NO
+# journal line: the no-journal fallback, where only file-name order exists.
+noj_agent() {
+    local dir="$1" id="$2" dim="$3" model="$4"
+    shift 4
+    command mkdir -p "$dir"
+    command printf '{"description":"review:%s"}\n' "$dim" >"$dir/agent-$id.meta.json"
+    : >"$dir/agent-$id.jsonl"
+    local line
+    for line in "$@"; do
+        command printf '%s\n' "$line" >>"$dir/agent-$id.jsonl"
+    done
+}
+
+# A tool-calling turn that records its model.
+toolm() { command printf '{"type":"assistant","message":{"id":"%s","model":"%s","content":[{"type":"tool_use","name":"%s"}],"usage":{"output_tokens":%s}}}' "$1" "$2" "$3" "$4"; }
+
+retry_result() {
+    # $1 = file, $2 = retry_attempted, $3 = retry_succeeded
+    command printf '{"blocking":[],"deferrable":[],"clean":true,"dimension_engagement":{"correctness":{"requires_code_reading":true,"findings":0,"retry_attempted":%s,"retry_succeeded":%s}}}\n' "$2" "$3" >"$1"
+}
+
+test_kept_run_is_found_without_journal_order() {
+    # The cycle-6 case. NO journal, and the engaged OPUS retry's id (a0...)
+    # sorts BEFORE the empty sonnet run's id (af...), so file-name order puts
+    # the sonnet run LAST. The old `[-1]` flagged this; the harness had kept
+    # the opus result, so it is engaged.
+    local d="$SANDBOX/noj" r="$SANDBOX/noj.json" out
+    noj_agent "$d" a0opus correctness opus "$user" "$(toolm o1 claude-opus-5-5 Read 400)" "$(so_model o2 claude-opus-5-5 60)"
+    noj_agent "$d" afsonnet correctness sonnet "$user" "$(so_model s1 claude-sonnet-5-5 53)"
+    [ ! -e "$d/journal.jsonl" ] || return 1
+    retry_result "$r" true true
+    out="$("$RE" "$d" "$r")"
+    assert_equals "0" "$(val unengaged "$out")" "a succeeded opus retry is judged, whatever the file-name order"
+    assert_equals "true" "$(command jq -r '.clean' "$r")" "and the cycle stays clean"
+}
+
+test_failed_retry_judges_the_kept_sonnet_run() {
+    # The retry ran but its result was NOT kept (retry_succeeded false), so the
+    # empty sonnet answer stands: unengaged, even though an opus run with tool
+    # calls exists in the transcript.
+    local d="$SANDBOX/noj2" r="$SANDBOX/noj2.json" out
+    noj_agent "$d" a0opus correctness opus "$user" "$(toolm p1 claude-opus-5-5 Read 400)"
+    noj_agent "$d" afsonnet correctness sonnet "$user" "$(so_model q1 claude-sonnet-5-5 53)"
+    retry_result "$r" true false
+    out="$("$RE" "$d" "$r")"
+    assert_equals "1" "$(val unengaged "$out")" "a retry whose result was not kept leaves the sonnet answer judged"
+}
+
+test_ambiguous_multi_run_flags_only_if_every_run_empty() {
+    # No harness retry signal (an older harness) and several runs: flag only
+    # when EVERY run made zero calls, so ambiguity never manufactures a verdict.
+    local d="$SANDBOX/amb" r="$SANDBOX/amb.json" out
+    noj_agent "$d" a0x correctness opus "$user" "$(toolm t1 claude-opus-5-5 Read 400)"
+    noj_agent "$d" afy correctness sonnet "$user" "$(so_model t2 claude-sonnet-5-5 53)"
+    command printf '{"blocking":[],"deferrable":[],"clean":true,"dimension_engagement":{"correctness":{"requires_code_reading":true}}}\n' >"$r"
+    out="$("$RE" "$d" "$r")"
+    assert_equals "0" "$(val unengaged "$out")" "one engaged run among several is not flagged when the kept run is unknown"
+    local d2="$SANDBOX/amb2" r2="$SANDBOX/amb2.json"
+    noj_agent "$d2" a0x correctness opus "$user" "$(so_model u1 claude-opus-5-5 55)"
+    noj_agent "$d2" afy correctness sonnet "$user" "$(so_model u2 claude-sonnet-5-5 53)"
+    command printf '{"blocking":[],"deferrable":[],"clean":true,"dimension_engagement":{"correctness":{"requires_code_reading":true}}}\n' >"$r2"
+    out="$("$RE" "$d2" "$r2")"
+    assert_equals "1" "$(val unengaged "$out")" "every run empty is still flagged"
+}
+
+test_rerun_is_idempotent() {
+    # Running twice on one result must not duplicate a flagged dimension.
+    local d="$SANDBOX/idem" r="$SANDBOX/idem.json"
+    agent "$d" i1 security sonnet "$user" "$(so i2 53)"
+    clean_result "$r"
+    "$RE" "$d" "$r" >/dev/null
+    "$RE" "$d" "$r" >/dev/null
+    assert_equals '["security"]' "$(command jq -c '.unengaged_dimensions' "$r")" "a second run does not duplicate unengaged_dimensions"
+    assert_equals "1" "$(command jq -r '[.dimensions_skipped[] | select(. == "security")] | length' "$r")" "nor dimensions_skipped"
+}
+
+test_missing_jq_fails_loud() {
+    # A PATH with bash but no jq: exit 2, result untouched, never a silent 0.
+    local bin="$SANDBOX/nojq-bin" r="$SANDBOX/nojq.json" before rc=0 tool
+    # Precondition, so a pass is the script's doing: jq truly is unreachable.
+    command mkdir -p "$bin"
+    command ln -sf "$(command -v bash)" "$bin/bash"
+    assert_equals "absent" "$(/usr/bin/env -uBASH_ENV PATH="$bin" "$bin/bash" -c 'command -v jq >/dev/null && echo present || echo absent')" "fixture: jq is not reachable on the stripped PATH"
+    command mkdir -p "$bin"
+    for tool in bash mktemp rm cat; do
+        command ln -sf "$(command -v "$tool")" "$bin/$tool"
+    done
+    clean_result "$r"
+    before="$(command cat "$r")"
+    # -uBASH_ENV: a BASH_ENV file (e.g. /etc/bash_env) is sourced by every
+    # non-interactive bash and can restore PATH, putting jq back and making this
+    # case pass vacuously. Measured: without the scrub it exited 0 here.
+    /usr/bin/env -uBASH_ENV PATH="$bin" "$bin/bash" "$RE" "$SANDBOX" "$r" >/dev/null 2>"$SANDBOX/nojq.err" || rc=$?
+    assert_equals "2" "$rc" "missing jq exits 2"
+    # The exit code alone cannot pin the guard: without it, the later
+    # `jq -e type == "object"` check fails on the missing binary and dies with a
+    # MISLEADING "not a JSON object" (still exit 2; measured). The guard's value is
+    # the actionable message, so that is what is asserted.
+    assert_contains "$(command cat "$SANDBOX/nojq.err")" "jq is required" "and names jq as the missing runtime"
+    assert_equals "$before" "$(command cat "$r")" "and leaves the result untouched"
+}
+
 test_no_review_agents_is_not_a_clean_measurement() {
     local d="$SANDBOX/none" r="$SANDBOX/none.json" out err
     command mkdir -p "$d"
@@ -227,6 +330,11 @@ run_test test_partial_trailing_line_is_tolerated "partial trailing transcript li
 run_test test_opus_retry_judged_on_last_run "opus retry judged on the last run"
 run_test test_model_read_from_transcript "model comes from message.model, not meta"
 run_test test_journal_id_cannot_escape_the_dir "journal agentId cannot escape the transcript dir"
+run_test test_kept_run_is_found_without_journal_order "no journal: the kept opus run is judged (cycle-6 case)"
+run_test test_failed_retry_judges_the_kept_sonnet_run "retry not kept: the sonnet answer is judged"
+run_test test_ambiguous_multi_run_flags_only_if_every_run_empty "no retry signal: flag only if every run empty"
+run_test test_rerun_is_idempotent "second run does not duplicate flags"
+run_test test_missing_jq_fails_loud "missing jq -> exit 2, result untouched"
 run_test test_no_review_agents_is_not_a_clean_measurement "no review agents -> measured=false"
 run_test test_unreadable_input_fails_loud "unreadable input -> exit 2"
 
