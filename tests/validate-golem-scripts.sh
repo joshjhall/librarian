@@ -277,6 +277,7 @@ run_fragment_test test_cache_entry_path_is_the_one_derivation "cache-entry: work
 run_fragment_test test_worktree_new_uv_refuses_foreign_owned_venv "worktree-new: a foreign-owned uv venv dir is not seeded, refusal announced (#1115)"
 run_fragment_test test_worktree_new_uv_refuses_foreign_owned_repo_key_dir "worktree-new: a foreign-owned repo-key dir is not seeded, refusal announced (#1115)"
 run_fragment_test test_worktree_rm_refuses_foreign_owned_uv_venv "worktree-rm: a foreign-owned uv venv is not deleted, refusal announced (#1115)"
+run_fragment_test test_worktree_rm_refuses_foreign_owned_uv_repo_key_dir "worktree-rm: a foreign-owned repo-key dir keeps the venv, refusal names ownership (#1115)"
 run_fragment_test test_config_repo_root_no_hardcoded_usr_bin "config.sh: repo_root has no hardcoded /usr/bin/* tool paths (#278)"
 run_fragment_test test_config_repo_root_honors_path "config.sh: repo_root resolves via PATH, not command git (#278)"
 run_fragment_test test_config_repo_root_dirname_root_edge "config.sh: repo_root returns '/' for a /.git common dir (#278)"

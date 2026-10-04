@@ -75,3 +75,23 @@ test_worktree_rm_refuses_foreign_owned_uv_venv() {
     assert_contains "$RUN_OUT" "not owned by you" "...and names ownership as the reason"
     assert_true "[ -f \"$venv/marker\" ]" "the foreign-owned venv's content survives"
 }
+
+# Teardown's keyed-PARENT refusal, end to end: our own issue-N under a
+# foreign-owned <repo-key> dir is kept, and remove_uv_venv names ownership — the
+# rc-3 mapping 27-cache-entry.sh cannot reach, since it calls the inner function.
+test_worktree_rm_refuses_foreign_owned_uv_repo_key_dir() {
+    local sb
+    new_sandbox sb
+    local cache="$sb/venvs" venv
+    venv="$(_uv_venv "$sb" "$cache" 74)"
+    _uv_run "$WT_NEW" "$sb" "$cache" 74
+    command mkdir -p "$venv"
+    command printf 'ours\n' >"$venv/marker"
+    _make_foreign "${venv%/*}" || return 0
+
+    _uv_run "$WT_RM" "$sb" "$cache" 74
+    assert_exit 0 "$RUN_RC" "teardown exits 0 under a foreign-owned repo-key dir"
+    assert_contains "$RUN_OUT" "refusing to remove uv venv $venv" "the refusal is announced"
+    assert_contains "$RUN_OUT" "not owned by you" "...and names ownership as the reason"
+    assert_true "[ -f \"$venv/marker\" ]" "the venv under the foreign parent survives"
+}
