@@ -37,3 +37,22 @@ with `novel=4`; uncapped it returned `continue`. Predicted in advance by the #61
 tally's rows 4–5, which flagged this masking and named the uncapped re-run as the
 fix. See [[blocking-empty-is-not-nothing-to-fix]] for the sibling failure on the
 other side of the same gate.
+
+**The last permitted cycle is the dangerous one.** The cap counts cycles that
+*produced a review*, so a blocking finding on cycle `REVIEW_MAX_CYCLES` gets a
+local fix that no cycle remains to review — the predicate prints `stop`/`C1-cap`
+and the final commit is unreviewed. Open the PR **parked** (`status/pr-pending`,
+no auto-merge, even at L3/L4) and name the unreviewed commit SHA in the PR body,
+so the human knows exactly what no reviewer saw.
+
+**Budget the terminator.** A clean-but-`C3-narrow-zero` cycle cannot terminate
+(a narrow delta proves nothing about the whole) yet still burns a capped slot and
+advises `next_scope=full`. When a cycle advises `full` with one cycle left, that
+full review is the final word: anything blocking it returns will ship
+unreviewed. A defect chain where each fix breeds the next adjacent defect is the
+early signal the cap will bind — decide then, not after the last fix.
+
+Observed on #1057 (PR #1112): cycles 1–3 each blocked, each fix spawning the next
+defect in a growing state machine; cycle 4 clean but `C3-narrow-zero`; cycle 5's
+full review found a fourth. Sibling shape on a different rule:
+[[c6-duplicate-stop-can-hold-a-live-defect]].
