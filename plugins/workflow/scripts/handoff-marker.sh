@@ -81,12 +81,13 @@ command -v jq >/dev/null 2>&1 || unreadable
 # into output an agent reads beside an imperative directive, so only an
 # ISO-8601-shaped value (digits, T/Z, : . + -, 10-40 chars) passes; anything
 # else prints as an empty `at=` — no newline can forge a key, no free text rides.
+# \A..\z, not ^..$: Oniguruma's `$` also matches before a trailing newline.
 classified="$(command jq -r '
     (.checkpoint.handoff_marker // null) as $m
     | if ($m | type) != "object" then "none"
       elif ($m.r_measured // null) != null then "counted"
       else "open\t\(($m.at // "") | tostring
-                      | if test("^[0-9][0-9TZ:.+-]{9,39}$") then . else "" end)"
+                      | if test("\\A[0-9][0-9TZ:.+-]{9,39}\\z") then . else "" end)"
       end' "$state_file" 2>/dev/null)" || unreadable
 
 case "$classified" in
