@@ -285,7 +285,9 @@ file; an interactive session is **advised, never cycled** (#784 AC5).
     itself — `git worktree remove` **plus** `branch -D` plus the `golem-N` tmux
     kill — so running it first deletes this session's own cwd out from under it.
     `keep` returns the session to the main checkout; the prune then runs from
-    there.
+    there. A consumer repo's per-checkout artifact cleanup belongs in its
+    post-remove hook (`GOLEM_POST_REMOVE_HOOK` or `.golem/post-remove`, #1092),
+    which this teardown runs — contract in `worktree-rm.sh`'s header.
 
   **Cross-ref #626** (move the golem worktree root to `.claude/worktrees/`). If
   that lands, golem worktrees sit where `EnterWorktree` natively places its own,

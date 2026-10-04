@@ -66,6 +66,11 @@ trap 'command rm -rf "$WORKDIR" ${TMUX_ROOT:+"$TMUX_ROOT"}' EXIT
 # level so EVERY call site in every suite sourcing this file is hermetic, not
 # just the ones that remembered a per-call pin.
 export GOLEM_UV_CACHE_DIR="$WORKDIR/no-uv-cache"
+# Same reason for the post-remove hook (#1092): an operator who exports
+# GOLEM_POST_REMOVE_HOOK for their own repo would otherwise have it run on every
+# sandbox teardown — against a sandbox root it was never written for. Cases that
+# exercise the hook set it per call.
+export GOLEM_POST_REMOVE_HOOK=""
 
 # new_sandbox <varname>
 # Creates a fresh git repo sandbox with one seed commit (so HEAD exists and can
