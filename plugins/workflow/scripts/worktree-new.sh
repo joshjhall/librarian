@@ -438,6 +438,16 @@ seed_cache_env() {
     fi
     target="$(cache_entry_path "$cache_root" "$sub" "$N")" || return 0
     command mkdir -p "$target" 2>/dev/null || return 0
+    # ...and must be OURS (#1115): a co-tenant on a shared cache root can
+    # pre-create the predictable path with no symlink at all, and the env would
+    # then send executable Python into a directory they control. Checked after
+    # the mkdir because only an existing path has an owner. Said out loud — a
+    # silent skip would read exactly like "this repo is not a uv project".
+    if ! cache_entry_owned "$target" "$sub"; then
+        command echo "worktree-new: WARNING: refusing to seed $key=$target —" \
+            "it, or its parent, is not owned by you; inspect it by hand" >&2
+        return 0
+    fi
     settings="$wt/.claude/settings.local.json"
     command mkdir -p "$wt/.claude"
     [ -f "$settings" ] || command printf '{}\n' >"$settings"

@@ -24,6 +24,37 @@ _ce() {
     )" || CE_RC=$?
 }
 
+# _ce_fn <fn> <args...> — run any cache-entry.sh function in a subshell; the
+# status lands in CE_RC, combined output in CE_OUT.
+_ce_fn() {
+    CE_RC=0
+    CE_OUT="$(
+        # shellcheck source=/dev/null
+        . "$CACHE_ENTRY"
+        "$@" 2>&1
+    )" || CE_RC=$?
+}
+
+# _make_foreign <dir> — hand <dir> to another uid (nobody, 65534) so the
+# ownership refusal (#1115) has something to refuse. Also used by
+# 28-uv-foreign-owner.sh, sourced after this file. Mode 0777 FIRST, so the
+# sandbox cleanup — running as us — can still empty and unlink it. Needs root
+# or passwordless sudo; otherwise skips (AC3): a non-root runner cannot create a
+# foreign-owned fixture, and faking one would test nothing.
+_make_foreign() {
+    command chmod 0777 "$1" 2>/dev/null || return 1
+    if [ "$(command id -u)" = 0 ]; then
+        command chown 65534 "$1" 2>/dev/null
+    else
+        command sudo -n chown 65534 "$1" 2>/dev/null
+    fi
+    if [ -O "$1" ]; then
+        skip_test "cannot create a foreign-owned fixture (not root, no passwordless sudo)"
+        return 1
+    fi
+    return 0
+}
+
 # --- tests ------------------------------------------------------------------
 
 test_cache_entry_path_accepts_plain_and_keyless_paths() {
@@ -101,6 +132,122 @@ test_cache_entry_path_refuses_unverifiable_paths() {
     assert_equals 1 "$CE_RC" "a cache root that does not exist is refused"
 }
 
+# cache_entry_owned (#1115): a path that exists but belongs to another uid is
+# refused. Non-root runners cannot chown a fixture, so the foreign rows use
+# directories root already owns: /usr/lib as a foreign LEAF, and /tmp as the
+# foreign PARENT of a leaf we create there. The foreign rows skip when the
+# runner IS uid 0, because then those directories are genuinely ours.
+test_cache_entry_owned_refuses_a_foreign_owner() {
+    local sb leaf
+    new_sandbox sb
+    command mkdir -p "$sb/cache/key/issue-7"
+    _ce_fn cache_entry_owned "$sb/cache/key/issue-7" key
+    assert_equals 0 "$CE_RC" "our own leaf under our own key verifies — positive control"
+    _ce_fn cache_entry_owned "$sb/cache/key/issue-8" key
+    assert_equals 1 "$CE_RC" "a missing leaf has no owner, so it is refused"
+    if [ "$(command id -u)" = 0 ]; then
+        skip_test "running as root — /usr/lib and /tmp are ours, no foreign fixture"
+        return 0
+    fi
+    _ce_fn cache_entry_owned /usr/lib ""
+    assert_equals 1 "$CE_RC" "a leaf owned by another uid (root's /usr/lib) is refused"
+    if [ -O /tmp ]; then
+        skip_test "/tmp is owned by this runner — no foreign parent available"
+        return 0
+    fi
+    leaf="$(command mktemp -d /tmp/ce-owned.XXXXXX)" || return 1
+    _ce_fn cache_entry_owned "$leaf" key
+    assert_equals 1 "$CE_RC" "our leaf under a FOREIGN <key> parent is refused"
+    _ce_fn cache_entry_owned "$leaf" ""
+    assert_equals 0 "$CE_RC" \
+        "keyless (cargo shape) the parent is the operator's cache root — not checked"
+    command rmdir "$leaf"
+}
+
+# cache_entry_remove deletes RELATIVE to a directory it has entered and
+# re-verified with `pwd -P` (#1115) — the remedy for a <key> swapped for a link
+# between cache_entry_path's check and the delete. The swap itself cannot be
+# raced deterministically, so these rows hand it a path that is ALREADY a link,
+# which is exactly what the swap leaves behind: the `pwd -P` re-check is the only
+# thing that can refuse it (cache_entry_path is not called here).
+test_cache_entry_remove_deletes_a_verified_entry() {
+    local sb
+    new_sandbox sb
+    command mkdir -p "$sb/cache/key/issue-7/bin/.hidden"
+    command printf 'x\n' >"$sb/cache/key/issue-7/bin/.hidden/f"
+    command ln -s /nonexistent "$sb/cache/key/issue-7/dangling"
+    local real
+    real="$(command readlink -f "$sb/cache/key")"
+    _ce_fn cache_entry_remove "$sb/cache/key" "$real" key 7
+    assert_equals 0 "$CE_RC" "a verified, owned entry is removed — positive control"
+    assert_true "[ ! -e \"$sb/cache/key/issue-7\" ] && [ ! -L \"$sb/cache/key/issue-7\" ]" \
+        "the entry, dotfiles and a dangling link inside it are all gone"
+    assert_true "[ -d \"$sb/cache/key\" ]" "the <key> parent survives"
+}
+
+test_cache_entry_remove_refuses_a_parent_that_is_not_where_expected() {
+    local sb real
+    new_sandbox sb
+    command mkdir -p "$sb/cache/key" "$sb/elsewhere/issue-7"
+    command printf 'keep\n' >"$sb/elsewhere/issue-7/file"
+    real="$(command readlink -f "$sb/cache")/key"
+    command rmdir "$sb/cache/key"
+    command ln -s "$sb/elsewhere" "$sb/cache/key"
+    _ce_fn cache_entry_remove "$sb/cache/key" "$real" key 7
+    assert_equals 2 "$CE_RC" "a <key> that became a link is refused by the pwd -P re-check"
+    assert_true "[ -f \"$sb/elsewhere/issue-7/file\" ]" "the link target's issue dir survives"
+}
+
+test_cache_entry_remove_refuses_a_leaf_that_is_a_link() {
+    local sb real
+    new_sandbox sb
+    command mkdir -p "$sb/cache/key" "$sb/elsewhere"
+    command printf 'keep\n' >"$sb/elsewhere/file"
+    command ln -s "$sb/elsewhere" "$sb/cache/key/issue-7"
+    real="$(command readlink -f "$sb/cache/key")"
+    _ce_fn cache_entry_remove "$sb/cache/key" "$real" key 7
+    assert_equals 2 "$CE_RC" "an issue-N that became a link is refused"
+    assert_true "[ -f \"$sb/elsewhere/file\" ]" "the link target's content survives"
+    assert_true "[ -L \"$sb/cache/key/issue-7\" ]" "the link itself is left in place"
+}
+
+# Teardown's own ownership check on the keyed PARENT, run on `.` from inside the
+# re-verified directory: /tmp is root's, the issue-N we create there is ours.
+# Keyless, the parent is the operator's cache root and is not checked.
+test_cache_entry_remove_refuses_a_foreign_owned_parent() {
+    local leaf n tmp_real
+    if [ "$(command id -u)" = 0 ] || [ -O /tmp ]; then
+        skip_test "/tmp is owned by this runner — no foreign parent available"
+        return 0
+    fi
+    tmp_real="$(command readlink -f /tmp)"
+    n="$$${RANDOM}"
+    leaf="/tmp/issue-$n"
+    command mkdir "$leaf" || return 1
+    _ce_fn cache_entry_remove /tmp "$tmp_real" key "$n"
+    assert_equals 3 "$CE_RC" "a keyed parent owned by another uid is refused as not-ours"
+    assert_true "[ -d \"$leaf\" ]" "nothing was deleted under the foreign parent"
+    _ce_fn cache_entry_remove /tmp "$tmp_real" "" "$n"
+    assert_equals 0 "$CE_RC" "keyless, the root-owned cache root is not an ownership refusal"
+    assert_true "[ ! -e \"$leaf\" ]" "...and our own leaf under it is removed"
+    command rmdir "$leaf" 2>/dev/null || true
+}
+
+# The LEAF ownership guard, run on `.` from inside the re-verified issue-N: a
+# foreign-owned issue-N under OUR <key> dir is refused and its content kept.
+# Only chown can build this fixture, so it skips without root/sudo (AC3).
+test_cache_entry_remove_refuses_a_foreign_owned_leaf() {
+    local sb real
+    new_sandbox sb
+    command mkdir -p "$sb/cache/key/issue-7"
+    command printf 'theirs\n' >"$sb/cache/key/issue-7/marker"
+    _make_foreign "$sb/cache/key/issue-7" || return 0
+    real="$(command readlink -f "$sb/cache/key")"
+    _ce_fn cache_entry_remove "$sb/cache/key" "$real" key 7
+    assert_equals 3 "$CE_RC" "a foreign-owned issue-N is refused as not-ours"
+    assert_true "[ -f \"$sb/cache/key/issue-7/marker\" ]" "its content survives"
+}
+
 # Patterns are `$`-free on purpose: assert_file_contains is a BRE grep, where a
 # `$` inside the pattern never matches a literal `$` — a negative assertion
 # spelled `readlink -f "$parent"` matched neither the old code nor the new and
@@ -117,4 +264,10 @@ test_cache_entry_path_is_the_one_derivation() {
         "worktree-rm.sh keeps no inline copy of the path verification"
     assert_file_not_contains "$WT_NEW" 'parent_real' \
         "worktree-new.sh keeps no inline copy of the path verification"
+    assert_file_contains "$WT_NEW" 'cache_entry_owned "' \
+        "worktree-new.sh's seed checks ownership through cache_entry_owned (#1115)"
+    assert_file_contains "$CACHE_ENTRY" 'cache_entry_remove "' \
+        "remove_uv_venv deletes through cache_entry_remove (#1115)"
+    assert_file_not_contains "$CACHE_ENTRY" 'command rm -rf' \
+        "cache-entry.sh deletes nothing by name with rm -rf (#1115)"
 }
