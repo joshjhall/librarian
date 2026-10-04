@@ -53,6 +53,9 @@
 #   How:    non-interactive (stdin is /dev/null) and bounded to
 #           GOLEM_POST_REMOVE_HOOK_TIMEOUT seconds. Best-effort: a non-zero exit
 #           or a timeout is a WARNING on stderr, never a failed teardown.
+#   Trust:  the repo-local hook is EXECUTED with the caller's environment, so
+#           the main checkout's working tree is trusted exactly as its justfile
+#           or git hooks are. Do not tear down from a checkout of untrusted refs.
 #
 # NOTE: the containers recipe also refreshed a bare host's on-disk runtime
 # copies (.claude/hooks, justfile, bin) from origin/main after teardown — that
