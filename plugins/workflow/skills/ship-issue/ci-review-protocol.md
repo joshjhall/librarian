@@ -429,7 +429,8 @@ and composes with the termination test below in one direction each:
 - **`stop` + green + clean** → terminate normally (below).
 - **`stop` + not clean** → the **dead-end** path at the end of this step. Never
   merge an unclean PR because the predicate said reviewers were done.
-- **`continue` + clean** → keep going: `cycle++` and re-run. This is rule `C3`,
+- **`continue` + clean** → keep going and re-run — without `cycle++`: `C3` is
+  uncharged (`charged=false`, #1120). This is rule `C3`,
   the case the issue turns on — a zero-finding cycle on a delta **narrower** than
   its predecessor says nothing about the material still unreviewed (#568 cycle 2
   returned zero across five dimensions on a test-only delta, and the next cycle
@@ -468,7 +469,8 @@ it stops for a human merge with the completion summary. The merge decision has a
 **single site** (Step 4) — this loop only establishes green + clean and never
 merges directly.
 
-Otherwise `cycle++`; if the predicate returned `verdict=stop` (whether at the cap
+Otherwise advance the counters (step (f): `cycle` only on `charged=true`); if
+the predicate returned `verdict=stop` (whether at the cap
 or on a convergence signal) and the PR is **not** green + clean, this is a
 **dead-end** (`orchestrate/autonomy-levels.md` § dead-end rule; #181).
 **STOP at every level, L4 included** — the merge invariant forbids merging an

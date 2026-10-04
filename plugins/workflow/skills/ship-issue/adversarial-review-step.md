@@ -326,7 +326,8 @@ bundled helper you **call** each poll, so it cannot drift:
 
 c. **Resolve the blocking findings**: for each finding in `blocking`, make
 the fix in the working tree, then amend or add a commit. Re-run step (b)
-(incrementing `cycle`) until `clean` is true **and** the convergence predicate
+(advancing `attempt` every trip and `cycle` only on `charged=true`, below) until
+`clean` is true **and** the convergence predicate
 says stop, or the predicate stops at the `REVIEW_MAX_CYCLES` cap. On each
 re-run, pass the fix-commit delta args
 (`deltaFiles`/`deltaDiff`/`priorBlockingDimensions`) from step (b)'s narrowing
