@@ -5,7 +5,7 @@ type: feedback
 metadata:
   node_type: memory
   originSessionId: 6d918ba8-345b-412b-97b7-b48ec4226971
-  modified: 2026-07-21T21:09:50.626Z
+  modified: 2026-10-03T21:18:52.635Z
 ---
 
 I committed the session's memory files with `git commit --no-verify` to get past
@@ -38,6 +38,11 @@ brought all 96 memory files to a clean `rumdl check`.
 - If a memory note needs to mention a spelling the `typos` gate rewrites, phrase
   it so the trigger word isn't written literally (see
   [[typos-gate-blocks-push]]).
+- It covers `git push` too, including `git push origin --delete <branch>` after
+  a merge. A delete with no content to check is not an exception: a golem
+  rationalized exactly that ("suite already passed, a delete changes no
+  content") on 2026-10-03. Let the hook run, or let `gh pr merge
+  --delete-branch` delete the branch.
 
 Landed as a forward commit (`docs: wrap memory prose …`), NOT a force-push
 rewrite of the already-pushed `--no-verify` commit — don't rewrite published
