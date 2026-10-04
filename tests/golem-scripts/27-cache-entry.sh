@@ -63,9 +63,16 @@ test_cache_entry_path_follows_a_symlinked_root() {
         "the ROOT itself may be a symlink — positive control for the refusals"
 }
 
+# The `!= "/"` guard is reachable only in the KEYLESS (cargo) shape: with a
+# <sub>, a `//` root is already refused by the parent comparison (`/key` never
+# equals `//key`), so a keyed row stays green with the guard deleted. Keyless,
+# the parent IS the root and the comparison accepts — only the guard refuses
+# seeding `/issue-N`. Measured: removing the guard flips both rows below to 0.
 test_cache_entry_path_refuses_a_root_that_is_slash() {
-    _ce "//" key 7
-    assert_equals 1 "$CE_RC" "a root canonicalizing to '/' is refused"
+    _ce "//" "" 7
+    assert_equals 1 "$CE_RC" "a keyless '//' root (canonically '/') is refused"
+    _ce "/." "" 7
+    assert_equals 1 "$CE_RC" "a keyless '/.' root (canonically '/') is refused"
 }
 
 # A cache root that does not exist leaves nothing to canonicalize the parent
