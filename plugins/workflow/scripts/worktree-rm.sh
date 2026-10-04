@@ -1573,8 +1573,9 @@ fi
 # Run the consumer's post-remove hook (#1092; contract in the header). Gated on
 # `torn_down` — `removed` as it stood before the core.worktree repair. Every
 # refusal has already exited 1 above, so a worktree this script declined to
-# remove can never trigger a cleanup of the artifacts it still depends on. The repo-local fallback is
-# resolved against `$root` (the MAIN checkout), never the removed worktree.
+# remove can never trigger a cleanup of the artifacts it still depends on. The
+# repo-local fallback is resolved against `$root` (the MAIN checkout), never the
+# removed worktree.
 #
 # Best-effort for the same reason as the tmux and uv arms: teardown is past its
 # destructive steps, so a failing hook must not strand a removed worktree behind
