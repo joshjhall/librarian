@@ -272,3 +272,20 @@ test_pane_registry_bounded_read_fails_open() {
     assert_true "[ $elapsed -lt 15 ]" "The bound fired well before the stub's 20s (took ${elapsed}s)"
     command rm -rf "$cp"
 }
+
+# Fails open on a GARBAGE answer too: a golem-work.sh that prints non-numeric
+# text (exit 0) or exits non-zero must not suppress — only a positive integer
+# counts as "open work".
+test_pane_registry_garbage_answer_fails_open() {
+    local cp body
+    for body in 'command echo "error: nope"' 'command echo 3; exit 1'; do
+        cp="$(command mktemp -d)" || return 1
+        _reg_scripts_copy "$cp/scripts"
+        command printf '%s\n' '#!/usr/bin/env bash' "$body" >"$cp/scripts/golem-work.sh"
+        command chmod +x "$cp/scripts/golem-work.sh"
+        _run_panes_registry "$_REG_PANE" "" "$cp/scripts/golem-gate-watch.sh"
+        assert_contains "$REG_OUT" "$_REG_IDLE" \
+            "golem-work.sh answering [$body] fails open: idle is still reported"
+        command rm -rf "$cp"
+    done
+}
