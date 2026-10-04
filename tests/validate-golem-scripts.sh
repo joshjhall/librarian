@@ -486,6 +486,8 @@ run_fragment_test test_relaunch_resume_due_refuses_a_working_session "golem-hand
 run_fragment_test test_relaunch_resume_due_on_fresh_cleared_transcript "golem-handoff-relaunch: a /clear-only transcript is resume-due (#1057)"
 run_fragment_test test_relaunch_resume_due_unknown_on_other_indeterminate "golem-handoff-relaunch: the cleared path fails closed on any other indeterminate (#1057)"
 run_fragment_test test_relaunch_refuses_clear_when_stamp_unwritable "golem-handoff-relaunch: an unwritable stamp refuses before /clear (#1057)"
+run_fragment_test test_relaunch_warns_when_cleared_stamp_unwritable "golem-handoff-relaunch: a failed cleared write warns and still resumes (#1121)"
+run_fragment_test test_relaunch_cleared_stamp_unwritable_resume_failure_exits_1 "golem-handoff-relaunch: a failed cleared write exits on the resume outcome (#1121)"
 run_fragment_test test_status_renders_each_golem_independently "golem-status: each golem's row is independent across the render loop (#784)"
 run_fragment_test test_status_does_not_leak_the_scripts_stderr "golem-status: context-budget stderr does not leak into the table (#784)"
 run_fragment_test test_status_sources_the_signals_fragment "golem-status: the per-golem signals fragment is sourced and wired in (#800)"
