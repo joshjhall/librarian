@@ -80,15 +80,20 @@ test_cache_entry_path_refuses_unverifiable_paths() {
     assert_equals 1 "$CE_RC" "a cache root that does not exist is refused"
 }
 
+# Patterns are `$`-free on purpose: assert_file_contains is a BRE grep, where a
+# `$` inside the pattern never matches a literal `$` — a negative assertion
+# spelled `readlink -f "$parent"` matched neither the old code nor the new and
+# so could never fail. Each pattern below was checked against both trees: the
+# positives are absent before this change, the negatives present before it.
 test_cache_entry_path_is_the_one_derivation() {
-    assert_file_contains "$WT_NEW" 'cache_entry_path "$cache_root"' \
+    assert_file_contains "$WT_NEW" 'cache_entry_path "' \
         "worktree-new.sh's seed derives its target through cache_entry_path"
-    assert_file_contains "$CACHE_ENTRY" 'cache_entry_path "$cache"' \
+    assert_file_contains "$CACHE_ENTRY" 'cache_entry_path "' \
         "remove_uv_venv derives its target through cache_entry_path"
-    assert_file_contains "$WT_RM" 'remove_uv_venv "$GOLEM_UV_CACHE_DIR"' \
+    assert_file_contains "$WT_RM" 'remove_uv_venv "' \
         "worktree-rm.sh tears the venv down through remove_uv_venv"
-    assert_file_not_contains "$WT_RM" 'readlink -f "$GOLEM_UV_CACHE_DIR"' \
+    assert_file_not_contains "$WT_RM" 'uv_root_real' \
         "worktree-rm.sh keeps no inline copy of the path verification"
-    assert_file_not_contains "$WT_NEW" 'parent_real=' \
+    assert_file_not_contains "$WT_NEW" 'parent_real' \
         "worktree-new.sh keeps no inline copy of the path verification"
 }
