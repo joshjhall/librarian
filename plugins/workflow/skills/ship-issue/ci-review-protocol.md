@@ -337,7 +337,7 @@ result printed; full contract in `review-engagement.md`:
   --partial "<true if budget_exhausted or wall-timed-out, else false>"
 # -> verdict=continue|stop  rule=C0-attempt-cap|…|C8-novel  capped_over=<rule|>
 #    reason=<slug>  findings=N novel=N duplicate=N refuted=N recursive=N
-#    next_scope=full|narrow
+#    next_scope=full|narrow  charged=true|false  warn=final-full-review|<empty>
 ```
 
 **`next_scope` (#656)** is the scope advice for the **next** cycle, emitted on
@@ -348,19 +348,21 @@ it changes no verdict and no rule, and the loop's termination guarantee still
 rests entirely on `verdict`. Pair it with `--delta-lines`: a `full` cycle passes
 the full diff's line count, a `narrow` cycle passes the fix delta's.
 
-**Two counters, not one (#616).** `attempt` counts every trip through this loop;
-`cycle` counts only the trips that **produced a review**. Increment `attempt`
-unconditionally, and `cycle` only when the harness result has
-`no_review_signal: false`:
+**Two counters, not one (#616, #1120).** `attempt` counts every trip through this
+loop; `cycle` counts only the trips the helper **charged**. Increment `attempt`
+unconditionally, and `cycle` only on `charged=true`:
 
 ```bash
 attempt=$((attempt + 1))
-if [ "$(jq -r '.no_review_signal // false' "$cycle_result_json")" = "true" ]; then
-    : # crashed before any dimension ran — do NOT advance $cycle
-else
+if [ "$charged" = "true" ]; then   # charged= from the helper's output
     cycle=$((cycle + 1))
 fi
 ```
+
+Two rules come back `charged=false`: `C0b-no-signal` (crashed before any dimension
+ran) and `C3-narrow-zero` (a clean narrow cycle, which cannot end the loop by
+construction, so it must not spend a slot that could). C3 is uncharged **only
+when `--attempt` is passed**, which is what keeps the loop bounded.
 
 `attempt_cap` is `REVIEW_MAX_ATTEMPTS` (default `2 × cap`). A cycle that crashed
 before any dimension ran is not evidence about convergence, so charging it to
@@ -386,15 +388,26 @@ genuine convergence) from `C1-cap` (the loop ran out of budget). When
 The field is empty for every rule but `C1-cap`, so a caller can read it
 unconditionally.
 
+**`warn=final-full-review` — decide before the last cycle, not after (#1120).**
+The next cycle is the final one **and** must be full scope, so it is the final
+word: any blocking finding it returns will be fixed with no cycle left to review
+the fix (#1057 parked on exactly this). Decide **now**: interactively, ask
+whether to raise `REVIEW_MAX_CYCLES` or plan to park; autonomously, do not
+prompt — note it, run the cycle, and if it blocks, park the PR as the merge
+invariant requires, naming this warning in the summary. The field is empty
+otherwise.
+
 **Graceful degradation**: if `review-convergence.sh` is missing or exits
 non-zero, fall back to the plain `cycle` vs `cap` comparison **plus** the
-`attempt` vs `attempt_cap` one, with a one-line note — the same posture as a
+`attempt` vs `attempt_cap` one, with a one-line note: set `charged=true` for
+that trip, so the counter snippet advances `cycle` on every trip (there is no
+helper verdict to charge from) — the same posture as a
 missing `workflow-wall-timeout.sh`. Keep both comparisons: without the attempts
 bound, a fallback that also stops charging crashed cycles would be unbounded. The
 loop stays bounded either way; it only loses the early-stop, the narrow-zero
 protection, and the `capped_over` disambiguation.
 
-Write each cycle's harness result to `{dir}/cycle<cycle>.json` (step a's
+Write each trip's harness result to `{dir}/attempt<attempt>.json` (step a's
 scratch dir, #1094) so the next cycle can pass it as
 `--prev-result` (repeatable — duplicate detection is against **all** earlier
 cycles, not just the previous one). On cycle 1 omit `--prev-result` and
@@ -416,7 +429,8 @@ and composes with the termination test below in one direction each:
 - **`stop` + green + clean** → terminate normally (below).
 - **`stop` + not clean** → the **dead-end** path at the end of this step. Never
   merge an unclean PR because the predicate said reviewers were done.
-- **`continue` + clean** → keep going: `cycle++` and re-run. This is rule `C3`,
+- **`continue` + clean** → keep going and re-run — without `cycle++`: `C3` is
+  uncharged (`charged=false`, #1120). This is rule `C3`,
   the case the issue turns on — a zero-finding cycle on a delta **narrower** than
   its predecessor says nothing about the material still unreviewed (#568 cycle 2
   returned zero across five dimensions on a test-only delta, and the next cycle
@@ -455,7 +469,8 @@ it stops for a human merge with the completion summary. The merge decision has a
 **single site** (Step 4) — this loop only establishes green + clean and never
 merges directly.
 
-Otherwise `cycle++`; if the predicate returned `verdict=stop` (whether at the cap
+Otherwise advance the counters (step (f): `cycle` only on `charged=true`); if
+the predicate returned `verdict=stop` (whether at the cap
 or on a convergence signal) and the PR is **not** green + clean, this is a
 **dead-end** (`orchestrate/autonomy-levels.md` § dead-end rule; #181).
 **STOP at every level, L4 included** — the merge invariant forbids merging an
@@ -473,11 +488,13 @@ no-signal attempts explicitly:
 
 > Reviewed N cycles across M attempts. Attempts 2 and 4 produced **no review
 > signal** (harness failed before any dimension ran) and are not evidence about
-> convergence.
+> convergence. Attempt 5 was an uncharged narrow clean cycle (`C3`).
 
-If the loop ended at `C0-attempt-cap`, say so plainly — that is "the harness kept
-crashing", a fundamentally different dead-end from "reviewers kept finding
-problems", and it points at infrastructure rather than at the code. Likewise, if
+If the loop ended at `C0-attempt-cap`, say so plainly and name **what spent the
+attempts** — two uncharged rules do (#1120). Mostly `C0b-no-signal` means "the
+harness kept crashing", which points at infrastructure; mostly uncharged
+`C3-narrow-zero` means fix cycles kept alternating with clean narrow ones, so the
+review was still productive. Neither is "reviewers kept finding problems". Likewise, if
 it ended at `C1-cap` with a `capped_over` of `C3-narrow-zero` or `C8-novel`, note
 that the review was still productive when the budget ran out (#635).
 Surface it on the feed as a `dead-end` event (message begins `DEAD-END:`):
