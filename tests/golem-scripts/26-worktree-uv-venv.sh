@@ -486,7 +486,10 @@ test_worktree_new_uv_failed_repo_key_skips_seed() {
     _uv_project "$sb"
     local cache="$sb/venvs"
     command mkdir -p "$cache" "$sb/stubbin"
-    command printf '#!/usr/bin/env bash\nexit 1\n' >"$sb/stubbin/cksum"
+    # The stub leaves a marker, so the test proves cksum was the thing that
+    # failed — not some other reason the seed declined.
+    command printf '#!/usr/bin/env bash\n: >"%s/cksum-ran"\nexit 1\n' "$sb" \
+        >"$sb/stubbin/cksum"
     command chmod +x "$sb/stubbin/cksum"
 
     _uv_env "$sb" "$cache" "$sb/no-cargo-cache"
@@ -496,6 +499,7 @@ test_worktree_new_uv_failed_repo_key_skips_seed() {
             PATH="$sb/stubbin:$PATH" \
             "$REAL_BASH" "$WT_NEW" 75 2>&1)" || RUN_RC=$?
     assert_exit 0 "$RUN_RC" "worktree-new exits 0 when the repo key cannot be computed"
+    assert_file_exists "$sb/cksum-ran" "the failing cksum stub was actually invoked"
     assert_not_contains "$RUN_OUT" "UV_PROJECT_ENVIRONMENT" "no uv seed without a repo key"
     assert_equals "" "$(command ls -A "$cache")" \
         "nothing is provisioned — in particular no un-namespaced issue-N"
