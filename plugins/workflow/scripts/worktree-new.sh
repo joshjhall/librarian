@@ -502,8 +502,8 @@ fi
 # settings.local.json (defaultMode "auto" + push/PR `ask` gates) actually
 # loads — Claude Code does not load project settings for an UNTRUSTED folder,
 # and a non-interactive tmux launch can't show the trust dialog. Complements
-# the explicit `--permission-mode auto` in the launch hint below (which works
-# even if this step is unavailable). Best-effort; always exits 0.
+# the explicit `--permission-mode auto` golem-launch.sh puts on its launch line
+# (which works even if this step is unavailable). Best-effort; always exits 0.
 if [ -x "$SCRIPT_DIR/seed-worktree-trust.sh" ]; then
     "$SCRIPT_DIR/seed-worktree-trust.sh" "$root/$wt"
 fi
@@ -511,8 +511,11 @@ fi
 command echo ""
 command echo "Worktree ready: $wt (branch $br)"
 command echo "Launch a golem there with:"
-# $(golem_model_flag) splices ` --model "…"` after each `claude` when GOLEM_MODEL
-# is set (so the copy-paste hint already carries the operator's chosen model),
-# and expands to nothing — byte-identical hint — when unset.
-MODEL_FLAG="$(golem_model_flag)"
-command echo "  tmux new-session -d -s golem-$N -c \"$root/$wt\" -e GOLEM_ID=golem-$N \"claude$MODEL_FLAG --permission-mode auto '/workflow:next-issue $N --level 4' ; claude$MODEL_FLAG --permission-mode auto '/workflow:ship-issue'\""
+# Point at golem-launch.sh — the single source of the launch line (--level,
+# GOLEM_MODEL, tmux shape) — rather than echoing a duplicate of it. The level
+# is a literal `<L>` placeholder on purpose (#1100): this script is never told
+# the run's level, and config.sh defaults GOLEM_LEVEL to 4, so any concrete
+# value here would be one the caller never chose — and a pasted L4 line skips
+# the plan gate and merges unasked.
+command echo "  \"$SCRIPT_DIR/golem-launch.sh\" launch $N --level <L>"
+command echo "  (<L> = this run's autonomy level, 1-4 — no default is assumed here)"

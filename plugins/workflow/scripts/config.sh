@@ -390,11 +390,12 @@ golem_repo_key() {
 
 # golem_model_flag — print ` --model "<GOLEM_MODEL>"` when GOLEM_MODEL is set,
 # else nothing. SINGLE SOURCE OF TRUTH for the model-flag shape: golem-launch.sh
-# (both the `print`/launch_line and the `launch` tmux string) and
-# worktree-new.sh's echoed launch hint all splice its output in after each
-# `claude` token. The leading space means the fragment slots in cleanly after
-# `claude` while an UNSET knob expands to the empty string, leaving the launch
-# line byte-identical to the pre-knob behavior (no regression — the invariant
+# (both the `print`/launch_line and the `launch` tmux string) splices its
+# output in after each `claude` token — worktree-new.sh's hint points at
+# golem-launch.sh rather than echoing a launch line of its own (#1100). The
+# leading space means the fragment slots in cleanly after `claude` while an
+# UNSET knob expands to the empty string, leaving the launch line
+# byte-identical to the pre-knob behavior (no regression — the invariant
 # tests/validate-golem-scripts.sh pins).
 #
 # QUOTING / INJECTION SAFETY: the emitted ` --model "…"` fragment lands inside a

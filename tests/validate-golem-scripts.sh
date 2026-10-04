@@ -183,6 +183,7 @@ run_fragment_test test_unverified_outcomes_agree_across_call_sites "golem-launch
 run_fragment_test test_launch_scratch_dir_failure_is_unverified_not_absent "golem-launch: a scratch-DIRECTORY failure is unverified, not absent (#946)"
 run_fragment_test test_worktree_new_non_integer_exits_2 "worktree-new: non-integer arg exits 2"
 run_fragment_test test_worktree_new_creates_worktree "worktree-new: creates the issue worktree + branch"
+run_fragment_test test_worktree_new_launch_hint_asserts_no_level "worktree-new: launch hint names no autonomy level the caller did not supply (#1100)"
 run_fragment_test test_worktree_new_duplicate_exits_1 "worktree-new: duplicate worktree exits 1"
 run_fragment_test test_worktree_new_existing_branch_exits_1 "worktree-new: lingering branch exits 1"
 run_fragment_test test_worktree_new_no_hardcoded_usr_bin "worktree-new: no hardcoded /usr/bin/* tool paths (#228)"
