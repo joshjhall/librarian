@@ -1020,9 +1020,11 @@ fi
 # Best-effort for the same reason as the tmux and uv arms: teardown is past its
 # destructive steps, so a failing hook must not strand a removed worktree behind
 # a non-zero exit. Bounded by bounded_run rather than GNU `timeout` (absent on
-# base macOS), which also closes the hook's stdin — no TTY is ever assumed. A
-# hook that itself exits 124 reads as a timeout: bounded_run reports 124 for
-# both, the same contract as timeout(1).
+# base macOS), which also closes the hook's stdin — no TTY is ever assumed. When
+# bounded, a hook that itself exits 124 reads as a timeout: bounded_run reports
+# 124 for both, the same contract as timeout(1). Where bounded_run cannot bound,
+# the hook runs unbounded (stdin still closed) and a 124 is reported as its own
+# exit status, since no bound was applied (#1123).
 if [ "$torn_down" -eq 1 ]; then
     post_hook=""
     if [ -n "$GOLEM_POST_REMOVE_HOOK" ]; then
