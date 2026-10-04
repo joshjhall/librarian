@@ -203,7 +203,12 @@ re-derivation looks the number up instead.
    `pct_of_threshold`, and an ISO timestamp `at`. This is data already in hand;
    take no new measurement. Set `r_measured` to `null`.
 1. **Filling it in.** A resumed session that finds a `handoff_marker` with
-   `r_measured: null` is the only place that can close the loop. **Count from
+   `r_measured: null` is the only place that can close the loop. You do not
+   have to notice it yourself: `next-issue`'s Phase 0 runs
+   `scripts/handoff-marker.sh status` first on every resume and, on an open
+   marker, prints the counting directive (#1058). The directive comes from the
+   read side, so the handing-off session never needs to hand-write one into
+   `next_action`. **Count from
    your first request**, and freeze the count at your first file-modifying
    request — `R` is everything before it: re-reading the state file, the plan,
    and files the prior session already read. Write the number to `r_measured`
@@ -215,3 +220,8 @@ re-derivation looks the number up instead.
    this handoff" and **nothing else**. It must never error, block a resume, or
    gate the handoff it observes; it is telemetry riding along on a checkpoint
    that has a job to do.
+1. **Copy it out before shipping.** `/workflow:ship-issue` deletes the state file,
+   and the marker with it, so a filled `r_measured` survives only if someone
+   copies it out. Append a row to `docs/verification/handoff-r-tally-1058.md` in
+   the same PR. That doc is the aggregation, kept by hand at this volume (one
+   row per handoff), along with when to replace it with code.

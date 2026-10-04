@@ -193,6 +193,12 @@ Proceed with Phase 0 as normal regardless of mode.
 
 **Validation** (for a single state file or user-selected file):
 
+- **First, before any other request** — read the handoff marker (#1058), bare
+  and with literal paths (`worktree-safe-recipes.md`):
+  `<skill-base-dir>/../../scripts/handoff-marker.sh status .claude/memory/tmp/next-issue-{N}.json`.
+  On `marker=open`, print `resuming a context handoff — R uncounted` and follow
+  its `directive=` line, counting from this very request. Any other output
+  (`none`/`counted`/`unreadable`) means continue silently; it never blocks.
 - Read the `.json` file and extract `phase`, `issue`, `branch` fields
 - Check if the issue is still open (`gh issue view {N} --json state` or
   `glab issue view {N}`)
