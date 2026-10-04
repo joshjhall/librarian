@@ -158,7 +158,7 @@ fi
 #                                         unengaged verdict.
 #   - several, harness signal, but    -> the no-signal rule above, plus a
 #     NO run matches its model filter     WARNING naming the dimension (#1133):
-#     (model unattributable: `unknown`)   an empty subset used to SKIP the
+#     (usually a model read `unknown`)    an empty subset used to SKIP the
 #                                         dimension, so an unengaged kept retry
 #                                         went unflagged.
 command jq --rawfile rows "$rows" '
@@ -203,7 +203,7 @@ command jq -r '._unattributed[]' "$tmp_out" >"$tmp_ua" ||
 command jq 'del(._unattributed)' "$tmp_out" >"$tmp_final" ||
     die "review-engagement: failed to strip the scratch key from the fold"
 while IFS= read -r ua; do
-    command printf 'WARNING: review-engagement: could not attribute a model to the kept run of %s — judged on every run\n' "$ua" >&2
+    command printf 'WARNING: review-engagement: no run of %s matched the kept-run model filter (model unattributable?) — judged on every run\n' "$ua" >&2
 done <"$tmp_ua"
 command cat "$tmp_final" >"$result"
 

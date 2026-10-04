@@ -267,15 +267,27 @@ test_unattributable_model_falls_back_to_every_run() {
     out="$("$RE" "$d" "$r" 2>"$err")"
     assert_equals "unknown" "$(command jq -r '.dimension_metrics.correctness[0].model' "$r")" "fixture: the model is unattributable"
     assert_equals "1" "$(val unengaged "$out")" "every run empty is flagged though no run's model could be attributed (AC1)"
-    assert_equals "1" "$(command grep -c 'WARNING: review-engagement: could not attribute a model to the kept run of correctness' "$err")" \
+    assert_equals "1" "$(command grep -c 'WARNING: review-engagement: no run of correctness matched the kept-run model filter' "$err")" \
         "a stderr warning names the unattributable dimension (AC3)"
     assert_equals "false" "$(command jq -r 'has("_unattributed")' "$r")" "the scratch key does not leak into the result"
     local d2="$SANDBOX/unattr2" r2="$SANDBOX/unattr2.json"
     noj_agent "$d2" a0x correctness opus "$user" "$(tool v3 Read 400)" "$(so v4 60)"
     noj_agent "$d2" afy correctness sonnet "$user" "$(so v5 53)"
     retry_result "$r2" true true
-    out="$("$RE" "$d2" "$r2" 2>/dev/null)"
+    local err2="$SANDBOX/unattr2.err"
+    out="$("$RE" "$d2" "$r2" 2>"$err2")"
     assert_equals "0" "$(val unengaged "$out")" "one engaged run among unattributable runs is not flagged (AC2)"
+    assert_equals "1" "$(command grep -c 'no run of correctness matched' "$err2")" "the warning fires whether or not the dimension is flagged"
+    # Two dimensions, only one unattributable: exactly one warning, naming it.
+    local d4="$SANDBOX/unattr4" r4="$SANDBOX/unattr4.json" err4="$SANDBOX/unattr4.err"
+    noj_agent "$d4" a0x correctness opus "$user" "$(so v8 55)"
+    noj_agent "$d4" afy correctness sonnet "$user" "$(so v9 53)"
+    noj_agent "$d4" b0x security opus "$user" "$(toolm w1 claude-opus-5-5 Read 400)"
+    noj_agent "$d4" bfy security sonnet "$user" "$(so_model w2 claude-sonnet-5-5 53)"
+    command printf '{"blocking":[],"deferrable":[],"clean":true,"dimension_engagement":{"correctness":{"requires_code_reading":true,"retry_attempted":true,"retry_succeeded":true},"security":{"requires_code_reading":true,"retry_attempted":true,"retry_succeeded":true}}}\n' >"$r4"
+    "$RE" "$d4" "$r4" >/dev/null 2>"$err4"
+    assert_equals "1" "$(command grep -c 'no run of' "$err4")" "only the unattributable dimension warns"
+    assert_equals "1" "$(command grep -c 'no run of correctness' "$err4")" "and the warning names it"
     # Negative control: an ATTRIBUTABLE retry (the opus run carries
     # message.model) selects its run, so no warning may fire.
     local d3="$SANDBOX/unattr3" r3="$SANDBOX/unattr3.json" err3="$SANDBOX/unattr3.err"
@@ -283,7 +295,7 @@ test_unattributable_model_falls_back_to_every_run() {
     noj_agent "$d3" afy correctness sonnet "$user" "$(so_model v7 claude-sonnet-5-5 53)"
     retry_result "$r3" true true
     "$RE" "$d3" "$r3" >/dev/null 2>"$err3"
-    assert_equals "0" "$(command grep -c 'could not attribute' "$err3" || true)" "an attributable retry emits no warning"
+    assert_equals "0" "$(command grep -c 'no run of' "$err3" || true)" "an attributable retry emits no warning"
 }
 
 test_rerun_is_idempotent() {
