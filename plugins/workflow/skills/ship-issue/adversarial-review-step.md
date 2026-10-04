@@ -62,16 +62,16 @@ a2. **Route the cycle (#550).** Ask the router whether this diff needs the
 full fan-out, and pass its verdict to the harness below as `reviewRoute`:
 
 ```bash
-# Write the list this step reads — under $HOME (not world-writable /tmp) and
-# qualified by $GOLEM_ID, since concurrent golems share $HOME and one fixed
-# path lets them clobber each other's file list. NOT `WORK=$(mktemp -d)`:
-# a command substitution is REFUSED worktree-isolated (#815).
-gid={GOLEM_ID or "solo"}; mkdir -p "$HOME/.cache/librarian-review/$gid"
-git diff --name-only origin/main...HEAD > "$HOME/.cache/librarian-review/$gid/files.txt"
+# Per-run scratch dir (#1094). Read its `dir=` line as {dir}, never `$(...)`
+# (#815). Run exactly ONE of these — `init` empties the dir, so on a later
+# cycle it would delete the cycle JSON convergence reads as --prev-result:
+<skill-base-dir>/../../scripts/review-scratch.sh init --issue {N}   # cycle 1 only
+<skill-base-dir>/../../scripts/review-scratch.sh path --issue {N}   # every later cycle
+git diff --name-only origin/main...HEAD > "{dir}/files.txt"
 # Pass the diff size and the HIGH pre-scan categories too — without them the
 # R6-max-lines ceiling and the R4-prescan carve-out can never fire:
 <skill-base-dir>/../../scripts/review-route.sh check \
-  --files "$HOME/.cache/librarian-review/$gid/files.txt" \
+  --files "{dir}/files.txt" \
   --diff-lines {line count of the diff from step a} \
   --prescan-categories "<comma list of HIGH categories from item 5, if any>"
 # -> route=full|cheap  rule=…  dimensions=…
@@ -344,7 +344,9 @@ review loop" step (f), and in the script header:
 
 Substitute `<skill-base-dir>` and the `{...}` placeholders with literal values
 — worktree-isolated when ship is chained in-turn (#815,
-`next-issue/worktree-safe-recipes.md`).
+`next-issue/worktree-safe-recipes.md`). Write each cycle's result as
+`{dir}/cycle<cycle>.json` in the scratch dir from step a2, so `--prev-result`
+only ever names this run's cycles (#1094).
 
 ```bash
 <skill-base-dir>/../../scripts/review-convergence.sh check \

@@ -46,15 +46,16 @@ unregistered loop reads as an idle golem for its whole duration. Protocol:
 a. **Gather the changed scope** (now includes any CI fixes):
 
 ```bash
-# Under $HOME (not world-writable /tmp) and qualified by GOLEM_ID: concurrent
-# golems SHARE $HOME, so one fixed path lets A's diff clobber B's file list.
-# NOT `WORK=$(mktemp -d)` — command substitution is REFUSED worktree-isolated
-# (#815). Route (#550) -> `reviewRoute` in step (c); pass {N} + categories.
-gid={GOLEM_ID or "solo"}; mkdir -p "$HOME/.cache/librarian-review/$gid"
-git diff --name-only origin/main...HEAD > "$HOME/.cache/librarian-review/$gid/files.txt"
-git diff origin/main...HEAD > "$HOME/.cache/librarian-review/$gid/diff.txt"
+# Per-run scratch dir (#1094). Read its `dir=` line as {dir}, never `$(...)`
+# (#815). Run exactly ONE — `init` empties the dir (dropping the pre-PR loop's
+# and any earlier run's cycle JSON), so on a later attempt it would delete this
+# loop's --prev-result history. Route (#550) -> `reviewRoute` in step (c).
+<skill-base-dir>/../../scripts/review-scratch.sh init --issue {N}   # attempt 1 only
+<skill-base-dir>/../../scripts/review-scratch.sh path --issue {N}   # every later attempt
+git diff --name-only origin/main...HEAD > "{dir}/files.txt"
+git diff origin/main...HEAD > "{dir}/diff.txt"
 <skill-base-dir>/../../scripts/review-route.sh check \
-  --files "$HOME/.cache/librarian-review/$gid/files.txt" \
+  --files "{dir}/files.txt" \
   --diff-lines {diff.txt line count} --prescan-categories "<HIGH categories>"
 ```
 
@@ -370,7 +371,8 @@ bound, a fallback that also stops charging crashed cycles would be unbounded. Th
 loop stays bounded either way; it only loses the early-stop, the narrow-zero
 protection, and the `capped_over` disambiguation.
 
-Write each cycle's harness result to a file so the next cycle can pass it as
+Write each cycle's harness result to `{dir}/cycle<cycle>.json` (step a's
+scratch dir, #1094) so the next cycle can pass it as
 `--prev-result` (repeatable — duplicate detection is against **all** earlier
 cycles, not just the previous one). On cycle 1 omit `--prev-result` and
 `--prev-delta-lines`.
