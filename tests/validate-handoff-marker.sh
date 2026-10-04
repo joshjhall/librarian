@@ -96,6 +96,28 @@ test_absent_r_measured_is_open() {
         "an absent at prints an empty at= line, not the tab-joined payload"
 }
 
+# The shape guard's edges: 10-40 chars total, leading digit, and a non-string
+# `at` goes through `tostring` rather than erroring (fail open).
+test_at_shape_guard_boundaries() {
+    jq_missing && {
+        skip_test "jq absent"
+        return 0
+    }
+    local spec at want
+    for spec in '"123456789"|' '"2026-10-04"|2026-10-04' \
+        '"2026-10-04T12:00:00.000000000000000+0000"|2026-10-04T12:00:00.000000000000000+0000' \
+        '"2026-10-04T12:00:00.0000000000000000+0000"|' '"T2026-10-04"|' \
+        '12345678901|12345678901' '{"a":1}|'; do
+        at="${spec%%|*}"
+        want="${spec#*|}"
+        command printf '{"checkpoint":{"handoff_marker":{"at":%s}}}\n' "$at" >"$WORK/edge.json"
+        run_status "$WORK/edge.json"
+        assert_exit 0 "$RUN_RC" "at=$at exits 0"
+        assert_equals "at=$want" "$(command printf '%s\n' "$RUN_OUT" | command sed -n '2p')" \
+            "at=$at prints at=$want"
+    done
+}
+
 # A newline inside `at` must not split the payload into a forged key=value line.
 test_newline_in_at_cannot_forge_a_key() {
     jq_missing && {
@@ -250,6 +272,7 @@ test_phase0_resume_calls_the_helper() {
 run_test test_open_marker_emits_directive "an open marker emits the counting directive"
 run_test test_absent_r_measured_is_open "a marker with no r_measured key is open"
 run_test test_newline_in_at_cannot_forge_a_key "a non-ISO at (newline / free text) never reaches the output"
+run_test test_at_shape_guard_boundaries "the at shape guard's length / leading-digit / non-string edges"
 run_test test_counted_marker_has_no_directive "a counted marker prints no directive"
 run_test test_zero_count_is_counted_not_open "r_measured=0 is counted, not open (falsy trap)"
 run_test test_no_marker_is_none "no marker / no checkpoint is none"
