@@ -139,9 +139,9 @@ export function run() {
     eq(JSON.stringify(engaged.unengaged_dimensions), "[]", "buildResult: unengaged_dimensions is always present, [] when none");
     eq(JSON.stringify(engaged.dimension_engagement), "{}", "buildResult: dimension_engagement is always present");
 
-    const eng = { security: { engagement: "engaged", checked: 2, retried: true, requires_code_reading: true } };
+    const eng = { security: { engagement: "engaged", checked: 2, retry_attempted: true, retry_succeeded: false, requires_code_reading: true } };
     eq(
-      emptyResult({ dimensionEngagement: eng }).dimension_engagement.security.retried,
+      emptyResult({ dimensionEngagement: eng }).dimension_engagement.security.retry_attempted,
       true,
       "emptyResult: dimension_engagement is passed through (AC4, in-sandbox half)",
     );
@@ -164,6 +164,17 @@ export function run() {
     const retryBlock = orch.slice(retryStart, retryStart + 1200);
     ok(retryBlock.includes("model: 'opus'"), "wiring: the re-dispatch runs on opus (#1111 proposal 3)");
 
+    // `retry_succeeded` is recorded ONLY inside the branch that installs a
+    // non-null retry result, so a budget-skipped or nulled retry reads false
+    // (cycle-5 review: the old `retried` reported selection as success).
+    ok(
+      /if \(retried\[k\]\) \{\s*reviewResults\[i\] = retried\[k\]\s*retrySucceeded\.push\(i\)\s*\}/.test(orch),
+      "wiring: retry success is recorded only when the retry returned a result",
+    );
+    ok(
+      orch.includes("retry_succeeded: retrySucceeded.includes(i),") && !orch.includes("retried: retryIdx.includes(i)"),
+      "wiring: retry_succeeded is keyed off actual success, not selection",
+    );
     const mainIdx = orch.indexOf("const rawFindings = []\nreviewResults.forEach((res, i) => {");
     ok(mainIdx >= 0, "wiring: the main results loop is locatable");
     const mainLoop = orch.slice(mainIdx, mainIdx + 2000);

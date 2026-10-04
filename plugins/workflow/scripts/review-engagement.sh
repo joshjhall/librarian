@@ -67,8 +67,8 @@ trap "command rm -f '$rows' '$order' '$tmp_out'" EXIT
 
 # Run order: the journal records `started` with each agentId in dispatch order.
 # Absent journal -> fall back to file-name order (an opus retry is then not
-# guaranteed to be last; the harness's own `dimension_engagement.retried` still
-# says whether one ran).
+# guaranteed to be last; the harness's own
+# `dimension_engagement.<dim>.retry_succeeded` still says whether one ran).
 if [ -r "$dir/journal.jsonl" ]; then
     command jq -r 'select(.type == "started") | .agentId' "$dir/journal.jsonl" 2>/dev/null >"$order" || : >"$order"
 fi

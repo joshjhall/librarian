@@ -42,7 +42,7 @@ names nothing it examined.
 | --- | --- | --- |
 | `checked` (per dimension, in the schema) | reviewer | each `{target, how}` it examined; `how` is `read`, `grep`, `ran`, or `diff-only` |
 | `unengaged_dimensions` | both | dimensions that returned without reviewing; each is also in `dimensions_skipped` |
-| `dimension_engagement.<dim>` | harness | `engagement`, `checked` count, raw `findings` count (before the judge), `retried`, `requires_code_reading` |
+| `dimension_engagement.<dim>` | harness | `engagement`, `checked` count, raw `findings` count (before the judge), `retry_attempted` (selected for the opus re-dispatch), `retry_succeeded` (that re-dispatch ran and returned; `false` when skipped at the budget floor or nulled), `requires_code_reading` |
 | `dimension_metrics.<dim>[]` | script | `{tool_calls, output_tokens, model}` per run in dispatch order (two entries after an opus retry) |
 | `engagement_measured` | script | `false` when the transcript dir held no `review:*` agents, so nothing was measured |
 

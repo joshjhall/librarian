@@ -233,6 +233,11 @@ const reviewResults = await parallel(
 const unengagedDimensions = []
 const dimensionEngagement = {}
 const retryIdx = []
+// Indices whose opus retry actually RAN and returned a result. Distinct from
+// retryIdx (selected for a retry): the retry is skipped below the budget floor
+// and agent() can return null, and either leaves the sonnet result in place —
+// so "selected" must not be reported as "re-run on opus" (cycle-5 review).
+const retrySucceeded = []
 reviewResults.forEach((res, i) => {
   if (res && classifyEngagement(dimensions[i].dim.name, res) === 'unengaged') retryIdx.push(i)
 })
@@ -262,7 +267,10 @@ if (retryIdx.length > 0) {
     // A retry that itself failed leaves the original (unengaged) result in
     // place, so the dimension is still reported unengaged below — never dropped
     // to the null/failed path, which would lose the reason.
-    if (retried[k]) reviewResults[i] = retried[k]
+    if (retried[k]) {
+      reviewResults[i] = retried[k]
+      retrySucceeded.push(i)
+    }
   })
 }
 
@@ -279,7 +287,8 @@ reviewResults.forEach((res, i) => {
     // applyJudgeVerdicts never drops a finding (true today: it partitions every
     // raw finding), and stating the count here removes the dependence.
     findings: res ? res.findings.length : 0,
-    retried: retryIdx.includes(i),
+    retry_attempted: retryIdx.includes(i),
+    retry_succeeded: retrySucceeded.includes(i),
     requires_code_reading: CODE_READING_DIMENSIONS.includes(name),
   }
   if (verdict === 'unengaged') {
