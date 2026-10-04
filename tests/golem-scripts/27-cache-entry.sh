@@ -68,6 +68,18 @@ test_cache_entry_path_refuses_a_root_that_is_slash() {
     assert_equals 1 "$CE_RC" "a root canonicalizing to '/' is refused"
 }
 
+# A cache root that does not exist leaves nothing to canonicalize the parent
+# against, so the entry is unverifiable and refused. (A missing <key> parent
+# under an EXISTING root is deliberately not pinned: GNU `readlink -f` resolves
+# a missing last component, so it verifies — harmless, since the seed creates
+# that parent before calling and teardown finds no venv to delete.)
+test_cache_entry_path_refuses_unverifiable_paths() {
+    local sb
+    new_sandbox sb
+    _ce "$sb/no-such-cache" key 7
+    assert_equals 1 "$CE_RC" "a cache root that does not exist is refused"
+}
+
 test_cache_entry_path_is_the_one_derivation() {
     assert_file_contains "$WT_NEW" 'cache_entry_path "$cache_root"' \
         "worktree-new.sh's seed derives its target through cache_entry_path"
