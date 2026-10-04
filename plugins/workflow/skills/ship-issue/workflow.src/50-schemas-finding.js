@@ -80,11 +80,37 @@ const MANIFEST_SCHEMA = {
   },
 }
 
+// Evidence of engagement (#1111). `findings: []` alone cannot distinguish
+// "investigated, found nothing" from "did not look": measured across 250
+// reviewer runs, 54 (21%) were a lone StructuredOutput call of ~53 output
+// tokens, and the harness counted every one clean. `checked` makes the empty
+// answer say what it examined, so `classifyEngagement` can refuse an empty one.
+// `how` is a closed enum because the classifier keys off `diff-only` — for a
+// code-reading dimension, an answer formed without opening any file is not a
+// review of the code (see CODE_READING_DIMENSIONS).
+const CHECKED_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['target', 'how'],
+  properties: {
+    target: { type: 'string' },
+    how: { type: 'string', enum: ['read', 'grep', 'ran', 'diff-only'] },
+  },
+}
+
 const FINDINGS_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['findings'],
+  required: ['findings', 'checked'],
   properties: {
     findings: { type: 'array', items: FINDING_SCHEMA },
+    checked: {
+      type: 'array',
+      items: CHECKED_SCHEMA,
+      description:
+        'Every file or concern you actually examined, and how. Required to be ' +
+        'non-empty when findings is empty: an empty answer with nothing checked ' +
+        'is reported as an unengaged review, not a clean one.',
+    },
   },
 }

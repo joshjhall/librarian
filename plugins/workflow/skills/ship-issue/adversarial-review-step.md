@@ -348,6 +348,17 @@ Substitute `<skill-base-dir>` and the `{...}` placeholders with literal values
 `{dir}/cycle<cycle>.json` in the scratch dir from step a2, so `--prev-result`
 only ever names this run's cycles (#1094).
 
+Before consulting the predicate, fold the transcript-measured engagement into
+the cycle result — the harness cannot see its dimensions' tool calls, so this is
+the step that catches a dimension that answered `findings: []` without reading
+anything (#1111). `<transcript-dir>` is the "Transcript dir" the Workflow tool
+result printed; full contract in `review-engagement.md`:
+
+```bash
+<skill-base-dir>/../../scripts/review-engagement.sh "<transcript-dir>" "$cycle_result_json"
+# -> measured=true|false  dimensions=N  unengaged=N
+```
+
 ```bash
 <skill-base-dir>/../../scripts/review-convergence.sh check \
   --cycle "$cycle" --max-cycles "$cap" \

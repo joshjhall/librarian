@@ -63,6 +63,22 @@ const SCOPE_DISCIPLINE =
 // duplicated earlier in the file, silently emptying the slice and failing six
 // assertions).
 //
+// Engagement floor (#1111). SCOPE_DISCIPLINE (#553) bounds exploration from
+// ABOVE; nothing bounded it from below, and the swing was measured: after #553,
+// 54 of 250 reviewer runs answered `findings: []` with a single StructuredOutput
+// call and no read of any file. This clause is the floor — the ~10-call budget is
+// a ceiling, not leave to skip the changed code — and it states the `checked`
+// contract FINDINGS_SCHEMA enforces. Kept separate from SCOPE_DISCIPLINE so that
+// clause's END marker and the slice anchored on it (#586) stay byte-stable; it is
+// still static text, so the cacheable shared prefix (#256) is unchanged.
+const ENGAGEMENT_CONTRACT =
+  'Engagement floor: the tool-call budget above is a CEILING, not permission to ' +
+  'answer from the prompt alone. Open the changed files your dimension is about ' +
+  'before concluding there is nothing to report. List every file or concern you ' +
+  'actually examined in `checked`, with how (read / grep / ran / diff-only). An ' +
+  'empty `findings` with an empty `checked` is reported as an UNENGAGED review — ' +
+  'it does not count as clean, and the dimension is re-dispatched.'
+
 // `sanitize` and `dataBlock` — the prompt-injection controls — arrive in the
 // generated prelude fragment (15-prelude.js), which loads above NEW_DIMENSIONS
 // so `sanitize` is initialized before that module-load call; the prompt builders
@@ -202,24 +218,28 @@ const reusedReviewerPrompt = (dim, manifest, diff = scopeDiff) =>
   READONLY +
   '\n' +
   SCOPE_DISCIPLINE +
+  '\n' +
+  ENGAGEMENT_CONTRACT +
   '\n\n' +
   reviewerData(manifest, diff) +
   `Mode: reviewer:${dim.mode}. Analyze the changed files and diff above as the ` +
   `${dim.mode} sub-reviewer using the corresponding Sub-Reviewer Definition in ` +
   `your instructions. Set category=${dim.category} on every finding and return ` +
-  `the typed findings array (empty if none).`
+  `the typed findings array (empty if none) and the \`checked\` list.`
 
 // New dimensions (tests, decomposition, scope-drift): instructions supplied inline.
 const newReviewerPrompt = (dim, manifest, diff = scopeDiff) =>
   READONLY +
   '\n' +
   SCOPE_DISCIPLINE +
+  '\n' +
+  ENGAGEMENT_CONTRACT +
   '\n\n' +
   reviewerData(manifest, diff) +
   `Mode: reviewer:${dim.name} (custom dimension). Analyze the changed files and ` +
   `diff above.\n${dim.instructions}\n\n` +
   `Set category=${dim.category} on every finding and return the typed findings ` +
-  `array (empty if none), using the same finding schema as your other reviews.`
+  `array (empty if none) and the \`checked\` list, using the same schema as your other reviews.`
 
 const commentsPrompt = (manifest) =>
   `Mode: comment-triage (custom).\n` +

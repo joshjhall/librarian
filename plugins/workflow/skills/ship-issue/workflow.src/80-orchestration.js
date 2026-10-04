@@ -215,12 +215,77 @@ const reviewResults = await parallel(
       phase: 'Review',
       agentType: 'dev-core:code-reviewer',
       schema: FINDINGS_SCHEMA,
-    }).then((r) => ({ dim: entry.dim.name, findings: (r && r.findings) || [] }))
+    }).then((r) => (r ? { dim: entry.dim.name, findings: r.findings || [], checked: r.checked || [] } : null))
+    // A null agent result stays NULL (#1111, and the mechanism of #846). The old
+    // `(r && r.findings) || []` wrapped it into `{ findings: [] }`, a non-null
+    // object, so the `if (!res)` partial-cycle guard below never saw a dead
+    // dimension and counted it clean.
   })
 )
 
+// Engagement floor (#1111). A dimension that RETURNED but reviewed nothing —
+// `classifyEngagement` says unengaged — is re-dispatched ONCE on opus, the tier
+// the containers measurement found engaging where sonnet answered `[]` in 53
+// tokens. Only the unengaged are retried, so an engaged cycle pays nothing. Still
+// unengaged after the retry means the dimension is reported missed: listed in
+// both `unengagedDimensions` and `dimensionsSkipped`, and buildResult forces the
+// cycle partial so it can never read clean.
+const unengagedDimensions = []
+const dimensionEngagement = {}
+const retryIdx = []
+reviewResults.forEach((res, i) => {
+  if (res && classifyEngagement(dimensions[i].dim.name, res) === 'unengaged') retryIdx.push(i)
+})
+if (retryIdx.length > 0) {
+  log(
+    `unengaged dimension(s): ${retryIdx.map((i) => dimensions[i].dim.name).join(', ')} — ` +
+      'returned no findings with no evidence of review; re-dispatching once on opus'
+  )
+  const retried = await parallel(
+    retryIdx.map((i) => () => {
+      const entry = dimensions[i]
+      if (reviewBudget.total && reviewBudget.remaining() < BUDGET_FLOOR) return null
+      const prompt =
+        entry.kind === 'new'
+          ? newReviewerPrompt(entry.dim, manifest, entry.diff)
+          : reusedReviewerPrompt(entry.dim, manifest, entry.diff)
+      return agent(prompt, {
+        label: `review:${entry.dim.name}`,
+        phase: 'Review',
+        agentType: 'dev-core:code-reviewer',
+        model: 'opus',
+        schema: FINDINGS_SCHEMA,
+      }).then((r) => (r ? { dim: entry.dim.name, findings: r.findings || [], checked: r.checked || [] } : null))
+    })
+  )
+  retryIdx.forEach((i, k) => {
+    // A retry that itself failed leaves the original (unengaged) result in
+    // place, so the dimension is still reported unengaged below — never dropped
+    // to the null/failed path, which would lose the reason.
+    if (retried[k]) reviewResults[i] = retried[k]
+  })
+}
+
 const rawFindings = []
 reviewResults.forEach((res, i) => {
+  const name = dimensions[i].dim.name
+  const verdict = classifyEngagement(name, res)
+  dimensionEngagement[name] = {
+    engagement: verdict,
+    checked: res ? res.checked.length : 0,
+    retried: retryIdx.includes(i),
+    requires_code_reading: CODE_READING_DIMENSIONS.includes(name),
+  }
+  if (verdict === 'unengaged') {
+    unengagedDimensions.push(name)
+    dimensionsSkipped.push(name)
+    // Set locally too, not only derived in buildResult: the judge prompt and
+    // applyJudgeVerdicts' default disposition both read this flag, and a partial
+    // cycle must default unjudged findings to deferrable on THIS path as well.
+    budgetExhausted = true
+    log(`dimension "${name}" returned without reviewing (unengaged) — cycle now partial`)
+    return
+  }
   if (!res) {
     // A null result means the dimension never produced findings: its agent
     // threw (runtime budget exhausted mid-barrier, or any other terminal
@@ -304,6 +369,8 @@ if (rawFindings.length === 0) {
     budgetExhausted,
     note: 'no findings this cycle',
     dimensionsSkipped,
+    unengagedDimensions,
+    dimensionEngagement,
     dimensionsRun: dimensions.length,
     noReviewSignal: allDimensionsFailed,
     commentsAddressed,
@@ -386,6 +453,8 @@ return buildResult({
   unresolvedLen: unresolvedComments.length,
   budgetExhausted,
   dimensionsSkipped,
+  unengagedDimensions,
+  dimensionEngagement,
   dimensionsRun: dimensions.length,
   noReviewSignal: allDimensionsFailed,
 })

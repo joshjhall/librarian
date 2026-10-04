@@ -736,12 +736,38 @@ const MANIFEST_SCHEMA = {
   },
 }
 
+// Evidence of engagement (#1111). `findings: []` alone cannot distinguish
+// "investigated, found nothing" from "did not look": measured across 250
+// reviewer runs, 54 (21%) were a lone StructuredOutput call of ~53 output
+// tokens, and the harness counted every one clean. `checked` makes the empty
+// answer say what it examined, so `classifyEngagement` can refuse an empty one.
+// `how` is a closed enum because the classifier keys off `diff-only` — for a
+// code-reading dimension, an answer formed without opening any file is not a
+// review of the code (see CODE_READING_DIMENSIONS).
+const CHECKED_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['target', 'how'],
+  properties: {
+    target: { type: 'string' },
+    how: { type: 'string', enum: ['read', 'grep', 'ran', 'diff-only'] },
+  },
+}
+
 const FINDINGS_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['findings'],
+  required: ['findings', 'checked'],
   properties: {
     findings: { type: 'array', items: FINDING_SCHEMA },
+    checked: {
+      type: 'array',
+      items: CHECKED_SCHEMA,
+      description:
+        'Every file or concern you actually examined, and how. Required to be ' +
+        'non-empty when findings is empty: an empty answer with nothing checked ' +
+        'is reported as an unengaged review, not a clean one.',
+    },
   },
 }
 
@@ -967,6 +993,22 @@ const SCOPE_DISCIPLINE =
 // duplicated earlier in the file, silently emptying the slice and failing six
 // assertions).
 //
+// Engagement floor (#1111). SCOPE_DISCIPLINE (#553) bounds exploration from
+// ABOVE; nothing bounded it from below, and the swing was measured: after #553,
+// 54 of 250 reviewer runs answered `findings: []` with a single StructuredOutput
+// call and no read of any file. This clause is the floor — the ~10-call budget is
+// a ceiling, not leave to skip the changed code — and it states the `checked`
+// contract FINDINGS_SCHEMA enforces. Kept separate from SCOPE_DISCIPLINE so that
+// clause's END marker and the slice anchored on it (#586) stay byte-stable; it is
+// still static text, so the cacheable shared prefix (#256) is unchanged.
+const ENGAGEMENT_CONTRACT =
+  'Engagement floor: the tool-call budget above is a CEILING, not permission to ' +
+  'answer from the prompt alone. Open the changed files your dimension is about ' +
+  'before concluding there is nothing to report. List every file or concern you ' +
+  'actually examined in `checked`, with how (read / grep / ran / diff-only). An ' +
+  'empty `findings` with an empty `checked` is reported as an UNENGAGED review — ' +
+  'it does not count as clean, and the dimension is re-dispatched.'
+
 // `sanitize` and `dataBlock` — the prompt-injection controls — arrive in the
 // generated prelude fragment (15-prelude.js), which loads above NEW_DIMENSIONS
 // so `sanitize` is initialized before that module-load call; the prompt builders
@@ -1106,24 +1148,28 @@ const reusedReviewerPrompt = (dim, manifest, diff = scopeDiff) =>
   READONLY +
   '\n' +
   SCOPE_DISCIPLINE +
+  '\n' +
+  ENGAGEMENT_CONTRACT +
   '\n\n' +
   reviewerData(manifest, diff) +
   `Mode: reviewer:${dim.mode}. Analyze the changed files and diff above as the ` +
   `${dim.mode} sub-reviewer using the corresponding Sub-Reviewer Definition in ` +
   `your instructions. Set category=${dim.category} on every finding and return ` +
-  `the typed findings array (empty if none).`
+  `the typed findings array (empty if none) and the \`checked\` list.`
 
 // New dimensions (tests, decomposition, scope-drift): instructions supplied inline.
 const newReviewerPrompt = (dim, manifest, diff = scopeDiff) =>
   READONLY +
   '\n' +
   SCOPE_DISCIPLINE +
+  '\n' +
+  ENGAGEMENT_CONTRACT +
   '\n\n' +
   reviewerData(manifest, diff) +
   `Mode: reviewer:${dim.name} (custom dimension). Analyze the changed files and ` +
   `diff above.\n${dim.instructions}\n\n` +
   `Set category=${dim.category} on every finding and return the typed findings ` +
-  `array (empty if none), using the same finding schema as your other reviews.`
+  `array (empty if none) and the \`checked\` list, using the same schema as your other reviews.`
 
 const commentsPrompt = (manifest) =>
   `Mode: comment-triage (custom).\n` +
@@ -1372,6 +1418,45 @@ const applyJudgeVerdicts = (rawFindings, judged, budgetExhausted) => {
 // code that must be exercised directly rather than mirrored.
 const computeAllDimensionsFailed = (reviewResults, dimensionsSkipped) =>
   (reviewResults.length > 0 || dimensionsSkipped.length > 0) && reviewResults.every((r) => !r)
+
+// The dimensions whose job REQUIRES reading code (#1111). For these, an empty
+// answer formed from the inline diff alone is not a review: security,
+// correctness, and test coverage are all questions about code the diff hunks only
+// partly show. The other dimensions are legitimately diff-only — `scope-drift`
+// compares the diff against the issue, and `decomposition` judges the pre-scan's
+// size numbers — so a diff-only answer from them IS engagement. Classifying them
+// unengaged would fire every cycle, force a retry every cycle, and block
+// convergence forever (operator correction on the #1111 plan).
+//
+// This list is the ONE source for that distinction. The caller-side transcript
+// detector (scripts/review-engagement.sh) applies its zero-tool-call rule only
+// where the cycle result's `dimension_engagement.<dim>.requires_code_reading` is
+// true, which buildResult stamps from here — so the two detectors cannot drift
+// into disagreeing about which dimensions may be diff-only.
+const CODE_READING_DIMENSIONS = ['security', 'correctness', 'tests']
+
+// classifyEngagement — did a dimension that RETURNED actually review anything?
+//
+// The success-side sibling of `computeAllDimensionsFailed` (#846 covers a
+// dimension that dies; this covers one that succeeds having said nothing).
+// Returns 'failed' | 'engaged' | 'unengaged':
+//   - null result -> 'failed'. Kept distinct so the existing partial-cycle path
+//     (budgetExhausted + dimensionsSkipped) owns it unchanged.
+//   - any finding -> 'engaged'. A finding is evidence of looking by itself.
+//   - empty findings AND empty `checked` -> 'unengaged', for EVERY dimension: the
+//     answer names nothing it examined.
+//   - empty findings, and every `checked` entry is `diff-only` -> 'unengaged'
+//     ONLY for a CODE_READING_DIMENSIONS member; 'engaged' for the rest.
+const classifyEngagement = (dimName, result) => {
+  if (!result) return 'failed'
+  const findings = Array.isArray(result.findings) ? result.findings : []
+  const checked = Array.isArray(result.checked) ? result.checked : []
+  if (findings.length > 0) return 'engaged'
+  if (checked.length === 0) return 'unengaged'
+  const diffOnly = checked.every((c) => c && c.how === 'diff-only')
+  if (diffOnly && CODE_READING_DIMENSIONS.includes(dimName)) return 'unengaged'
+  return 'engaged'
+}
 
 const computeClean = (blockingLen, unresolvedLen, budgetExhausted) =>
   blockingLen === 0 && unresolvedLen === 0 && !budgetExhausted
@@ -1626,7 +1711,14 @@ function buildResult(parts) {
   const blocking = parts.blocking || []
   const deferrable = parts.deferrable || []
   const dimensionsSkipped = parts.dimensionsSkipped || []
-  const budgetExhausted = !!parts.budgetExhausted
+  const unengagedDimensions = parts.unengagedDimensions || []
+  // An unengaged dimension (#1111) is a dimension that did not review: the cycle
+  // is PARTIAL exactly as when one was budget-skipped, so it forces the same
+  // flag `clean` gates on. Derived HERE rather than trusted from the caller so a
+  // call site that passes the list but forgets the flag still cannot report a
+  // clean cycle — the shape of #636, where a post-hoc derivation past
+  // ORCH_BOUNDARY had no coverage.
+  const budgetExhausted = !!parts.budgetExhausted || unengagedDimensions.length > 0
 
   // Seeded at zero and incrementing only KNOWN keys: unlike `tallyBy` (whose
   // inputs are LLM-authored `nature` strings that must never be dropped),
@@ -1686,6 +1778,26 @@ function buildResult(parts) {
     },
     budget_exhausted: budgetExhausted,
     dimensions_skipped: dimensionsSkipped,
+    // Dimensions that RETURNED but did not review (#1111) — `findings: []` with
+    // nothing in `checked`, or a code-reading dimension that checked the diff
+    // only, still so after one opus re-dispatch. Each is also in
+    // `dimensions_skipped` (it is a missed dimension, and that is the list every
+    // existing reader already checks); this field says WHY, so a reader can tell
+    // "did not run" from "ran and did not look". Always present, for the reason
+    // given for `no_review_signal` below. Deliberately NOT `no_review_signal`:
+    // that field makes a cycle uncharged against REVIEW_MAX_CYCLES, and a
+    // dimension that disengages every cycle must dead-end VISIBLY at the cap
+    // rather than loop forever uncharged. review-convergence.sh reads this field
+    // directly (rule C2b) so it refuses to stop on it without trusting --partial.
+    unengaged_dimensions: unengagedDimensions,
+    // Per-dimension engagement as the harness can see it: how many `checked`
+    // entries came back, whether an opus re-dispatch was spent, and whether the
+    // dimension is one that must read code. The sandbox cannot see tool calls or
+    // per-agent tokens — `agent()` returns only the schema object and
+    // `budget.spent()` is pooled across the barrier — so those MEASURED counts are
+    // added by the caller from the transcript (scripts/review-engagement.sh), which
+    // keys its zero-tool-call rule off `requires_code_reading` here.
+    dimension_engagement: parts.dimensionEngagement || {},
     // Always present (never conditionally omitted): the reader's default for an
     // absent field is `false`, so omitting it on the crash path and emitting it
     // elsewhere would make the two indistinguishable from outside. Building
@@ -1757,6 +1869,8 @@ function emptyResult(parts) {
     unresolvedLen: parts.unresolvedLen || 0,
     budgetExhausted: !!parts.budgetExhausted,
     dimensionsSkipped: parts.dimensionsSkipped || [],
+    unengagedDimensions: parts.unengagedDimensions || [],
+    dimensionEngagement: parts.dimensionEngagement || {},
     dimensionsRun: parts.dimensionsRun || 0,
     noReviewSignal: !!parts.noReviewSignal,
   })
@@ -1978,12 +2092,77 @@ const reviewResults = await parallel(
       phase: 'Review',
       agentType: 'dev-core:code-reviewer',
       schema: FINDINGS_SCHEMA,
-    }).then((r) => ({ dim: entry.dim.name, findings: (r && r.findings) || [] }))
+    }).then((r) => (r ? { dim: entry.dim.name, findings: r.findings || [], checked: r.checked || [] } : null))
+    // A null agent result stays NULL (#1111, and the mechanism of #846). The old
+    // `(r && r.findings) || []` wrapped it into `{ findings: [] }`, a non-null
+    // object, so the `if (!res)` partial-cycle guard below never saw a dead
+    // dimension and counted it clean.
   })
 )
 
+// Engagement floor (#1111). A dimension that RETURNED but reviewed nothing —
+// `classifyEngagement` says unengaged — is re-dispatched ONCE on opus, the tier
+// the containers measurement found engaging where sonnet answered `[]` in 53
+// tokens. Only the unengaged are retried, so an engaged cycle pays nothing. Still
+// unengaged after the retry means the dimension is reported missed: listed in
+// both `unengagedDimensions` and `dimensionsSkipped`, and buildResult forces the
+// cycle partial so it can never read clean.
+const unengagedDimensions = []
+const dimensionEngagement = {}
+const retryIdx = []
+reviewResults.forEach((res, i) => {
+  if (res && classifyEngagement(dimensions[i].dim.name, res) === 'unengaged') retryIdx.push(i)
+})
+if (retryIdx.length > 0) {
+  log(
+    `unengaged dimension(s): ${retryIdx.map((i) => dimensions[i].dim.name).join(', ')} — ` +
+      'returned no findings with no evidence of review; re-dispatching once on opus'
+  )
+  const retried = await parallel(
+    retryIdx.map((i) => () => {
+      const entry = dimensions[i]
+      if (reviewBudget.total && reviewBudget.remaining() < BUDGET_FLOOR) return null
+      const prompt =
+        entry.kind === 'new'
+          ? newReviewerPrompt(entry.dim, manifest, entry.diff)
+          : reusedReviewerPrompt(entry.dim, manifest, entry.diff)
+      return agent(prompt, {
+        label: `review:${entry.dim.name}`,
+        phase: 'Review',
+        agentType: 'dev-core:code-reviewer',
+        model: 'opus',
+        schema: FINDINGS_SCHEMA,
+      }).then((r) => (r ? { dim: entry.dim.name, findings: r.findings || [], checked: r.checked || [] } : null))
+    })
+  )
+  retryIdx.forEach((i, k) => {
+    // A retry that itself failed leaves the original (unengaged) result in
+    // place, so the dimension is still reported unengaged below — never dropped
+    // to the null/failed path, which would lose the reason.
+    if (retried[k]) reviewResults[i] = retried[k]
+  })
+}
+
 const rawFindings = []
 reviewResults.forEach((res, i) => {
+  const name = dimensions[i].dim.name
+  const verdict = classifyEngagement(name, res)
+  dimensionEngagement[name] = {
+    engagement: verdict,
+    checked: res ? res.checked.length : 0,
+    retried: retryIdx.includes(i),
+    requires_code_reading: CODE_READING_DIMENSIONS.includes(name),
+  }
+  if (verdict === 'unengaged') {
+    unengagedDimensions.push(name)
+    dimensionsSkipped.push(name)
+    // Set locally too, not only derived in buildResult: the judge prompt and
+    // applyJudgeVerdicts' default disposition both read this flag, and a partial
+    // cycle must default unjudged findings to deferrable on THIS path as well.
+    budgetExhausted = true
+    log(`dimension "${name}" returned without reviewing (unengaged) — cycle now partial`)
+    return
+  }
   if (!res) {
     // A null result means the dimension never produced findings: its agent
     // threw (runtime budget exhausted mid-barrier, or any other terminal
@@ -2067,6 +2246,8 @@ if (rawFindings.length === 0) {
     budgetExhausted,
     note: 'no findings this cycle',
     dimensionsSkipped,
+    unengagedDimensions,
+    dimensionEngagement,
     dimensionsRun: dimensions.length,
     noReviewSignal: allDimensionsFailed,
     commentsAddressed,
@@ -2149,6 +2330,8 @@ return buildResult({
   unresolvedLen: unresolvedComments.length,
   budgetExhausted,
   dimensionsSkipped,
+  unengagedDimensions,
+  dimensionEngagement,
   dimensionsRun: dimensions.length,
   noReviewSignal: allDimensionsFailed,
 })

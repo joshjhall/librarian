@@ -49,6 +49,7 @@
 #                         (empty unless rule=C1-cap) — see #635 below
 #            reason    a short slug naming why
 #            findings / novel / duplicate / refuted / recursive   counts
+#            unengaged  dimensions reported unengaged (#1111; 0 if absent)
 #
 # Ordered first-match rule list — the first rule that matches decides, and the
 # last has no condition, so the policy is total and non-overlapping. (Same
@@ -60,6 +61,7 @@
 #   C0b-no-signal   the cycle produced NO review signal        -> continue
 #   C1-cap        cycle >= max-cycles                          -> stop
 #   C2-partial    the cycle was partial                        -> continue
+#   C2b-unengaged a dimension returned without reviewing       -> continue
 #   C3-narrow-zero  zero findings on a NARROWER surface        -> continue
 #   C4-zero       zero findings on a comparable/full surface   -> stop
 #   C5-refuted-only  every finding was refuted on verification -> stop
@@ -125,6 +127,20 @@
 #   budget artifact with no second invocation. The field is emitted on every
 #   verdict (empty when the deciding rule was not C1-cap) so the output contract
 #   is stable and a consumer never has to test for the key's presence.
+#
+# C2b — an unengaged dimension is not convergence (#1111).
+#   A dimension that answered `findings: []` with no evidence of having looked
+#   (the harness's `unengaged_dimensions`, which review-engagement.sh extends
+#   from the transcript's tool-call count) contributed a zero that means "did not
+#   look", not "found nothing". Measured: 54 of 250 reviewer runs, 17 of them
+#   `security`; two PRs merged with every security run empty. C4 would read that
+#   zero as convergence. C2b reads the field from the RESULT ITSELF rather than
+#   relying on the caller to pass `--partial true` — the caller is the prose step
+#   that already shipped those PRs, and the harness sets `budget_exhausted` here
+#   too, so a caller that does pass it lands on C2 first, with the same verdict.
+#   Charged (unlike C0b): a dimension that disengages every cycle must dead-end
+#   visibly at C1, never loop uncounted. A missing or non-array field reads as 0,
+#   so a pre-#1111 result keeps its meaning.
 #
 # C2 sits directly under it and is the safety rule: a budget-exhausted or
 # wall-timed-out cycle can never be a convergence stop. It is partial, not
@@ -428,6 +444,16 @@ no_review_signal() {
                    then "true" else "false" end' "$1"
 }
 
+# unengaged_count <file> — echo how many dimensions the cycle reported as
+# unengaged (#1111): returned with no evidence of review. Absent field, or a
+# value that is not an array, => 0, so a result from a harness predating #1111
+# reads exactly as before. The `type == "object"` guard is here for the same
+# reason as in no_review_signal above.
+unengaged_count() {
+    command jq -r 'if (type == "object" and (.unengaged_dimensions | type) == "array")
+                   then (.unengaged_dimensions | length) else 0 end' "$1"
+}
+
 # convergence_rule — evaluate the CONVERGENCE rules C2..C8 (i.e. everything the
 # cap outranks) and echo `rule|verdict|reason`.
 #
@@ -447,6 +473,12 @@ convergence_rule() {
         # dimensions that ran, not the review — the same reason `clean` is forced
         # false on budget exhaustion. Never let one end the loop.
         command printf 'C2-partial|continue|partial'
+    elif [ "$unengaged" -gt 0 ]; then
+        # C2b: a dimension returned without reviewing (#1111). Its zero is "did
+        # not look", so it cannot be the zero C4 reads as convergence — and it
+        # outranks C5-C7 as well, since "every finding was refuted/duplicate"
+        # says nothing about the dimension that produced none.
+        command printf 'C2b-unengaged|continue|unengaged-dimension'
     elif [ "$total" -eq 0 ] && [ -n "$prev_delta_lines" ] &&
         [ $((delta_lines * 100)) -lt $((prev_delta_lines * ratio)) ]; then
         # C3: the #568 case, and the refinement the issue turns on (AC#2). A zero
@@ -643,6 +675,7 @@ cmd_check() {
     # Read after read_findings for the same reason as no_signal above: that call
     # is what fails loud on an unreadable or malformed file.
     blocking="$(blocking_count "$result")"
+    unengaged="$(unengaged_count "$result")"
 
     # --- Signal counts (computed before the rule list so every verdict reports
     # the same numbers, whichever rule fires). ---
@@ -758,6 +791,7 @@ EOF
     command printf 'duplicate=%s\n' "$duplicate"
     command printf 'refuted=%s\n' "$refuted"
     command printf 'recursive=%s\n' "$recursive"
+    command printf 'unengaged=%s\n' "$unengaged"
     command printf 'next_scope=%s\n' "$(next_scope_of)"
 }
 

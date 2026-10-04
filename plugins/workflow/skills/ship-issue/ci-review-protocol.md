@@ -313,6 +313,17 @@ on a review that had genuinely converged, defeating #596's early stop.
 
 Carry the value forward as the next cycle's `--prev-delta-lines`.
 
+Before consulting the predicate, fold the transcript-measured engagement into
+the cycle result — the harness cannot see its dimensions' tool calls, so this is
+the step that catches a dimension that answered `findings: []` without reading
+anything (#1111). `<transcript-dir>` is the "Transcript dir" the Workflow tool
+result printed; full contract in `review-engagement.md`:
+
+```bash
+<skill-base-dir>/../../scripts/review-engagement.sh "<transcript-dir>" "$cycle_result_json"
+# -> measured=true|false  dimensions=N  unengaged=N
+```
+
 ```bash
 # substitute <skill-base-dir>: next-issue/worktree-safe-recipes.md (#815)
 <skill-base-dir>/../../scripts/review-convergence.sh check \

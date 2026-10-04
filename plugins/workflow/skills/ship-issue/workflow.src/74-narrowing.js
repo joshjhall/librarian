@@ -249,7 +249,14 @@ function buildResult(parts) {
   const blocking = parts.blocking || []
   const deferrable = parts.deferrable || []
   const dimensionsSkipped = parts.dimensionsSkipped || []
-  const budgetExhausted = !!parts.budgetExhausted
+  const unengagedDimensions = parts.unengagedDimensions || []
+  // An unengaged dimension (#1111) is a dimension that did not review: the cycle
+  // is PARTIAL exactly as when one was budget-skipped, so it forces the same
+  // flag `clean` gates on. Derived HERE rather than trusted from the caller so a
+  // call site that passes the list but forgets the flag still cannot report a
+  // clean cycle — the shape of #636, where a post-hoc derivation past
+  // ORCH_BOUNDARY had no coverage.
+  const budgetExhausted = !!parts.budgetExhausted || unengagedDimensions.length > 0
 
   // Seeded at zero and incrementing only KNOWN keys: unlike `tallyBy` (whose
   // inputs are LLM-authored `nature` strings that must never be dropped),
@@ -309,6 +316,26 @@ function buildResult(parts) {
     },
     budget_exhausted: budgetExhausted,
     dimensions_skipped: dimensionsSkipped,
+    // Dimensions that RETURNED but did not review (#1111) — `findings: []` with
+    // nothing in `checked`, or a code-reading dimension that checked the diff
+    // only, still so after one opus re-dispatch. Each is also in
+    // `dimensions_skipped` (it is a missed dimension, and that is the list every
+    // existing reader already checks); this field says WHY, so a reader can tell
+    // "did not run" from "ran and did not look". Always present, for the reason
+    // given for `no_review_signal` below. Deliberately NOT `no_review_signal`:
+    // that field makes a cycle uncharged against REVIEW_MAX_CYCLES, and a
+    // dimension that disengages every cycle must dead-end VISIBLY at the cap
+    // rather than loop forever uncharged. review-convergence.sh reads this field
+    // directly (rule C2b) so it refuses to stop on it without trusting --partial.
+    unengaged_dimensions: unengagedDimensions,
+    // Per-dimension engagement as the harness can see it: how many `checked`
+    // entries came back, whether an opus re-dispatch was spent, and whether the
+    // dimension is one that must read code. The sandbox cannot see tool calls or
+    // per-agent tokens — `agent()` returns only the schema object and
+    // `budget.spent()` is pooled across the barrier — so those MEASURED counts are
+    // added by the caller from the transcript (scripts/review-engagement.sh), which
+    // keys its zero-tool-call rule off `requires_code_reading` here.
+    dimension_engagement: parts.dimensionEngagement || {},
     // Always present (never conditionally omitted): the reader's default for an
     // absent field is `false`, so omitting it on the crash path and emitting it
     // elsewhere would make the two indistinguishable from outside. Building
@@ -380,6 +407,8 @@ function emptyResult(parts) {
     unresolvedLen: parts.unresolvedLen || 0,
     budgetExhausted: !!parts.budgetExhausted,
     dimensionsSkipped: parts.dimensionsSkipped || [],
+    unengagedDimensions: parts.unengagedDimensions || [],
+    dimensionEngagement: parts.dimensionEngagement || {},
     dimensionsRun: parts.dimensionsRun || 0,
     noReviewSignal: !!parts.noReviewSignal,
   })
