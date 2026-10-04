@@ -354,7 +354,9 @@ unconditionally, and `cycle` only on `charged=true`:
 
 ```bash
 attempt=$((attempt + 1))
-[ "$charged" = "true" ] && cycle=$((cycle + 1))   # charged= from the helper's output
+if [ "$charged" = "true" ]; then   # charged= from the helper's output
+    cycle=$((cycle + 1))
+fi
 ```
 
 Two rules come back `charged=false`: `C0b-no-signal` (crashed before any dimension
