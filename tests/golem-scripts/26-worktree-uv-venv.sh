@@ -98,6 +98,25 @@ _uv_need_jq() {
     return 1
 }
 
+# _uv_make_foreign <dir> — hand <dir> to another uid (nobody, 65534) so the
+# ownership refusal (#1115) has something to refuse. Mode 0777 FIRST, so the
+# sandbox cleanup — running as us — can still empty and unlink it. Needs root
+# or passwordless sudo; otherwise skips (AC3): a non-root runner cannot create a
+# foreign-owned fixture, and faking one would test nothing.
+_uv_make_foreign() {
+    command chmod 0777 "$1" 2>/dev/null || return 1
+    if [ "$(command id -u)" = 0 ]; then
+        command chown 65534 "$1" 2>/dev/null
+    else
+        command sudo -n chown 65534 "$1" 2>/dev/null
+    fi
+    if [ -O "$1" ]; then
+        skip_test "cannot create a foreign-owned fixture (not root, no passwordless sudo)"
+        return 1
+    fi
+    return 0
+}
+
 # --- seeding ----------------------------------------------------------------
 
 # AC1: a uv project with a suitable cache root gets a per-worktree
@@ -585,6 +604,66 @@ test_worktree_rm_failed_uv_venv_removal_warns_and_exits_0() {
     assert_contains "$out" "could not remove uv venv $venv" "warns, naming the venv"
     assert_not_contains "$out" "removed uv venv" "does not claim a removal that failed"
     assert_contains "$out" "removed worktree" "the worktree teardown itself still happened"
+}
+
+# AC1+AC2 (#1115), seed side: a co-tenant on a shared cache pre-creates the
+# predictable issue-N with no symlink at all. It is not seeded into, and the
+# refusal is said on stderr. Positive control:
+# test_worktree_new_uv_seeds_project_environment, the same fixture without the
+# foreign owner.
+test_worktree_new_uv_refuses_foreign_owned_venv() {
+    local sb
+    new_sandbox sb
+    _uv_need_jq || return 0
+    _uv_project "$sb"
+    local cache="$sb/venvs" venv
+    venv="$(_uv_venv "$sb" "$cache" 71)"
+    command mkdir -p "$venv"
+    _uv_make_foreign "$venv" || return 0
+
+    _uv_run "$WT_NEW" "$sb" "$cache" 71
+    assert_exit 0 "$RUN_RC" "worktree-new exits 0 with a foreign-owned venv dir"
+    assert_contains "$RUN_OUT" "refusing to seed UV_PROJECT_ENVIRONMENT=$venv" \
+        "the refusal is announced — a silent skip reads as 'not a uv project'"
+    assert_equals "" "$(_uv_key_of "$sb" 71)" "writes no UV_PROJECT_ENVIRONMENT"
+}
+
+# The <repo-key> PARENT is checked too: a co-tenant owning it can swap or plant
+# entries under it even when the leaf we create there is ours.
+test_worktree_new_uv_refuses_foreign_owned_repo_key_dir() {
+    local sb
+    new_sandbox sb
+    _uv_need_jq || return 0
+    _uv_project "$sb"
+    local cache="$sb/venvs" venv
+    venv="$(_uv_venv "$sb" "$cache" 72)"
+    command mkdir -p "${venv%/*}"
+    _uv_make_foreign "${venv%/*}" || return 0
+
+    _uv_run "$WT_NEW" "$sb" "$cache" 72
+    assert_exit 0 "$RUN_RC" "worktree-new exits 0 with a foreign-owned repo-key dir"
+    assert_contains "$RUN_OUT" "refusing to seed UV_PROJECT_ENVIRONMENT=$venv" \
+        "the parent check was reached and refused out loud"
+    assert_equals "" "$(_uv_key_of "$sb" 72)" "writes no UV_PROJECT_ENVIRONMENT"
+}
+
+# AC1+AC2 (#1115), teardown side: a foreign-owned issue-N is not deleted, and the
+# refusal is said on stderr. Teardown still exits 0.
+test_worktree_rm_refuses_foreign_owned_uv_venv() {
+    local sb
+    new_sandbox sb
+    local cache="$sb/venvs" venv
+    venv="$(_uv_venv "$sb" "$cache" 73)"
+    _uv_run "$WT_NEW" "$sb" "$cache" 73
+    command mkdir -p "$venv"
+    command printf 'theirs\n' >"$venv/marker"
+    _uv_make_foreign "$venv" || return 0
+
+    _uv_run "$WT_RM" "$sb" "$cache" 73
+    assert_exit 0 "$RUN_RC" "teardown exits 0 with a foreign-owned venv"
+    assert_contains "$RUN_OUT" "refusing to remove uv venv $venv" "the refusal is announced"
+    assert_contains "$RUN_OUT" "not owned by you" "...and names ownership as the reason"
+    assert_true "[ -f \"$venv/marker\" ]" "the foreign-owned venv's content survives"
 }
 
 # A RELATIVE cache root is refused by both scripts: it would resolve against the
