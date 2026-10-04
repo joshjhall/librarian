@@ -89,9 +89,11 @@ _hr_state_open() {
 # every Enter (a healthy golem), logging each send so the ORDER and SEPARATION of
 # the two directives can be asserted. With <fail-on>, a literal payload
 # containing that text is typed but its Enter never submits — the composer stays
-# occupied, so verify-text reports the send as not landed.
+# occupied, so verify-text reports the send as not landed. With <clobber-on>, a
+# literal payload containing that text turns the relaunch stamp into a directory
+# — after the script's earlier writes landed, so only the LATER writes fail.
 plant_relaunch_tmux() {
-    local sb="$1" fail_on="${2:-}"
+    local sb="$1" fail_on="${2:-}" clobber_on="${3:-}"
     command mkdir -p "$sb/bin"
     command printf 'work output\n\n\342\235\257\302\240\n  \342\217\265\342\217\265 auto mode on (shift+tab to cycle)\n' >"$sb/pane.txt"
     command cat >"$sb/bin/tmux" <<EOF
@@ -105,6 +107,7 @@ case "\$1" in
             *-l*)
                 : >"$sb/stuck"
                 case "\$*" in *"$fail_on"*) [ -n "$fail_on" ] && printf x >"$sb/stuck" ;; esac
+                case "\$*" in *"$clobber_on"*) [ -n "$clobber_on" ] && rm -f "$sb/.worktrees/.status/handoff-relaunched-golem-42" && mkdir -p "$sb/.worktrees/.status/handoff-relaunched-golem-42" ;; esac
                 printf 'work output\n\n\342\235\257\302\240typed\n  \342\217\265\342\217\265 auto mode on (shift+tab to cycle)\n' >"$sb/pane.txt" ;;
             *Enter*)
                 [ -s "$sb/stuck" ] || printf 'work output\n\n\342\235\257\302\240\n  \342\217\265\342\217\265 auto mode on (shift+tab to cycle)\n' >"$sb/pane.txt" ;;
@@ -563,4 +566,43 @@ test_relaunch_refuses_clear_when_stamp_unwritable() {
     assert_exit 1 "$RUN_RC" "an unwritable stamp refuses the relaunch"
     assert_contains "$RUN_OUT" "refusing to /clear without a stamp" "and says why"
     assert_true "[ ! -s \"$sb/send-keys.log\" ]" "/clear was never sent"
+}
+
+# /clear landed but the `cleared` stamp could not be written: the only record of
+# the half-state is gone, so the script must SAY so and still send the resume —
+# going silent, or stopping here, strands a cleared golem unrecorded.
+test_relaunch_warns_when_cleared_stamp_unwritable() {
+    _hr_need_jq || return 0
+    local sb
+    new_sandbox sb
+    _hr_golem "$sb" 42 "$_HR_HANDOFF_WRITE_TAIL" "$(_hr_state_open 42)"
+    # The `pending` write lands; the /clear send then makes the stamp a directory.
+    plant_relaunch_tmux "$sb" "" "/clear"
+    run_relaunch "$sb" relaunch 42
+    assert_exit 0 "$RUN_RC" "a confirmed resume still succeeds"
+    assert_contains "$RUN_OUT" "could not be updated" "the failed cleared write is reported"
+    assert_contains "$RUN_OUT" "attach and resume it by hand" "with the manual recovery"
+    local log first second
+    log="$(command cat "$sb/send-keys.log" 2>/dev/null)"
+    first="$(command printf '%s\n' "$log" | command grep -n -e '-l -- /clear' | command cut -d: -f1)"
+    second="$(command printf '%s\n' "$log" | command grep -n -e '-l -- /workflow:next-issue 42 --level 3' | command cut -d: -f1)"
+    assert_not_empty "$first" "/clear was sent"
+    assert_not_empty "$second" "the resume is still attempted"
+    assert_true "[ \"${first:-0}\" -lt \"${second:-0}\" ]" "the resume follows /clear"
+}
+
+# Same failed write, and the resume then does not land: the exit code follows
+# the resume, not the warning.
+test_relaunch_cleared_stamp_unwritable_resume_failure_exits_1() {
+    _hr_need_jq || return 0
+    local sb
+    new_sandbox sb
+    _hr_golem "$sb" 42 "$_HR_HANDOFF_WRITE_TAIL" "$(_hr_state_open 42)"
+    plant_relaunch_tmux "$sb" "next-issue" "/clear"
+    run_relaunch "$sb" relaunch 42
+    assert_exit 1 "$RUN_RC" "an unconfirmed resume fails the relaunch"
+    assert_contains "$RUN_OUT" "could not be updated" "the failed cleared write is reported"
+    assert_contains "$RUN_OUT" "attach and resume it by hand" "with the manual recovery"
+    assert_contains "$RUN_OUT" "resume command not confirmed" "and the resume failure"
+    assert_contains "$(command cat "$sb/send-keys.log" 2>/dev/null)" "-l -- /workflow:next-issue 42 --level 3" "the resume was attempted"
 }
