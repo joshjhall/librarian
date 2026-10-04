@@ -71,7 +71,11 @@ For 2+ issues in parallel, or detached/headless work, use **`/workflow:orchestra
 
 1. **Worktree collision guard.** If `.worktrees/issue-N` already exists, offer to
    **resume into it** (`EnterWorktree`, skip Phase B's create) rather than
-   recreate — a prior `/workflow:golem` run for this issue may have paused.
+   recreate — a prior `/workflow:golem` run for this issue may have paused. This
+   is the primary `/clear` resume path (#1059). At **L3–L4** it is a routine gate:
+   resume **without asking** when the worktree is on `feature/issue-N` **and**
+   holds `.claude/memory/tmp/next-issue-N.json`. Any mismatch still asks, at every
+   level — a worktree that disagrees with its state is not safe to assume.
 
 ### Phase B — Create + enter the worktree
 
@@ -238,9 +242,9 @@ worktree being measured, and `context-budget.sh` normalizes a trailing `/.` or
 
 On `handoff`, do **not** start the next step: write the `checkpoint` into the
 existing `.claude/memory/tmp/next-issue-{N}.json` and end the session, so the
-resumed run starts at the ~91k floor instead of at 400k. On `advise`, finish the
-step you are on but do not begin a new one. Resume with `EnterWorktree({ path:
-".worktrees/issue-N" })` then `/workflow:next-issue N` — the checkpoint's
+resumed run starts at the ~104k floor instead of at 400k. On `advise`, finish the
+step you are on but do not begin a new one. Resume with `/workflow:golem N` from
+the main checkout (or `/workflow:next-issue N` if still inside the worktree) — the checkpoint's
 `next_action` is what stops the fresh session re-deriving the plan. A non-zero
 exit means the budget is **unknown**, not fine: proceed, but say so in one line.
 Full protocol and the threshold's derivation: `next-issue/handoff-protocol.md`.
@@ -388,10 +392,11 @@ file; an interactive session is **advised, never cycled** (#784 AC5).
   `/workflow:next-issue` reaches its "After plan approval" context reset that suggests
   `/clear` (`next-issue/state-format.md`); inside an `EnterWorktree` session a
   `/clear` may drop the worktree cwd. `/workflow:next-issue` now emits a **worktree-aware**
-  resume hint for that case — its `/clear` suggestion tells you to re-enter this
-  worktree (`EnterWorktree({ path: ".worktrees/issue-N" })`) before `/workflow:next-issue`,
-  so the run resumes from implementation without your having to reconstruct the
-  cwd by hand. L3–L4 remains the smoothest hands-off run (it bypasses the reset
+  resume hint for that case — its `/clear` suggestion names `/workflow:golem N`
+  from the main checkout (the collision guard re-enters this worktree), with
+  `/workflow:next-issue N` as the fallback when you are still inside it, so the
+  run resumes from implementation without your having to reconstruct the cwd by
+  hand. L3–L4 remains the smoothest hands-off run (it bypasses the reset
   entirely); `/workflow:golem --teardown N` still prunes the worktree once the PR merges.
 
 ## When NOT to Use

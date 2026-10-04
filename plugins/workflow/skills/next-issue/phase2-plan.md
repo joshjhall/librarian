@@ -252,8 +252,10 @@ call (see SKILL.md `## Autonomy Levels` and `autonomy.md`).
 
        > Planning phase complete. Context can be safely cleared — state saved to
        > `.claude/memory/tmp/next-issue-{N}.json`. `/clear` may return you to the
-       > main checkout, so after it re-enter this worktree with
-       > `EnterWorktree({ path: ".worktrees/issue-{N}" })`, then run `/workflow:next-issue`
-       > to resume from implementation.
+       > main checkout — from there, run `/workflow:golem {N}`: it finds
+       > `.worktrees/issue-{N}`, offers to re-enter it, and resumes from
+       > implementation. If you are still inside the worktree (golem refuses to
+       > nest), run `/workflow:next-issue {N}` instead, re-entering first with
+       > `EnterWorktree({ path: ".worktrees/issue-{N}" })` if the cwd was dropped.
 
      This is advisory — continue normally if the user declines.
