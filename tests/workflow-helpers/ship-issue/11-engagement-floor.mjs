@@ -11,10 +11,12 @@
 //       the diff against the issue, so a diff-only scope-drift result is
 //       ENGAGED; classifying it otherwise would retry it every cycle and block
 //       convergence forever.
-//   (2) BEHAVIOUR of the result constructor — a stub empty-submit dimension fed
-//       through buildResult/emptyResult must not read clean (AC5), and the
-//       unengaged list must force the partial flag even if a call site forgets
-//       to (the derivation lives inside buildResult, past nothing).
+//   (2) BEHAVIOUR end to end (AC5, #1129) — the REAL harness body is driven
+//       with stubbed engine globals, and a stub empty-submit dimension must come
+//       back in the returned cycle JSON as not-clean, in both skip lists. AC5
+//       once rebuilt the classify-then-push glue by hand, so deleting either
+//       real push left it green. Plus the result constructor's own rule: the
+//       unengaged list forces the partial flag even if a call site forgets to.
 //   (3) BEHAVIOUR of the retry path (#1128) — `selectRetries`, `mergeRetried`,
 //       and `stampEngagement`: an engaged retry replaces, a null or
 //       budget-skipped retry keeps the unengaged original, and `retry_*` and the
@@ -28,7 +30,39 @@
 import { ok, eq } from "../../lib/mjs-assert.mjs";
 import { extractHelpers, harnessSource, SHIP } from "../../lib/extract-helpers.mjs";
 
-export function run() {
+// Run the WHOLE ship-issue harness — pure prefix AND orchestration body — with
+// stubbed engine globals, and return the cycle JSON it produces. extractHelpers
+// cannot reach past ORCH_BOUNDARY (its `new Function` body may not contain a
+// top-level `await`); an AsyncFunction body may, and the harness's top-level
+// `return` is then the function's return. `agentStub(prompt, opts)` answers each
+// dispatch; `parallel` nulls a thrown thunk, as the engine does. Single-use, so
+// it stays in this area rather than in tests/lib (CLAUDE.md).
+const AsyncFunction = (async () => {}).constructor;
+async function runHarness(agentStub, args) {
+  const src = harnessSource(SHIP).replace(/^export\s+const\s+meta/m, "const meta");
+  const calls = [];
+  const logs = [];
+  const agent = async (prompt, opts) => {
+    calls.push(opts);
+    return agentStub(prompt, opts);
+  };
+  const parallel = (thunks) =>
+    Promise.all(
+      thunks.map(async (t) => {
+        try {
+          return await t();
+        } catch {
+          return null;
+        }
+      }),
+    );
+  const budget = { total: null, spent: () => 0, remaining: () => Infinity };
+  const body = new AsyncFunction("args", "budget", "log", "phase", "agent", "parallel", "pipeline", src);
+  const result = await body(args, budget, (m) => logs.push(m), () => {}, agent, parallel, async () => []);
+  return { result, calls, logs };
+}
+
+export async function run() {
   const {
     classifyEngagement,
     CODE_READING_DIMENSIONS,
@@ -127,26 +161,58 @@ export function run() {
 
   // --- (2) AC5: a stub empty-submit dimension is not counted clean -----------
   {
-    // Feed the stub through the classifier and then the constructor, the way
-    // the orchestration body does: unengaged -> unengagedDimensions +
-    // dimensionsSkipped.
-    const stub = { findings: [], checked: [] };
-    const verdict = classifyEngagement("security", stub);
-    const unengaged = verdict === "unengaged" ? ["security"] : [];
-    const r = emptyResult({
-      budgetExhausted: false,
-      dimensionsSkipped: [...unengaged],
-      unengagedDimensions: unengaged,
-      dimensionsRun: 5,
-      noReviewSignal: false,
-    });
+    // Driven through the REAL orchestration body (#1129): classification, the
+    // opus retry, stampEngagement, and the `dimensionsSkipped.push` that lives
+    // past ORCH_BOUNDARY all run as shipped. Deleting either push fails here.
+    const harnessArgs = { cycle: 1, phase: "pre-pr", files: ["a.js"], diff: "diff --git a/a.js b/a.js\n+x" };
+    const manifest = { files: ["a.js"], classifications: [{ file: "a.js", types: ["code"] }], needs: { database: false, devops: false } };
+    const stubFor = (emptyDim) => (_prompt, opts) => {
+      if (opts.label === "manifest") return manifest;
+      // `checked` OMITTED, not empty: the dispatch `.then` must default it, so
+      // this is also the end-to-end checked-absent case.
+      if (opts.label === `review:${emptyDim}`) return { findings: [] };
+      return { findings: [], checked: read };
+    };
+
+    let driven = null;
+    try {
+      driven = await runHarness(stubFor("security"), harnessArgs);
+    } catch (err) {
+      ok(false, `AC5: the driven harness ran to completion — threw ${err?.message || err}`);
+    }
+    const r = driven?.result || {};
+    const calls = driven?.calls || [];
+    // Non-vacuity: the stubs were actually consulted, and the floor's retry fired.
+    ok(calls.some((c) => c.label === "manifest"), "AC5: the driven run dispatched the manifest agent");
+    const secCalls = calls.filter((c) => c.label === "review:security");
+    eq(secCalls.length, 2, "AC5: the empty-submit dimension was dispatched, then re-dispatched once");
+    eq(secCalls[1]?.model, "opus", "AC5: ...the re-dispatch on opus");
+
     eq(r.clean, false, "AC5: a stub empty-submit security dimension does not produce clean:true (#1111)");
     eq(r.budget_exhausted, true, "AC5: the unengaged cycle is partial");
-    ok(r.dimensions_skipped.includes("security"), "AC5: the unengaged dimension is listed in dimensions_skipped");
-    ok(r.unengaged_dimensions.includes("security"), "AC5: ...and in unengaged_dimensions, which says why");
+    ok((r.dimensions_skipped || []).includes("security"), "AC5: the unengaged dimension is listed in dimensions_skipped");
+    ok((r.unengaged_dimensions || []).includes("security"), "AC5: ...and in unengaged_dimensions, which says why");
+    eq(r.dimension_engagement?.security?.engagement, "unengaged", "AC5: dimension_engagement reports it unengaged");
+    eq(r.dimension_engagement?.security?.checked, 0, "AC5: an omitted checked field is counted as zero, not thrown on");
+    // Only the empty dimension is listed — a harness that lists every dimension
+    // would satisfy the includes() checks above.
+    eq(JSON.stringify(r.unengaged_dimensions), '["security"]', "AC5: no engaged dimension is reported unengaged");
+    eq(JSON.stringify(r.dimensions_skipped), '["security"]', "AC5: no engaged dimension is reported skipped");
     // Charged, not uncharged: a dimension that disengages every cycle must
     // dead-end at the cap, not loop forever as a no-signal cycle.
     eq(r.no_review_signal, false, "AC5: unengaged is NOT no_review_signal (it is charged against the cap)");
+
+    // Control: the same drive with every dimension engaged IS clean, so AC5's
+    // not-clean verdict is caused by the empty dimension, not by the harness
+    // reporting every stubbed cycle partial.
+    let control = null;
+    try {
+      control = (await runHarness(stubFor("none"), harnessArgs)).result;
+    } catch (err) {
+      ok(false, `AC5 control: the driven harness ran to completion — threw ${err?.message || err}`);
+    }
+    eq(control?.clean, true, "AC5 control: an all-engaged driven cycle is clean");
+    eq(JSON.stringify(control?.dimensions_skipped), "[]", "AC5 control: ...and skips nothing");
 
     // buildResult DERIVES the partial flag from the list, so a call site that
     // passes the list but forgets budgetExhausted still cannot report clean.
@@ -166,6 +232,11 @@ export function run() {
       emptyResult({ dimensionEngagement: eng }).dimension_engagement.security.retry_attempted,
       true,
       "emptyResult: dimension_engagement is passed through (AC4, in-sandbox half)",
+    );
+    eq(
+      JSON.stringify(emptyResult({ dimensionEngagement: null }).dimension_engagement),
+      "{}",
+      "emptyResult: a null dimension_engagement becomes {}, never null",
     );
   }
 
@@ -230,6 +301,18 @@ export function run() {
     const clean = stampEngagement(dims, [engagedRetry, first[2], first[2]], [], []);
     eq(clean.partial, false, "stamp: an all-engaged cycle is not partial");
     eq(clean.skippedAdds.length, 0, "stamp: ...and skips nothing");
+
+    // A result with `checked` (and `findings`) ABSENT — the dispatch `.then`
+    // always sets both today, but nothing else guarantees it (#1129).
+    let bare = null;
+    try {
+      bare = stampEngagement([{ dim: { name: "tests" } }], [{ dim: "tests" }], [], []);
+    } catch (err) {
+      ok(false, `stamp: a result missing checked/findings is not thrown on — threw ${err?.message || err}`);
+    }
+    eq(bare?.dimensionEngagement.tests.checked, 0, "stamp: an absent checked field counts as 0");
+    eq(bare?.dimensionEngagement.tests.findings, 0, "stamp: an absent findings field counts as 0");
+    eq(bare?.dimensionEngagement.tests.engagement, "unengaged", "stamp: ...and the result is unengaged");
   }
 
   // --- (4) WIRING past ORCH_BOUNDARY ----------------------------------------
