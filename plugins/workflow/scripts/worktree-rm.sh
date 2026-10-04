@@ -53,7 +53,9 @@
 #           env GOLEM_WORKTREE_MODE=issue|name
 #   How:    non-interactive (stdin is /dev/null) and bounded to
 #           GOLEM_POST_REMOVE_HOOK_TIMEOUT seconds. Best-effort: a non-zero exit
-#           or a timeout is a WARNING on stderr, never a failed teardown.
+#           or a timeout is a WARNING on stderr, never a failed teardown. Where
+#           bounded_run cannot bound (no sleep/mktemp/cat) the hook still runs,
+#           UNBOUNDED, after a warning — it is never skipped.
 #   Trust:  the repo-local hook is EXECUTED with the caller's environment, so
 #           the main checkout's working tree is trusted exactly as its justfile
 #           or git hooks are. Do not tear down from a checkout of untrusted refs.
@@ -1018,9 +1020,11 @@ fi
 # Best-effort for the same reason as the tmux and uv arms: teardown is past its
 # destructive steps, so a failing hook must not strand a removed worktree behind
 # a non-zero exit. Bounded by bounded_run rather than GNU `timeout` (absent on
-# base macOS), which also closes the hook's stdin — no TTY is ever assumed. A
-# hook that itself exits 124 reads as a timeout: bounded_run reports 124 for
-# both, the same contract as timeout(1).
+# base macOS), which also closes the hook's stdin — no TTY is ever assumed. When
+# bounded, a hook that itself exits 124 reads as a timeout: bounded_run reports
+# 124 for both, the same contract as timeout(1). Where bounded_run cannot bound,
+# the hook runs unbounded (stdin still closed) and a 124 is reported as its own
+# exit status, since no bound was applied (#1123).
 if [ "$torn_down" -eq 1 ]; then
     post_hook=""
     if [ -n "$GOLEM_POST_REMOVE_HOOK" ]; then
@@ -1044,16 +1048,28 @@ if [ "$torn_down" -eq 1 ]; then
             # would read exactly like a hook that ran and found nothing to do.
             command echo "worktree-rm: WARNING: post-remove hook $post_hook is not an" \
                 "executable file; skipped" >&2
-        elif ! bounded_run_available; then
-            command echo "worktree-rm: WARNING: cannot bound the post-remove hook" \
-                "(sleep/mktemp/cat missing); skipped $post_hook" >&2
         else
-            post_rc=0
-            GOLEM_WORKTREE_MODE="$wt_mode" bounded_run "$post_timeout" \
-                "$post_hook" "$N" "$root" "$post_wt" || post_rc=$?
-            case "$post_rc" in
-                0) ;;
-                124)
+            post_rc=0 post_bounded=0
+            if bounded_run_available; then
+                post_bounded=1
+                GOLEM_WORKTREE_MODE="$wt_mode" bounded_run "$post_timeout" \
+                    "$post_hook" "$N" "$root" "$post_wt" || post_rc=$?
+            else
+                # Unbounded, never skipped (#1123): a skip would orphan the
+                # consumer's artifacts on every teardown on this host to guard a
+                # hang nobody measured — the #543 shape, and the rename-aside's
+                # rule (rename_timeout). </dev/null keeps the no-TTY contract
+                # bounded_run otherwise provides.
+                command echo "worktree-rm: WARNING: cannot bound the post-remove hook" \
+                    "(sleep/mktemp/cat missing); running it unbounded" >&2
+                GOLEM_WORKTREE_MODE="$wt_mode" "$post_hook" "$N" "$root" "$post_wt" \
+                    </dev/null || post_rc=$?
+            fi
+            # A 124 is only a timeout when a bound was applied; unbounded, it is
+            # the hook's own status and takes the generic arm.
+            case "$post_bounded:$post_rc" in
+                *:0) ;;
+                1:124)
                     command echo "worktree-rm: WARNING: post-remove hook $post_hook timed" \
                         "out after ${post_timeout}s; teardown is otherwise complete" >&2
                     ;;

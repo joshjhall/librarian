@@ -21,11 +21,15 @@
 # _hook_rm <sandbox> <hook-or-empty> <arg> [timeout]
 # run_in, but with GOLEM_POST_REMOVE_HOOK (and optionally its timeout) set for
 # this one teardown. An empty hook leaves the repo-local fallback in play.
+# -uBASH_ENV is load-bearing: in the devcontainer BASH_ENV re-sources a profile
+# that hard-resets PATH, which silently undoes the no-`sleep` PATH of the
+# unbounded case below — it then passes through bounded_run and never reaches
+# the branch it exists to pin (#1123).
 _hook_rm() {
     local dir="$1" hook="$2" arg="$3" tmo="${4:-300}"
     RUN_RC=0
     RUN_OUT="$(cd "$dir" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" -uBASH_ENV \
             HOME="$dir" \
             GOLEM_PLUGIN_PROBE="$dir/no-plugin-probe" \
             TMUX= TMUX_TMPDIR="${SANDBOX_TMUX_DIR:-$dir/.tmux}" \
@@ -338,4 +342,59 @@ test_worktree_rm_post_remove_hook_repo_local_symlink_runs() {
     _hook_rm "$sb" "" 89
     assert_exit 0 "$RUN_RC" "teardown with a linked repo-local hook exits 0"
     assert_equals "1" "$(_line_count "$log")" "the linked repo-local hook ran once"
+}
+
+# bounded_run cannot bound (no `sleep` on PATH): the hook must still RUN, once,
+# unbounded, with a warning — skipping it would orphan the consumer's artifacts
+# on that host to protect against a hang nobody measured (the #543 shape; same
+# rule as the rename-aside in 44-worktree-rm-rename-bound.sh). PATH is rebuilt
+# by path_without (43-worktree-rm-deregistered.sh), which hides ONLY `sleep`, so
+# git and the rest of the sandbox stay intact (#1123). The hook also records
+# what its stdin read: the unbounded path must keep it closed too.
+test_worktree_rm_post_remove_hook_runs_unbounded_without_bounded_run() {
+    local sb root log saved_path
+    new_sandbox sb
+    root="$(_sb_root "$sb")"
+    log="$sb/hook.log"
+    command mkdir -p "$sb/hooks"
+    command printf '#!/usr/bin/env bash\nif read -r line; then s="got:$line"; else s=eof; fi\nprintf "%%s|%%s|%%s|%%s|%%s\\n" "$GOLEM_WORKTREE_MODE" "$1" "$2" "$3" "$s" >>"%s"\n' \
+        "$log" >"$sb/hooks/post"
+    command chmod +x "$sb/hooks/post"
+    run_in "$sb" "$WT_NEW" 90
+    assert_exit 0 "$RUN_RC" "worktree-new succeeds"
+
+    saved_path="$PATH"
+    PATH="$(path_without sleep "$sb/farm")"
+    if command -v sleep >/dev/null 2>&1; then
+        PATH="$saved_path"
+        assert_true "false" "path_without failed to hide sleep"
+        return 0
+    fi
+    _hook_rm "$sb" "$sb/hooks/post" 90 <<<"leaked"
+    PATH="$saved_path"
+
+    assert_exit 0 "$RUN_RC" "teardown without bounded_run exits 0"
+    assert_contains "$RUN_OUT" "cannot bound the post-remove hook (sleep/mktemp/cat missing); running it unbounded" \
+        "the unbounded degrade is reported (guards a vacuous pass)"
+    assert_true "[ ! -e '$sb/.worktrees/issue-90' ]" "the worktree was removed"
+    assert_equals "1" "$(_line_count "$log")" "the hook ran exactly once, unbounded"
+    assert_equals "issue|90|$root|$root/.worktrees/issue-90|eof" "$(command cat "$log" 2>/dev/null)" \
+        "the hook got its args, and read EOF rather than the caller's stdin"
+    assert_not_contains "$RUN_OUT" "timed out" "no timeout warning on the unbounded path"
+    assert_not_contains "$RUN_OUT" "skipped" "the hook was not skipped"
+
+    # Unbounded, a hook's OWN exit 124 is not a timeout — no bound was applied,
+    # so the generic "exited 124" warning must be printed, never "timed out"
+    # (#1123 review).
+    command printf '#!/usr/bin/env bash\nexit 124\n' >"$sb/hooks/rc124"
+    command chmod +x "$sb/hooks/rc124"
+    run_in "$sb" "$WT_NEW" 91
+    PATH="$(path_without sleep "$sb/farm2")"
+    _hook_rm "$sb" "$sb/hooks/rc124" 91
+    PATH="$saved_path"
+    assert_exit 0 "$RUN_RC" "an unbounded hook exiting 124 does not fail teardown"
+    assert_contains "$RUN_OUT" "running it unbounded" "the 124 case also took the unbounded path"
+    assert_contains "$RUN_OUT" "post-remove hook $sb/hooks/rc124 exited 124" \
+        "an unbounded 124 is reported as the hook's own exit status"
+    assert_not_contains "$RUN_OUT" "timed out" "an unbounded 124 is never called a timeout"
 }
