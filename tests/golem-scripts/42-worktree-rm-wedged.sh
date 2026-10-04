@@ -633,9 +633,9 @@ test_worktree_rm_never_quarantines_a_symlink() {
 # attribution costs a future reader a refactor of a layer with nothing to fix,
 # and nothing in the runtime output would ever reveal it.
 test_worktree_rm_attributes_ebadf_to_virtiofs() {
-    assert_file_contains "$WT_RM" "THE FAULT IS VIRTIOFS, NOT BINDFS" \
+    assert_file_contains "$WT_RM_LEFTOVER" "THE FAULT IS VIRTIOFS, NOT BINDFS" \
         "names the correct layer, and flags the correction for a reader who knows the old text"
-    assert_file_contains "$WT_RM" "unmounting the bindfs overlay" \
+    assert_file_contains "$WT_RM_LEFTOVER" "unmounting the bindfs overlay" \
         "records the measurement, so the next reader does not re-run it"
     # #1017 widened this: the same EBADF shape reproduced on a LINUX
     # devcontainer overlay, so the virtiofs paragraph above is the measured
@@ -644,9 +644,9 @@ test_worktree_rm_attributes_ebadf_to_virtiofs() {
     # in test_worktree_rm_partial_leftover_removal_is_tolerated — all still
     # match the OLD narrower text, so a regression that quietly narrowed the
     # attribution back to macOS-only would leave the suite green.
-    assert_file_contains "$WT_RM" "NOT MACOS-ONLY" \
+    assert_file_contains "$WT_RM_LEFTOVER" "NOT MACOS-ONLY" \
         "keeps the attribution widened past macOS (#1017)"
-    assert_file_contains "$WT_RM" "reproduced on a Linux" \
+    assert_file_contains "$WT_RM_LEFTOVER" "reproduced on a Linux" \
         "the runtime message names the Linux overlay too, not just the comment"
 }
 
