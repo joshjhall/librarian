@@ -276,6 +276,14 @@ test_unattributable_model_falls_back_to_every_run() {
     retry_result "$r2" true true
     out="$("$RE" "$d2" "$r2" 2>/dev/null)"
     assert_equals "0" "$(val unengaged "$out")" "one engaged run among unattributable runs is not flagged (AC2)"
+    # Negative control: an ATTRIBUTABLE retry (the opus run carries
+    # message.model) selects its run, so no warning may fire.
+    local d3="$SANDBOX/unattr3" r3="$SANDBOX/unattr3.json" err3="$SANDBOX/unattr3.err"
+    noj_agent "$d3" a0x correctness opus "$user" "$(toolm v6 claude-opus-5-5 Read 400)"
+    noj_agent "$d3" afy correctness sonnet "$user" "$(so_model v7 claude-sonnet-5-5 53)"
+    retry_result "$r3" true true
+    "$RE" "$d3" "$r3" >/dev/null 2>"$err3"
+    assert_equals "0" "$(command grep -c 'could not attribute' "$err3" || true)" "an attributable retry emits no warning"
 }
 
 test_rerun_is_idempotent() {

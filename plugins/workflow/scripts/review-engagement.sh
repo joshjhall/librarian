@@ -62,8 +62,10 @@ command jq -e 'type == "object"' "$result" >/dev/null 2>&1 ||
 rows="$(command mktemp)"
 order="$(command mktemp)"
 tmp_out="$(command mktemp)"
+tmp_ua="$(command mktemp)"
+tmp_final="$(command mktemp)"
 # shellcheck disable=SC2064  # expand the paths now, at trap-set time
-trap "command rm -f '$rows' '$order' '$tmp_out'" EXIT
+trap "command rm -f '$rows' '$order' '$tmp_out' '$tmp_ua' '$tmp_final'" EXIT
 
 # Dispatch order: the journal records `started` with each agentId in order. It
 # only makes `dimension_metrics` read chronologically; the unengaged decision
@@ -193,11 +195,17 @@ command jq --rawfile rows "$rows" '
     | if ($flag | length) > 0 then .clean = false | .budget_exhausted = true else . end
 ' "$result" >"$tmp_out" || die "review-engagement: failed to fold metrics into '$result'"
 # The fold hands the fallback dims out through a scratch key (jq's `stderr`
-# builtin varies by version); warn on each, then strip the key.
-command jq -r '._unattributed[]' "$tmp_out" | while IFS= read -r ua; do
+# builtin varies by version); warn on each, then strip the key. Both reads
+# finish into temp files BEFORE "$result" is touched, so a jq failure here
+# dies with the result untouched rather than truncated.
+command jq -r '._unattributed[]' "$tmp_out" >"$tmp_ua" ||
+    die "review-engagement: failed to read unattributed dimensions from the fold"
+command jq 'del(._unattributed)' "$tmp_out" >"$tmp_final" ||
+    die "review-engagement: failed to strip the scratch key from the fold"
+while IFS= read -r ua; do
     command printf 'WARNING: review-engagement: could not attribute a model to the kept run of %s — judged on every run\n' "$ua" >&2
-done
-command jq 'del(._unattributed)' "$tmp_out" >"$result"
+done <"$tmp_ua"
+command cat "$tmp_final" >"$result"
 
 command printf 'measured=true\n'
 command printf 'dimensions=%s\n' "$(command jq -r '.dimension_metrics | length' "$result")"
