@@ -288,6 +288,15 @@ test_unattributable_model_falls_back_to_every_run() {
     "$RE" "$d4" "$r4" >/dev/null 2>"$err4"
     assert_equals "1" "$(command grep -c 'no run of' "$err4")" "only the unattributable dimension warns"
     assert_equals "1" "$(command grep -c 'no run of correctness' "$err4")" "and the warning names it"
+    # The retry_attempted-only arm: a failed retry keeps the NON-opus run, so
+    # when every run reads opus that filter selects nothing too.
+    local d5="$SANDBOX/unattr5" r5="$SANDBOX/unattr5.json" err5="$SANDBOX/unattr5.err"
+    noj_agent "$d5" a0x correctness opus "$user" "$(so_model x1 claude-opus-5-5 55)"
+    noj_agent "$d5" afy correctness opus "$user" "$(so_model x2 claude-opus-5-5 53)"
+    retry_result "$r5" true false
+    out="$("$RE" "$d5" "$r5" 2>"$err5")"
+    assert_equals "1" "$(val unengaged "$out")" "a failed retry with no non-opus run falls back to every run"
+    assert_equals "1" "$(command grep -c 'no run of correctness matched' "$err5")" "and warns"
     # Negative control: an ATTRIBUTABLE retry (the opus run carries
     # message.model) selects its run, so no warning may fire.
     local d3="$SANDBOX/unattr3" r3="$SANDBOX/unattr3.json" err3="$SANDBOX/unattr3.err"
