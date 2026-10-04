@@ -505,6 +505,37 @@ test_worktree_new_uv_failed_repo_key_skips_seed() {
         "nothing is provisioned — in particular no un-namespaced issue-N"
 }
 
+# The rm-side mirror of the failed-key case (#1091 pr-review c4): with no repo
+# key there is no path to verify, so teardown must neither guess one (an empty
+# key would aim rm -rf at <cache>//issue-N) nor skip in silence. The venv
+# survives, a warning names the cache, and teardown exits 0. The cksum stub
+# leaves a marker so the skip is attributed to the key failure.
+test_worktree_rm_failed_repo_key_warns_and_keeps_venv() {
+    local sb
+    new_sandbox sb
+    local cache="$sb/venvs" venv
+    venv="$(_uv_venv "$sb" "$cache" 74)"
+    _uv_run "$WT_NEW" "$sb" "$cache" 74
+    command mkdir -p "$venv/bin" "$cache/issue-74" "$sb/stubbin"
+    command printf '#!/usr/bin/env bash\n: >"%s/cksum-ran"\nexit 1\n' "$sb" \
+        >"$sb/stubbin/cksum"
+    command chmod +x "$sb/stubbin/cksum"
+
+    _uv_env "$sb" "$cache" "$sb/no-cargo-cache"
+    RUN_RC=0
+    RUN_OUT="$(cd "$sb" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" -uBASH_ENV "${_UV_ENV[@]}" \
+            PATH="$sb/stubbin:$PATH" \
+            "$REAL_BASH" "$WT_RM" 74 2>&1)" || RUN_RC=$?
+    assert_exit 0 "$RUN_RC" "teardown exits 0 when the repo key cannot be computed"
+    assert_file_exists "$sb/cksum-ran" "the failing cksum stub was actually invoked"
+    assert_contains "$RUN_OUT" "could not derive the repo key" "the skip is announced"
+    assert_not_contains "$RUN_OUT" "removed uv venv" "nothing is removed without a key"
+    assert_true "[ -d \"$venv/bin\" ]" "The keyed venv survives"
+    assert_true "[ -d \"$cache/issue-74\" ]" \
+        "An un-namespaced <cache>/issue-N is NOT deleted (an empty key never becomes a path)"
+}
+
 # golem_repo_key's uniqueness rests on the cksum suffix: two repos that share a
 # BASENAME (two checkouts of one project) must still get different keys. The
 # cross-repo teardown test uses mktemp-named sandboxes whose basenames already

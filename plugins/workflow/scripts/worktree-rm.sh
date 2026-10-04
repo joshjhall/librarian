@@ -1319,8 +1319,17 @@ case "$GOLEM_UV_CACHE_DIR" in
     /?*) uv_cache_ok=1 ;;
     *) uv_cache_ok=0 ;;
 esac
-if [ "$wt_mode" = "issue" ] && [ "$uv_cache_ok" -eq 1 ] &&
-    uv_key="$(golem_repo_key "$root")" && [ -n "$uv_key" ]; then
+uv_key=""
+if [ "$wt_mode" = "issue" ] && [ "$uv_cache_ok" -eq 1 ]; then
+    uv_key="$(golem_repo_key "$root")" || uv_key=""
+    # No key means no path to check — so say so when a venv COULD exist (the
+    # cache root is present), rather than skip in silence (#1091 pr-review c4).
+    if [ -z "$uv_key" ] && [ -d "$GOLEM_UV_CACHE_DIR" ]; then
+        command echo "worktree-rm: WARNING: could not derive the repo key for $root —" \
+            "any uv venv for issue $N under $GOLEM_UV_CACHE_DIR was left in place" >&2
+    fi
+fi
+if [ -n "$uv_key" ]; then
     uv_venv="${GOLEM_UV_CACHE_DIR%/}/$uv_key/issue-$N"
     uv_root_real="$(command readlink -f "$GOLEM_UV_CACHE_DIR" 2>/dev/null)" ||
         uv_root_real=""
