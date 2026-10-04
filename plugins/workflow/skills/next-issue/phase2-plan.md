@@ -202,6 +202,18 @@ call (see SKILL.md `## Autonomy Levels` and `autonomy.md`).
    testing are complete** — do NOT invoke `/workflow:ship-issue` or suggest a
    `/clear` before the work exists.
 
+   <!-- budget-check-site: plan-approved -->
+   **Context budget, plan approved (#1057)** — before the first edit, at every
+   level (the L3–L4 reset bypass does not skip it):
+
+   ```bash
+   <skill-base-dir>/../../scripts/context-budget.sh check .
+   ```
+
+   Print the one-line report; on `handoff` in a golem, checkpoint with
+   `handoff_marker` and end the turn. `handoff-protocol.md` § *Where the check runs*.
+   <!-- end-budget-check-site -->
+
    **Mid-flight escalation gate.** If, while implementing or testing, you reach a
    decision that is **not mechanical** — competing architectural approaches, a
    directional choice the plan left open, or a wall with more than one viable
@@ -217,6 +229,18 @@ call (see SKILL.md `## Autonomy Levels` and `autonomy.md`).
    would violate the merge invariant), which blocks at every level including L4.
    Err toward escalating when unsure. This is distinct from the plan gate above,
    which is handled structurally by `ExitPlanMode`.
+
+   <!-- budget-check-site: impl-done -->
+   **Context budget, implementation done (#1057)** — once tests pass, before
+   invoking `/workflow:ship-issue` or any hand-off below:
+
+   ```bash
+   <skill-base-dir>/../../scripts/context-budget.sh check .
+   ```
+
+   Same report and same `handoff` action; a golem that hands off here resumes
+   straight into shipping from `next_action`.
+   <!-- end-budget-check-site -->
 
 1. **Hand off — suggest a context reset, OR take the `--ship` fast-path.**
    Reached only after implementation and testing complete (previous step).

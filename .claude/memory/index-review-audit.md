@@ -5,7 +5,7 @@
 
 ## Review harness behavior & cost
 
-- [Cap-stop is not convergence](cap-stop-is-not-convergence.md) — `stop`/`C1-cap` with a `capped_over` is a BUDGET artifact; re-run the predicate uncapped before merging
+- [Cap-stop is not convergence](cap-stop-is-not-convergence.md) — `stop`/`C1-cap` is a BUDGET artifact; the fix after the LAST cycle is never reviewed — park, name the SHA, budget the full-scope terminator
 - [The review fix is the riskiest code](review-fix-is-the-riskiest-code.md) — 2 of 5 blocking defects on #673 were INTRODUCED by the prior cycle's fix
 - [Ship review diff must be faithful](ship-review-diff-must-be-faithful.md) — the `diff` arg IS the bytes reviewers read; capture verbatim (#267)
 - [Classify tool calls before optimizing](classify-tool-calls-before-optimizing.md) — tokens say WHICH agent, only the call log says WHY

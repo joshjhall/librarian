@@ -185,7 +185,9 @@ plan-approval gate itself is preserved, and the run never selects L4. For
 same turn (via the `Skill` tool) and never reaches the "After plan approval",
 "After review", or "After ship" boundaries as distinct resets. The orchestrate
 golem launch's `;`-chained `/workflow:ship-issue` is the only resume path if
-the turn exits early. Such a run sets `autonomy_level`. Whether it removes the
+the turn exits early. Such a run sets `autonomy_level`. The bypass skips the
+`/clear` **suggestion** only — the context-budget check still runs at each
+`budget-check-site` (`handoff-protocol.md` § *Where the check runs*, #1057). Whether it removes the
 **plan-approval gate** is level-driven (see `SKILL.md` § Autonomy Levels): an
 **L4** run
 (non-critical) auto-passes the plan gate; an **L1–L3** run — including a capped

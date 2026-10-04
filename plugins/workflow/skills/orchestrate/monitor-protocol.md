@@ -210,6 +210,25 @@ Authoritative status comes from **PR + issue-label state**. The
    `ok` budget and no fresh session is the real thing. See
    `next-issue/handoff-protocol.md`.
 
+   **Nothing starts that fresh session but you (#1057).** The golem checkpoints
+   and ends its turn, but cannot exit its own process — so it sits idle at its
+   prompt until relaunched. On every `HANDOFF DUE` row, run:
+
+   ```bash
+   ${CLAUDE_PLUGIN_ROOT}/scripts/golem-handoff-relaunch.sh relaunch {N}
+   ```
+
+   It acts only when the budget reads `handoff`, the golem's checkpoint carries
+   an unresumed `handoff_marker`, liveness reads `idle` (or the #890
+   turn-ended indeterminate every handoff produces, which the marker
+   disambiguates), and the pane shows no gate overlay — a large golem parked at
+   a human gate is never cleared — then sends `/clear` and
+   `/workflow:next-issue N --level L` via `verify-text`, once per handoff. Exit 1
+   with `state=not-due`/`unknown` prints why; `unknown` is a reading that did
+   not happen, not a pass (an unreadable pane is `unknown`). If `/clear` landed
+   but the resume did not, the next sweep reports `resume-due` and re-sends the
+   resume only — the cleared golem's `ok` budget does not hide it.
+
    **Attention markers ride the `STATE` column**
    as plain text (`⚠ BLOCKED`
    at a gate, `⚠ CI` on a failing check, `⚠ gone` when the tmux session vanished)

@@ -24,11 +24,16 @@ resume in a fresh one that starts at the floor.
 (#809, #815).** The form above is correct only for a session in the **main
 checkout**. A session that has entered a worktree — every `/workflow:golem` run
 past Phase B, which is the main consumer of this protocol — must instead use a
-literal path and `.`, as `golem/SKILL.md` § Phase C shows:
+literal path and `.`:
 
 ```bash
 <skill-base-dir>/../../scripts/context-budget.sh check .
 ```
+
+Substitute `<skill-base-dir>` with the literal path from your invocation header
+(`Base directory for this skill: …`). `.` is safe because the session's cwd **is**
+the worktree being measured, and the script normalizes a trailing `/.` or `/`
+before deriving the transcript slug (#809).
 
 The harness refuses a Bash command it cannot verify stays in-tree, and both
 `${CLAUDE_PLUGIN_ROOT}` and `"$PWD"` trip that check. A refused command is an
@@ -57,6 +62,53 @@ do the comparison by hand is how #327's golems wedged.)
 exit 3 (no jq) mean *the budget is unknown*, not *the budget is fine*. Treat an
 unknown budget as `ok` and **say so in one line** — never report a bounded
 session on a reading that did not happen.
+
+## Where the check runs
+
+**At every pipeline boundary a golem passes — not only at reset points (#1057).**
+The check used to live only in `golem/SKILL.md` § Phase C, which an orchestrated
+golem never loads (it launches as a bare `/workflow:next-issue N --level L`), and
+the L3–L4 exception in `state-format.md` § Reset Points bypasses every reset
+point. Measured: five golems ran to 170k–400k and executed the check **zero**
+times. So the check is pinned to three sites every golem executes, each marked
+`budget-check-site` and enforced by `tests/lint-budget-check-sites.sh`:
+
+| site | where |
+| --- | --- |
+| `plan-approved` | `phase2-plan.md` — before implementing |
+| `impl-done` | `phase2-plan.md` — before invoking `/workflow:ship-issue` |
+| `review-cycle` | `ship-issue/ci-review-protocol.md` — after each cycle's fixes |
+
+The L3–L4 exception skips the `/clear` **suggestion**; it never skips this check.
+
+**After every check, print exactly one line** — this is what makes an unknown
+reading visible instead of indistinguishable from `ok`:
+
+```text
+context budget: <verdict> (<pct_of_threshold>% of threshold)
+context budget: UNKNOWN (exit <n>) — proceeding
+```
+
+**Who acts.** A golem — a session launched with `GOLEM_ID` set, or a
+`/workflow:golem` run — acts on `handoff` per § "The handoff" (write the
+checkpoint **with `handoff_marker`**, then end the turn). Every other session
+prints the line and continues (§ "Interactive sessions are advised, never
+cycled").
+
+**The fresh session is the orchestrator's job.** A model cannot exit its own
+`claude` process, so ending the turn leaves the golem idle at its prompt. The
+orchestrator's sweep detects that and relaunches it (`/clear`, then
+`/workflow:next-issue N --level L`) via `golem-handoff-relaunch.sh` — see
+`orchestrate/monitor-protocol.md`. The `handoff_marker` is what that detector
+keys on: without it, a large golem parked at a human gate would look identical
+and be cleared. **Never omit the marker on a handoff.**
+
+**Resuming without an orchestrator.** A solo `/workflow:golem` run has no sweep
+to relaunch it, so the operator does: resume with `/workflow:golem N` from the
+main checkout (its collision guard re-enters the worktree, #1059), or
+`/workflow:next-issue N` if still inside the worktree. Either way the fresh
+session starts at the ~104k floor (#1056) instead of at 400k, and the
+checkpoint's `next_action` is what stops it re-deriving the plan.
 
 ## Interactive sessions are advised, never cycled
 
