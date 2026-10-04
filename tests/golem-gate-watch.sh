@@ -57,7 +57,8 @@ source_fragments "$SCRIPT_DIR/gate-watch" \
     20-liveness.sh \
     30-helpers-and-modes.sh \
     40-stream-dedup.sh \
-    50-prompt-line.sh
+    50-prompt-line.sh \
+    60-pane-registry.sh
 
 # --- Run all tests ----------------------------------------------------------
 
@@ -156,5 +157,16 @@ run_fragment_test test_panes_stream_suggestion_flicker_dedup "panes stream: a su
 run_fragment_test test_panes_snapshot_input_not_annotated "panes_snapshot: real queued input is not annotated as a suggestion (#977 cycle-2)"
 
 run_fragment_test test_pane_prompt_line_class_glyph_in_text "pane_prompt_line_class: a glyph INSIDE the buffer text does not hide the dim run (#977 cycle-3)"
+
+run_fragment_test test_pane_registry_live_entry_suppresses_idle "pane registry (#1097): a live registered job suppresses idle on an unmatched footer"
+run_fragment_test test_pane_registry_absent_reports_idle "pane registry (#1097): no registry, the unmatched footer is still idle (control)"
+run_fragment_test test_pane_registry_expired_or_completed_reports_idle "pane registry (#1097): expired or completed entries do not suppress idle"
+run_fragment_test test_pane_registry_unreadable_is_todays_output "pane registry (#1097): unreadable registry yields byte-identical output (fails open)"
+run_fragment_test test_pane_registry_never_mutes_a_gate "pane registry (#1097): a live entry never mutes a real gate"
+run_fragment_test test_pane_registry_stream_panes "pane registry (#1097): --stream-panes never pushes idle with live work; control does"
+run_fragment_test test_pane_registry_liveness_consistent "pane registry (#1097): liveness pane-idle verdict yields to live registered work"
+run_fragment_test test_pane_registry_mutation_removes_guard "pane registry (#1097): mutant without the guard reports idle (AC1 not vacuous)"
+run_fragment_test test_pane_registry_bounded_read_fails_open "pane registry (#1097): a hung registry read is bounded and fails open"
+run_fragment_test test_pane_registry_garbage_answer_fails_open "pane registry (#1097): a non-numeric or failing registry answer fails open"
 
 generate_report

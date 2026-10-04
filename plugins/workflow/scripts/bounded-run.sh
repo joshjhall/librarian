@@ -131,10 +131,14 @@ bounded_run() {
 
 # bounded_run_available — true when bounded_run can actually bound anything.
 #
-# It needs only `sleep`, `kill` and `mktemp`, all POSIX, so this is very nearly
-# always true. It exists so callers can FAIL LOUD rather than degrade silently on
-# the pathological host where it is not — the failure mode #543 is about.
+# It needs only `sleep`, `kill`, `mktemp` and `cat`, all POSIX, so this is very
+# nearly always true. It exists so callers can FAIL LOUD rather than degrade
+# silently on the pathological host where it is not — the failure mode #543 is
+# about. `cat` is on the list because it RELAYS the subject's output: without it
+# `out="$(bounded_run …)"` comes back EMPTY at rc 0 — a silent loss, not an
+# error (#1097 measured it under a stripped PATH).
 bounded_run_available() {
     command -v sleep >/dev/null 2>&1 &&
-        command -v mktemp >/dev/null 2>&1
+        command -v mktemp >/dev/null 2>&1 &&
+        command -v cat >/dev/null 2>&1
 }

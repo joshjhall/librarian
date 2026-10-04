@@ -159,6 +159,8 @@ TR="$(_bin tr)"
 SCRIPT_DIR="$(cd "$("$DIRNAME" "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=./config.sh
 . "$SCRIPT_DIR/config.sh"
+# shellcheck source=./bounded-run.sh
+. "$SCRIPT_DIR/bounded-run.sh"
 
 # The drive block at the bottom is wrapped in a main-guard so SOURCING this
 # script (the unit tests do, to call _fmt_age / pane_is_* / emit_transitions
@@ -856,6 +858,33 @@ pane_pending_own_work() {
     command printf '%s\n' "$footer" | "$GREP" -qE "$OWN_WORK_RE"
 }
 
+# pane_registry_has_work <n> — the STRUCTURED backstop behind OWN_WORK_RE (#1097).
+# Every footer redesign re-opened the false idle (#517/#890/#1089) because the
+# text list can only match chrome someone has already seen; a background `git
+# push` (`· 1 shell ·`) matched nothing, yet the golem had registered it. So the
+# pane idle reads also ask the #949 registry, via the same observer call the
+# transcript tier makes (`count --worktree`, which reaps dead-pid/aged-out
+# entries). Returns 0 only for a positive count. Every failure — no worktree, the
+# bound firing (124), no number — returns 1, so the caller keeps today's text-only
+# verdict: the detector fails OPEN, never into a silent mute. Bounded because it
+# runs once per idle-looking golem per poll.
+pane_registry_has_work() {
+    local root wt out
+    root="$(repo_root 2>/dev/null || true)"
+    wt="$root/$GOLEM_WORKTREE_DIR/issue-$1"
+    [ -n "$root" ] && [ -d "$wt" ] && [ -x "$SCRIPT_DIR/golem-work.sh" ] || return 1
+    if bounded_run_available; then
+        out="$(bounded_run "${GOLEM_PANE_REGISTRY_TIMEOUT:-3}" \
+            "$SCRIPT_DIR/golem-work.sh" count --worktree "$wt" 2>/dev/null)" || return 1
+    else
+        out="$("$SCRIPT_DIR/golem-work.sh" count --worktree "$wt" 2>/dev/null)" || return 1
+    fi
+    case "$out" in
+        '' | *[!0-9]* | 0) return 1 ;;
+    esac
+    return 0
+}
+
 # ---------------------------------------------------------------------------
 # Prompt-line classifier (issue #977)
 # ---------------------------------------------------------------------------
@@ -1201,7 +1230,9 @@ panes_snapshot() {
             # turn-end footer, so the more-specific death read must win (#446).
             command printf '%s\t%s: %s (check pane)\n' \
                 "$sess" "$DIED_MSG_PREFIX" "$(pane_api_error_class "$pane")"
-        elif pane_is_turn_end "$pane"; then
+        elif pane_is_turn_end "$pane" && ! pane_registry_has_work "${sess#golem-}"; then
+            # #1097: registered background work suppresses the idle line whatever
+            # the footer shows, exactly as pane_pending_own_work does.
             # #977: annotate when the prompt is showing a suggestion, so the
             # operator is not left reading it as something someone queued.
             command printf '%s\t%s%s\n' "$sess" "$TURN_END_MSG" \
@@ -1479,6 +1510,11 @@ liveness_snapshot() {
             pane="$(tmux capture-pane -p -t "golem-$n" 2>/dev/null || true)"
             if [ -n "$pane" ]; then
                 pclass="$(pane_liveness_class "$pane")"
+                # #1097: open registered work is not idle — fall through to the
+                # transcript tier, which renders it as `background`.
+                if [ "$pclass" = idle ] && pane_registry_has_work "$n"; then
+                    pclass=""
+                fi
                 case "$pclass" in
                     working)
                         command printf '%s\t%s\n' "golem-$n" "alive, working (esc-to-interrupt active)"

@@ -155,6 +155,36 @@ test_stderr_is_relayed() {
     assert_contains "$out" "out=oops" "the subject's stderr reaches a 2>&1 caller"
 }
 
+# bounded_run relays the subject's output with `cat`. Without `cat` the capture
+# comes back EMPTY at rc 0 — indistinguishable from a subject that printed
+# nothing — so bounded_run_available must report false there, letting a caller
+# take its unbounded-but-correct path instead (#1097). Both halves are asserted:
+# the availability verdict, AND that the stripped PATH really does lose the
+# output (otherwise the first assertion guards a hazard that does not exist).
+test_available_requires_the_relay() {
+    local d out
+    d="$(command mktemp -d)" || return 1
+    command mkdir -p "$d/no-cat" "$d/with-cat"
+    for b in bash sleep mktemp; do
+        command ln -s "$(command -v "$b")" "$d/no-cat/$b"
+        command ln -s "$(command -v "$b")" "$d/with-cat/$b"
+    done
+    command ln -s "$(command -v cat)" "$d/with-cat/cat"
+    out="$(/usr/bin/env -uBASH_ENV PATH="$d/no-cat" "$REAL_BASH" -c "
+        source '$BR'
+        bounded_run_available && echo avail=yes || echo avail=no
+        printf 'out=[%s]\n' \"\$(bounded_run 5 bash -c 'echo 1' 2>/dev/null)\"
+    " 2>/dev/null)"
+    assert_contains "$out" "avail=no" "no cat on PATH: bounded_run_available is false"
+    assert_contains "$out" "out=[]" "...and bounded_run really does lose the output there"
+    out="$(/usr/bin/env -uBASH_ENV PATH="$d/with-cat" "$REAL_BASH" -c "
+        source '$BR'
+        bounded_run_available && echo avail=yes || echo avail=no
+    " 2>/dev/null)"
+    assert_contains "$out" "avail=yes" "with cat on PATH: bounded_run_available is true"
+    command rm -rf "$d"
+}
+
 run_test test_capture_returns_when_a_grandchild_survives \
     "the capture returns when a grandchild outlives the bound (#961)"
 run_test test_no_long_lived_orphan_holds_the_pipe \
@@ -165,5 +195,7 @@ run_test test_exit_status_is_the_subjects \
     "the subject's own exit status is returned"
 run_test test_stderr_is_relayed \
     "the subject's stderr is relayed to a 2>&1 caller"
+run_test test_available_requires_the_relay \
+    "bounded_run_available is false when cat (the output relay) is missing (#1097)"
 
 generate_report
