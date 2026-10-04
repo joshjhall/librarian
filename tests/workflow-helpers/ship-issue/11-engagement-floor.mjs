@@ -268,6 +268,10 @@ export function run() {
       /log\(\s*unengagedDimensions\.includes\(name\)\s*\?\s*`dimension "\$\{name\}" returned without reviewing \(unengaged\)/.test(orch),
       "wiring: an unengaged dimension is logged as unengaged, not as failed",
     );
+    ok(
+      /returned without reviewing \(unengaged\) — cycle now partial`\s*:\s*`dimension "\$\{name\}" did not complete \(failed or budget-skipped\)/.test(orch),
+      "wiring: a failed or budget-skipped dimension takes the ternary's other arm",
+    );
 
     // The opus re-dispatch: matched on the agent() options object itself, so a
     // `model: 'opus'` in a nearby comment cannot satisfy it.
