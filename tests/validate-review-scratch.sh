@@ -10,6 +10,7 @@
 #   AC1 different issues never share  -> test_solo_runs_on_different_issues_are_isolated
 #   AC2 cycle 1 never sees stale files -> test_init_removes_an_earlier_runs_files
 #   AC3 one derivation at every site   -> test_every_recipe_site_uses_the_helper
+#       (+ #1107: each loop's init is cycle-1-only and paired with path)
 #
 # Every run uses a sandboxed HOME; the real cache is never touched.
 #
@@ -144,6 +145,26 @@ NL='
 '
 CALL='<skill-base-dir>/../../scripts/review-scratch.sh'
 
+# init_path_shape <file> <unit> — inside ```bash fences, count `init` recipe
+# lines, how many carry the `# <unit> 1 only` marker, and how many are followed
+# by a `path` recipe line BEFORE their fence closes. Prints
+# `init=N marked=N paired=N`. Column-1 anchoring, as with NL above, keeps a
+# commented-out call from counting.
+init_path_shape() {
+    command awk -v call="$CALL" -v unit="$2" '
+        /^```bash/ { f = 1; seen = 0; next }
+        /^```/     { f = 0; seen = 0; next }
+        !f { next }
+        index($0, call " init --issue {N}") == 1 {
+            n++; seen = 1
+            if (index($0, "# " unit " 1 only")) marked++
+            next
+        }
+        seen && index($0, call " path --issue {N}") == 1 { paired++; seen = 0 }
+        END { printf "init=%d marked=%d paired=%d\n", n, marked, paired }
+    ' "$1"
+}
+
 # AC3: the three recipe sites that used to spell the derivation inline must all
 # call the helper from a fenced recipe, worktree-safely, and none may keep the
 # old shared fallback.
@@ -161,11 +182,16 @@ test_every_recipe_site_uses_the_helper() {
             _fail "$f captures review-scratch.sh in a worktree-unsafe spelling"
         fi
     done
-    # Both review LOOPS must show the cycle-1 wipe AND the later-cycle keep: a
-    # recipe showing only `init` deletes the --prev-result history on cycle 2.
-    for f in adversarial-review-step.md ci-review-protocol.md; do
-        assert_contains "$NL$(fenced_bash "$SHIP/$f")" "$NL$CALL init --issue {N}" \
-            "$f starts its loop with a fenced init recipe"
+    # Both review LOOPS must show the cycle-1 wipe AND the later-cycle keep as
+    # alternatives (#1107): exactly one `init`, marked first-iteration-only, with
+    # `path` beside it in the SAME fence. An unmarked init, or a path moved to
+    # another fence, reads as "always run init" — and on cycle 2 init deletes
+    # the cycle JSON review-convergence.sh reads as --prev-result.
+    local pair unit
+    for pair in adversarial-review-step.md:cycle ci-review-protocol.md:attempt; do
+        f="${pair%%:*}" unit="${pair#*:}"
+        assert_equals "init=1 marked=1 paired=1" "$(init_path_shape "$SHIP/$f" "$unit")" \
+            "$f: one fenced init, '# $unit 1 only', path in the same fence"
     done
 }
 
