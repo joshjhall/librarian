@@ -50,6 +50,11 @@
 #            reason    a short slug naming why
 #            findings / novel / duplicate / refuted / recursive   counts
 #            unengaged  dimensions reported unengaged (#1111; 0 if absent)
+#            next_scope full | narrow — scope advice for the next cycle (#656)
+#            charged    true | false — does this cycle count toward
+#                       --max-cycles? The caller advances --cycle iff true (#1120)
+#            warn       final-full-review | empty — the next cycle is the last
+#                       one AND must be full scope (#1120)
 #
 # Ordered first-match rule list — the first rule that matches decides, and the
 # last has no condition, so the policy is total and non-overlapping. (Same
@@ -58,11 +63,12 @@
 # can.)
 #
 #   C0-attempt-cap  attempt >= max-attempts                    -> stop
-#   C0b-no-signal   the cycle produced NO review signal        -> continue
+#   C0b-no-signal   the cycle produced NO review signal        -> continue (uncharged)
 #   C1-cap        cycle >= max-cycles                          -> stop
 #   C2-partial    the cycle was partial                        -> continue
 #   C2b-unengaged a dimension returned without reviewing       -> continue
-#   C3-narrow-zero  zero findings on a NARROWER surface        -> continue
+#   C3-narrow-zero  zero findings on a NARROWER surface        -> continue (uncharged
+#                                                                 iff --attempt given)
 #   C4-zero       zero findings on a comparable/full surface   -> stop
 #   C5-refuted-only  every finding was refuted on verification -> stop
 #   C6-duplicate  every finding duplicates an earlier cycle's  -> stop
@@ -142,6 +148,29 @@
 #   visibly at C1, never loop uncounted. A missing or non-array field reads as 0,
 #   so a pre-#1111 result keeps its meaning.
 #
+# charged / warn — budget the terminator (#1120).
+#   Observed on #1057 (PR #1112): cycle 4 was a clean narrow cycle (C3), cycle 5
+#   went full and found one blocking defect, and C1 stopped the loop with that
+#   fix unreviewed. Two defects in how the cap was spent:
+#
+#   1. C3 is STRUCTURALLY unable to end the loop — it can only ever lead to
+#      another cycle — yet it consumed a capped slot, so a clean narrow cycle
+#      moved the loop CLOSER to an unreviewed ending. It is now uncharged, like
+#      C0b: `charged=false`, and the caller does not advance --cycle. C0 still
+#      bounds the loop — but only if the caller really counts attempts. When
+#      --attempt is ABSENT it defaults to --cycle, so an uncharged cycle would
+#      freeze both counters and C0 could never fire. So C3 is uncharged ONLY when
+#      --attempt was passed explicitly; an unmigrated caller keeps today's
+#      charging. C0b needs no such guard: it was already uncharged by the caller's
+#      own `no_review_signal` read before this field existed.
+#   2. Nothing warned that `next_scope=full` had arrived with one slot left —
+#      the point where that full review becomes the final word and any blocking
+#      result it returns ships unreviewed. `warn=final-full-review` fires when
+#      the verdict is continue, the next scope is full, and the NEXT cycle's
+#      number equals --max-cycles (cycle+1 if this one was charged, cycle if
+#      not), so the caller decides to raise the cap or park BEFORE the fix, not
+#      after it. Advisory like next_scope: it changes no verdict and no rule.
+#
 # C2 sits directly under it and is the safety rule: a budget-exhausted or
 # wall-timed-out cycle can never be a convergence stop. It is partial, not
 # converged — its zero/duplicate/refuted counts describe the dimensions that ran,
@@ -177,8 +206,9 @@ USAGE="Usage: review-convergence check --cycle N --max-cycles N --result FILE --
                         REVIEW_MAX_CYCLES)
   --result FILE         this cycle's harness result JSON
   --delta-lines N       lines of diff this cycle reviewed (non-negative integer)
-  --attempt N           1-based number of loop ATTEMPTS including crashed ones
-                        (positive integer; defaults to --cycle)
+  --attempt N           1-based number of loop ATTEMPTS including uncharged ones
+                        (positive integer; defaults to --cycle). Passing it is
+                        what lets C3-narrow-zero go uncharged (#1120)
   --max-attempts N      absolute ceiling on attempts (positive integer;
                         REVIEW_MAX_ATTEMPTS, default 2 x --max-cycles)
   --prev-result FILE    an earlier cycle's result JSON; repeatable
@@ -570,6 +600,40 @@ next_scope_of() {
     fi
 }
 
+# charged_of — does this cycle count toward --max-cycles? (#1120, header). Keyed
+# on the DECIDING rule, so a C3 concealed by C1 (`capped_over=C3-narrow-zero`)
+# stays charged — the cap already fired, and C0->C1 ordering is untouched.
+charged_of() {
+    case "$rule" in
+        C0b-no-signal) command printf 'false' ;;
+        C3-narrow-zero)
+            if [ "$attempt_explicit" = "true" ]; then
+                command printf 'false'
+            else
+                command printf 'true'
+            fi
+            ;;
+        *) command printf 'true' ;;
+    esac
+}
+
+# warn_of — `final-full-review` when the next cycle is the last one and must be
+# full scope (#1120, header), else empty. The next cycle's number is cycle+1
+# only if THIS cycle was charged: after an uncharged cycle the retry re-uses the
+# same number, so a C0b at cycle == max warns, and a C3 at max-1 does not.
+warn_of() {
+    if [ "$verdict" != "continue" ] || [ "$next_scope" != "full" ]; then
+        return 0
+    fi
+    _next_cycle="$cycle"
+    if [ "$charged" = "true" ]; then
+        _next_cycle=$((cycle + 1))
+    fi
+    if [ "$_next_cycle" -eq "$max_cycles" ]; then
+        command printf 'final-full-review'
+    fi
+}
+
 cmd_check() {
     cycle="$(opt --cycle -- "$@" || true)"
     max_cycles="$(opt --max-cycles -- "$@" || true)"
@@ -579,6 +643,12 @@ cmd_check() {
     delta_files="$(opt --delta-files -- "$@" || true)"
     partial="$(opt --partial -- "$@" || true)"
     attempt="$(opt --attempt -- "$@" || true)"
+    # Recorded BEFORE the default below fills it in: C3 may go uncharged only
+    # when the caller genuinely counts attempts (#1120, header).
+    attempt_explicit="false"
+    if [ -n "$attempt" ]; then
+        attempt_explicit="true"
+    fi
     max_attempts="$(opt --max-attempts -- "$@" || true)"
 
     if [ -z "$partial" ]; then
@@ -792,7 +862,11 @@ EOF
     command printf 'refuted=%s\n' "$refuted"
     command printf 'recursive=%s\n' "$recursive"
     command printf 'unengaged=%s\n' "$unengaged"
-    command printf 'next_scope=%s\n' "$(next_scope_of)"
+    next_scope="$(next_scope_of)"
+    charged="$(charged_of)"
+    command printf 'next_scope=%s\n' "$next_scope"
+    command printf 'charged=%s\n' "$charged"
+    command printf 'warn=%s\n' "$(warn_of)"
 }
 
 if [ "$#" -eq 0 ]; then

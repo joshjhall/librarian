@@ -362,14 +362,23 @@ result printed; full contract in `review-engagement.md`:
 ```bash
 <skill-base-dir>/../../scripts/review-convergence.sh check \
   --cycle "$cycle" --max-cycles "$cap" \
+  --attempt "$attempt" --max-attempts "$attempt_cap" \
   --result "$cycle_result_json" \
   --delta-lines "$delta_lines" \
   [--prev-result "$prior_cycle_json" ...] \
   [--prev-delta-lines "$prev_delta_lines"] \
   [--delta-files "$delta_files_list"] \
   --partial "<true if budget_exhausted or wall-timed-out, else false>"
-# -> verdict=continue|stop  rule=C1-cap|…|C8-novel  reason=<slug>
+# -> verdict=continue|stop  rule=C0-attempt-cap|…|C8-novel  reason=<slug>
+#    next_scope=full|narrow  charged=true|false  warn=final-full-review|<empty>
 ```
+
+Count the way the PR-side loop does (#616, #1120): `attempt` (start 1,
+`attempt_cap` = `REVIEW_MAX_ATTEMPTS`, default `2 × cap`) advances every trip,
+`cycle` only on `charged=true`. A clean narrow cycle (`C3`) is then free, and
+`C0` still bounds the loop. On `warn=final-full-review` the next cycle is the
+last and full, so decide **before** running it — raise `REVIEW_MAX_CYCLES` or
+plan to park; the handling is `ci-review-protocol.md` step (f).
 
 **`--delta-lines` is the surface this cycle REVIEWED**, captured when you
 compute the review scope — the line count of the diff passed to the harness
@@ -388,8 +397,9 @@ terminate, because a zero over a fraction of the previous surface says nothing
 about the rest (#568). Extra cycles never weaken the pre-PR gate.
 
 **Graceful degradation**: if the helper is missing or exits non-zero, fall
-back to the plain `cycle` vs `REVIEW_MAX_CYCLES` comparison with a one-line
-note — the same posture as a missing `workflow-wall-timeout.sh`. The loop
+back to the plain `cycle` vs `REVIEW_MAX_CYCLES` comparison (plus `attempt`
+vs `attempt_cap`) with a one-line note, advancing `cycle` every trip — the same
+posture as a missing `workflow-wall-timeout.sh`. The loop
 stays bounded either way; it just loses the early-stop and the narrow-zero
 protection.
 
