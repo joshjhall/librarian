@@ -32,6 +32,7 @@
 #
 # Config (env-overridable; defaults in config.sh):
 #   GOLEM_WORKTREE_DIR (.worktrees)   GOLEM_BRANCH_PREFIX (feature/issue-)
+#   GOLEM_UV_CACHE_DIR (/cache/venv) — the per-issue venv removed on teardown
 #
 # NOTE: the containers recipe also refreshed a bare host's on-disk runtime
 # copies (.claude/hooks, justfile, bin) from origin/main after teardown — that
@@ -1285,6 +1286,68 @@ if [ -n "$br" ] && [ -n "$(command git branch --list "$br")" ]; then
         command git branch -D "$br"
         command echo "  deleted branch $br"
         removed=1
+    fi
+fi
+
+# Remove the per-worktree uv virtualenv worktree-new.sh seeded OFF the repo
+# mount (#1091). It lives under GOLEM_UV_CACHE_DIR, not in the worktree, so
+# removing the worktree does not remove it and nothing else ever would. Placed
+# AFTER every refusal above: a dirty or unverifiable worktree exits before this
+# point, so its venv survives with it.
+#
+# Issue mode only — worktree-new.sh keys the venv by issue number and never
+# creates one for a name-mode worktree, so a name has no venv to find. The path
+# is <cache>/<golem_repo_key>/issue-N, the SAME derivation worktree-new.sh used:
+# keyed by repo as well as issue, because the cache is shared across repos and
+# another repo's issue N is somebody else's live venv. It is built from a
+# validated number (^[0-9]+$ above) under an ABSOLUTE, non-root cache dir (a
+# relative one would resolve inside this checkout).
+#
+# SYMLINKS are refused at EVERY level below the cache root, not only the leaf
+# (#1091 review c2): /cache is shared, the key is predictable, and a planted
+# `<cache>/<key> -> /elsewhere` would aim `rm -rf <cache>/<key>/issue-N` at
+# /elsewhere/issue-N. So the venv's parent, canonicalized, must equal the
+# canonical cache root plus the key, and the leaf itself must not be a link. A
+# root that canonicalizes to `/` (e.g. `//`) is refused too. Where `readlink -f`
+# cannot run, the delete is SKIPPED: an unverifiable path is not deleted. A
+# refusal of an EXISTING venv says so on stderr — a silent skip would leak the
+# venv while reading exactly like "there was nothing to remove".
+# Best-effort: a failed removal warns and leaves `removed` alone, for the same
+# reason the tmux arm below does — teardown is past its destructive git steps,
+# so failing here would strand a removed worktree behind a non-zero exit.
+case "$GOLEM_UV_CACHE_DIR" in
+    /?*) uv_cache_ok=1 ;;
+    *) uv_cache_ok=0 ;;
+esac
+uv_key=""
+if [ "$wt_mode" = "issue" ] && [ "$uv_cache_ok" -eq 1 ]; then
+    uv_key="$(golem_repo_key "$root")" || uv_key=""
+    # No key means no path to check — so say so when a venv COULD exist (the
+    # cache root is present), rather than skip in silence (#1091 pr-review c4).
+    if [ -z "$uv_key" ] && [ -d "$GOLEM_UV_CACHE_DIR" ]; then
+        command echo "worktree-rm: WARNING: could not derive the repo key for $root —" \
+            "any uv venv for issue $N under $GOLEM_UV_CACHE_DIR was left in place" >&2
+    fi
+fi
+if [ -n "$uv_key" ]; then
+    uv_venv="${GOLEM_UV_CACHE_DIR%/}/$uv_key/issue-$N"
+    uv_root_real="$(command readlink -f "$GOLEM_UV_CACHE_DIR" 2>/dev/null)" ||
+        uv_root_real=""
+    uv_parent_real="$(command readlink -f "${uv_venv%/*}" 2>/dev/null)" ||
+        uv_parent_real=""
+    if [ -L "$uv_venv" ] || { [ -e "$uv_venv" ] && {
+        [ -z "$uv_root_real" ] || [ "$uv_root_real" = "/" ] ||
+            [ "$uv_parent_real" != "$uv_root_real/$uv_key" ]
+    }; }; then
+        command echo "worktree-rm: WARNING: refusing to remove uv venv $uv_venv —" \
+            "it is, or sits under, a symlink (or its path could not be verified); inspect it by hand" >&2
+    elif [ -d "$uv_venv" ]; then
+        if command rm -rf "$uv_venv" 2>/dev/null && [ ! -e "$uv_venv" ]; then
+            command echo "  removed uv venv $uv_venv"
+            removed=1
+        else
+            command echo "worktree-rm: WARNING: could not remove uv venv $uv_venv — delete it by hand" >&2
+        fi
     fi
 fi
 

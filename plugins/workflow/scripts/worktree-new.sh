@@ -11,7 +11,7 @@
 # Config (env-overridable; defaults in config.sh):
 #   GOLEM_WORKTREE_DIR  (.worktrees)  GOLEM_BRANCH_PREFIX (feature/issue-)
 #   GOLEM_BASE_REF      (origin/main) GOLEM_WORKTREE_LOCAL_FILES
-#   GOLEM_CARGO_CACHE_DIR (/cache/target)
+#   GOLEM_CARGO_CACHE_DIR (/cache/target) GOLEM_UV_CACHE_DIR (/cache/venv)
 #
 # Usage: worktree-new.sh <issue-number>
 set -euo pipefail
@@ -357,18 +357,33 @@ cargo_cache_fstype() {
     command echo "$best_fs"
 }
 
-cargo_seed_target="$GOLEM_CARGO_CACHE_DIR/issue-$N"
-# The CONFIGURED directory must itself already exist. Deliberately NOT an
-# ancestor walk: climbing to the deepest existing parent makes an absent cache
-# location probe as PRESENT (every path has an existing ancestor, ultimately
-# `/`), and the mkdir below then CREATES the location that was supposed to be
-# missing — so "absent leaves behaviour unchanged" (AC4) silently becomes
-# "absent gets provisioned anywhere the operator happened to point". Requiring
-# the dir up front also makes the override a real off switch: pointing
-# GOLEM_CARGO_CACHE_DIR at a nonexistent path disables the seed, which is what
-# the test sandboxes rely on.
-if [ -d "$GOLEM_CARGO_CACHE_DIR" ] && [ -w "$GOLEM_CARGO_CACHE_DIR" ] &&
-    command -v jq >/dev/null 2>&1; then
+# seed_cache_env <cache-root> <ENV_KEY> [subdir] — the whole seed, shared by
+# every key this script relocates (#944 cargo, #1091 uv). One body, not one per
+# key: the probe, the ignore check and the atomic write are the parts reviewers
+# kept finding bugs in, and a second copy would have to re-learn each one. The
+# target is <cache-root>/[<subdir>/]issue-N; the probe always classifies the
+# cache ROOT. Best-effort; always returns 0, and is SILENT on every refusal.
+seed_cache_env() {
+    local cache_root="$1" key="$2" sub="${3:-}"
+    local target probe_dir fs settings tmp
+    target="$cache_root/${sub:+$sub/}issue-$N"
+    # ABSOLUTE only. A relative root resolves against this script's cwd — the
+    # repo checkout, i.e. the very mount the seed exists to stay off.
+    case "$cache_root" in
+        /?*) ;;
+        *) return 0 ;;
+    esac
+    # The CONFIGURED directory must itself already exist. Deliberately NOT an
+    # ancestor walk: climbing to the deepest existing parent makes an absent
+    # cache location probe as PRESENT (every path has an existing ancestor,
+    # ultimately `/`), and the mkdir below then CREATES the location that was
+    # supposed to be missing — so "absent leaves behaviour unchanged" (AC4)
+    # silently becomes "absent gets provisioned anywhere the operator happened
+    # to point". Requiring the dir up front also makes the override a real off
+    # switch: pointing the cache knob at a nonexistent path disables the seed,
+    # which is what the test sandboxes rely on.
+    [ -d "$cache_root" ] && [ -w "$cache_root" ] || return 0
+    command -v jq >/dev/null 2>&1 || return 0
     # CANONICALIZE before probing. /proc/mounts lists RESOLVED mountpoints, so a
     # literal-path prefix match classifies the mount that happens to contain the
     # path STRING rather than the one that will actually hold the writes. With a
@@ -383,20 +398,17 @@ if [ -d "$GOLEM_CARGO_CACHE_DIR" ] && [ -w "$GOLEM_CARGO_CACHE_DIR" ] &&
     # rather than erroring. `readlink -f` is not among the GNU-only flags this
     # repo bans; BSD readlink has supported -f since macOS 12.3, and the
     # fallback covers anything older.
-    cargo_probe_dir="$(command readlink -f "$GOLEM_CARGO_CACHE_DIR" 2>/dev/null)" ||
-        cargo_probe_dir=""
-    [ -n "$cargo_probe_dir" ] || cargo_probe_dir="$GOLEM_CARGO_CACHE_DIR"
+    probe_dir="$(command readlink -f "$cache_root" 2>/dev/null)" || probe_dir=""
+    [ -n "$probe_dir" ] || probe_dir="$cache_root"
     # Refuse the filesystems that produce the wedge. virtiofs is the measured
     # culprit; fuse.* covers the bindfs overlay layered on it, and 9p is the
     # same class of host-passthrough mount on other Docker backends. An
     # UNKNOWN type (no /proc/mounts — e.g. a bare macOS host) also refuses:
     # skipping costs only the optimisation, while seeding onto a wedging mount
     # would relocate the very failure this prevents.
-    cargo_fs="$(cargo_cache_fstype "$cargo_probe_dir")"
-    cargo_fs_ok=""
-    case "$cargo_fs" in
-        "" | virtiofs | fuse | fuse.* | 9p) ;;
-        *) cargo_fs_ok="yes" ;;
+    fs="$(cargo_cache_fstype "$probe_dir")"
+    case "$fs" in
+        "" | virtiofs | fuse | fuse.* | 9p) return 0 ;;
     esac
     # The write is only safe while the target is IGNORED by the repo. That is
     # true of librarian (.claude/settings.local.json is in the TRACKED
@@ -407,30 +419,82 @@ if [ -d "$GOLEM_CARGO_CACHE_DIR" ] && [ -w "$GOLEM_CARGO_CACHE_DIR" ] &&
     # path is not ignored, skip silently and leave the worktree pristine. Found
     # the hard way — the first implementation skipped this check and turned 18
     # unrelated worktree-rm tests red with `?? .claude/`.
-    cargo_ignored=""
-    if [ -n "$cargo_fs_ok" ] && command git -C "$wt" check-ignore -q \
-        ".claude/settings.local.json" 2>/dev/null; then
-        cargo_ignored="yes"
+    command git -C "$wt" check-ignore -q ".claude/settings.local.json" \
+        2>/dev/null || return 0
+    # The target must sit where its path SAYS (#1091 review c5), and that is
+    # verified BEFORE anything is created. The cache root is a shared mount and
+    # a subdir key is predictable, so a planted `<cache>/<key> -> /elsewhere`
+    # would make `mkdir -p` create — and the seeded env send uv's whole venv to
+    # — /elsewhere/issue-N. So: create only the subdir (a plain mkdir of one
+    # component), refuse a subdir or target that is a link, and require the canonical parent to equal the
+    # canonical cache root plus the subdir. Same rule worktree-rm.sh applies
+    # before its rm -rf, so the two sides agree on which paths are ours. A
+    # target this cannot verify is not seeded.
+    local root_real parent_real parent="${target%/*}"
+    if [ -n "$sub" ] && [ ! -e "$parent" ] && [ ! -L "$parent" ]; then
+        command mkdir "$parent" 2>/dev/null || return 0
     fi
-    if [ -n "$cargo_ignored" ] && command mkdir -p "$cargo_seed_target" 2>/dev/null; then
-        cargo_settings="$wt/.claude/settings.local.json"
-        command mkdir -p "$wt/.claude"
-        [ -f "$cargo_settings" ] || command printf '{}\n' >"$cargo_settings"
-        # Temp file ADJACENT to the target, committed with an atomic `mv` —
-        # never a `cat >` truncate, which on an interrupted write would leave
-        # the worktree's settings corrupt and its permission gates unloadable.
-        # Same discipline seed-worktree-trust.sh documents for ~/.claude.json.
-        cargo_tmp="$cargo_settings.944.$$"
-        if command jq --arg t "$cargo_seed_target" \
-            '.env = ((.env // {}) + {CARGO_TARGET_DIR: $t})' \
-            "$cargo_settings" >"$cargo_tmp" 2>/dev/null &&
-            command mv "$cargo_tmp" "$cargo_settings"; then
-            command echo "  seeded CARGO_TARGET_DIR=$cargo_seed_target ($cargo_fs)"
-        else
-            # Leave the original settings untouched on any failure: a malformed
-            # existing file, a jq error, or a failed rename all land here.
-            command rm -f "$cargo_tmp"
-        fi
+    # The link test covers only what lies BELOW the configured root: the root
+    # itself may legitimately be a symlink (an operator pointing /cache/target
+    # at a bigger disk — #944's own symlinked-cache test pins that), and the
+    # canonical comparison below already accounts for it.
+    if [ -n "$sub" ] && [ -L "$parent" ]; then return 0; fi
+    [ ! -L "$target" ] || return 0
+    root_real="$(command readlink -f "$cache_root" 2>/dev/null)" || root_real=""
+    parent_real="$(command readlink -f "$parent" 2>/dev/null)" || parent_real=""
+    [ -n "$root_real" ] && [ "$parent_real" = "$root_real${sub:+/$sub}" ] ||
+        return 0
+    command mkdir -p "$target" 2>/dev/null || return 0
+    settings="$wt/.claude/settings.local.json"
+    command mkdir -p "$wt/.claude"
+    [ -f "$settings" ] || command printf '{}\n' >"$settings"
+    # Temp file ADJACENT to the target, committed with an atomic `mv` — never a
+    # `cat >` truncate, which on an interrupted write would leave the
+    # worktree's settings corrupt and its permission gates unloadable. Same
+    # discipline seed-worktree-trust.sh documents for ~/.claude.json. A second
+    # key merges into the `env` the first one wrote (`+` keeps both).
+    tmp="$settings.seed.$$"
+    if command jq --arg k "$key" --arg t "$target" \
+        '.env = ((.env // {}) + {($k): $t})' \
+        "$settings" >"$tmp" 2>/dev/null &&
+        command mv "$tmp" "$settings"; then
+        command echo "  seeded $key=$target ($fs)"
+    else
+        # Leave the original settings untouched on any failure: a malformed
+        # existing file, a jq error, or a failed rename all land here.
+        command rm -f "$tmp"
+    fi
+    return 0
+}
+
+seed_cache_env "$GOLEM_CARGO_CACHE_DIR" CARGO_TARGET_DIR
+
+# Seed a per-worktree Python virtualenv OFF the repo mount (#1091) — the same
+# prevention, for a second wedge shape. A uv `.venv` holds `lib/` plus the
+# symlink `lib64 -> lib`; on the case-insensitive virtiofs+bindfs stack,
+# unlinking both leaves a phantom `.venv/Lib` that readdir lists and stat
+# resolves but rmdir/rename/unlink answer ENOENT, so the worktree cannot be
+# removed (containers#1004; #1088 is the recovery half). uv honours
+# UV_PROJECT_ENVIRONMENT for `uv sync`/`uv run`, so pointing it off the mount
+# means no `.venv` is ever created there. Every #944 paragraph above applies
+# unchanged, including the SCOPE limit: a human typing `uv sync` in their own
+# terminal still gets ./.venv.
+#
+# Gated on the repo being a uv/pyproject project — a repo with neither file
+# gets no key and no output line, so non-Python worktrees are byte-identical.
+# worktree-rm.sh removes the venv on teardown; a venv, unlike a cargo target, is
+# not worth keeping across an issue's lifetime — which is also why it is
+# namespaced by REPO (golem_repo_key): a deleted path must never be one another
+# repo's issue of the same number is using.
+#
+# The key is computed FIRST and a failed or empty one skips the seed (#1091
+# pr-review c2): passed inline, a failure substitutes "" and seed_cache_env
+# treats that as "no subdir" — seeding the un-namespaced <cache>/issue-N that
+# teardown never removes and that another repo's issue N would share.
+if [ -f "$wt/pyproject.toml" ] || [ -f "$wt/uv.lock" ]; then
+    uv_key="$(golem_repo_key "$root")" || uv_key=""
+    if [ -n "$uv_key" ]; then
+        seed_cache_env "$GOLEM_UV_CACHE_DIR" UV_PROJECT_ENVIRONMENT "$uv_key"
     fi
 fi
 

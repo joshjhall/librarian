@@ -99,6 +99,7 @@ source_fragments "$SCRIPT_DIR/golem-scripts" \
     10-launch.sh \
     20-worktree-new.sh \
     25-worktree-new-cargo.sh \
+    26-worktree-uv-venv.sh \
     30-config-repo-root.sh \
     40-worktree-rm.sh \
     42-worktree-rm-wedged.sh \
@@ -222,6 +223,31 @@ run_fragment_test test_worktree_new_cargo_seed_leaves_worktree_clean "worktree-n
 run_fragment_test test_worktree_new_cargo_malformed_settings_leaves_original_intact "worktree-new: a malformed settings file leaves the original intact and cleans the temp (#944 review c1)"
 run_fragment_test test_worktree_new_cargo_unignored_settings_is_noop "worktree-new: refuses to seed where the settings path is not gitignored — worktree stays clean (#944)"
 run_fragment_test test_worktree_new_cargo_no_jq_is_noop "worktree-new: jq absent — the cargo seed skips cleanly (#944)"
+run_fragment_test test_worktree_new_cargo_relative_cache_root_is_noop "worktree-new: a RELATIVE cargo cache root is refused by the shared seed (#1091)"
+run_fragment_test test_worktree_new_uv_seeds_project_environment "worktree-new: seeds a per-worktree UV_PROJECT_ENVIRONMENT off the repo mount (#1091)"
+run_fragment_test test_worktree_new_uv_venv_is_per_worktree "worktree-new: two worktrees get DISTINCT uv venvs (#1091)"
+run_fragment_test test_worktree_new_uv_lock_alone_triggers_seed "worktree-new: a uv.lock alone marks a uv project (#1091)"
+run_fragment_test test_worktree_new_uv_noop_without_uv_project "worktree-new: no pyproject.toml / uv.lock — no uv seed (#1091)"
+run_fragment_test test_worktree_new_uv_absent_cache_is_noop "worktree-new: an absent uv cache location leaves behaviour unchanged (#1091)"
+run_fragment_test test_worktree_new_uv_coexists_with_cargo_seed "worktree-new: uv and cargo seeds merge into ONE env object (#1091)"
+run_fragment_test test_worktree_rm_removes_uv_venv "worktree-rm: removes this issue's uv venv, sparing siblings and the cache root (#1091)"
+run_fragment_test test_worktree_rm_spares_another_repos_same_issue_venv "worktree-rm: the same issue number in ANOTHER repo keeps its uv venv (#1091 review c1)"
+run_fragment_test test_worktree_rm_refuses_symlinked_uv_venv "worktree-rm: a symlinked uv venv leaf is refused, its target untouched (#1091 review c1)"
+run_fragment_test test_worktree_rm_refuses_symlinked_uv_repo_key_dir "worktree-rm: a symlinked repo-key dir under the uv cache is not followed (#1091 review c2)"
+run_fragment_test test_worktree_rm_removes_uv_venv_under_symlinked_cache_root "worktree-rm: a symlinked cache ROOT still removes the venv — positive control (#1091 review c3)"
+run_fragment_test test_worktree_rm_refuses_slash_slash_uv_cache_root "worktree-rm: a '//' uv cache root removes nothing and exits 0 (#1091 review c3)"
+run_fragment_test test_worktree_rm_unverifiable_uv_venv_path_is_refused "worktree-rm: readlink -f unavailable — the venv is refused out loud, teardown exits 0 (#1091 review c4)"
+run_fragment_test test_worktree_new_uv_refuses_symlinked_repo_key_dir "worktree-new: a planted repo-key link under the uv cache is not seeded through (#1091 review c5)"
+run_fragment_test test_worktree_new_uv_refuses_symlinked_venv_leaf "worktree-new: a planted venv LEAF link is not seeded through (#1091 pr-review c1)"
+run_fragment_test test_worktree_new_uv_unignored_settings_is_noop "worktree-new: a uv repo not ignoring settings.local.json is not seeded (#1091 pr-review c1)"
+run_fragment_test test_worktree_new_uv_failed_repo_key_skips_seed "worktree-new: a failed repo key skips the uv seed — no un-namespaced venv (#1091 pr-review c2)"
+run_fragment_test test_worktree_rm_failed_repo_key_warns_and_keeps_venv "worktree-rm: a failed repo key warns, removes nothing, exits 0 (#1091 pr-review c4)"
+run_fragment_test test_golem_repo_key_separates_same_basename "config: golem_repo_key separates two repos sharing a basename (#1091 review c2)"
+run_fragment_test test_worktree_rm_failed_uv_venv_removal_warns_and_exits_0 "worktree-rm: a failed uv venv removal warns and still exits 0 (#1091 review c1)"
+run_fragment_test test_worktree_uv_relative_cache_root_is_refused "worktree-new/rm: a RELATIVE uv cache root is refused by both (#1091 review c1)"
+run_fragment_test test_worktree_rm_without_uv_venv_is_quiet "worktree-rm: no uv venv present — no venv line (#1091)"
+run_fragment_test test_worktree_rm_dirty_refusal_keeps_uv_venv "worktree-rm: a dirty refusal keeps the uv venv (#1091)"
+run_fragment_test test_worktree_rm_name_mode_leaves_uv_cache_alone "worktree-rm: name mode never touches the uv cache (#1091)"
 run_fragment_test test_config_repo_root_no_hardcoded_usr_bin "config.sh: repo_root has no hardcoded /usr/bin/* tool paths (#278)"
 run_fragment_test test_config_repo_root_honors_path "config.sh: repo_root resolves via PATH, not command git (#278)"
 run_fragment_test test_config_repo_root_dirname_root_edge "config.sh: repo_root returns '/' for a /.git common dir (#278)"

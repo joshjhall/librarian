@@ -74,6 +74,9 @@ test_suite "bash-guard.sh Rule B — main-session git into a worktree (#662, #66
 FIXTURE="$(command mktemp -d)"
 FIXTURE="$(cd "$FIXTURE" && command pwd -P)"
 trap 'command rm -rf "$FIXTURE"' EXIT
+# worktree-rm.sh removes <GOLEM_UV_CACHE_DIR>/issue-N on teardown (#1091); keep
+# the AC#4 teardown below from reaching the real default (/cache/venv).
+export GOLEM_UV_CACHE_DIR="$FIXTURE/no-uv-cache"
 
 git_clean() {
     /usr/bin/env "${GIT_SCRUB[@]/#/-u}" "$REAL_GIT" "$@"
