@@ -1546,6 +1546,12 @@ if command -v tmux >/dev/null 2>&1; then
     esac
 fi
 
+# Snapshot "something was torn down" BEFORE the repair below, which also sets
+# `removed=1`: a config repair on an otherwise no-op run must not fire the
+# consumer's post-remove hook, which would prune artifacts for a worktree this
+# run never touched (#1092 review).
+torn_down="$removed"
+
 # Repair a polluted main-repo core.worktree (#258). An interrupted
 # `git worktree remove --force` can leave the MAIN config with a stale
 # core.worktree pointing at a now-deleted path, which makes the whole checkout
@@ -1565,16 +1571,18 @@ if [ -n "$stale_wt" ] && [ ! -e "$stale_wt" ]; then
 fi
 
 # Run the consumer's post-remove hook (#1092; contract in the header). Gated on
-# `removed=1` exactly like the REAPED event below: every refusal has already
-# exited 1 above, so a worktree this script declined to remove can never trigger
-# a cleanup of the artifacts it still depends on. The repo-local fallback is
+# `torn_down` — `removed` as it stood before the core.worktree repair. Every
+# refusal has already exited 1 above, so a worktree this script declined to
+# remove can never trigger a cleanup of the artifacts it still depends on. The repo-local fallback is
 # resolved against `$root` (the MAIN checkout), never the removed worktree.
 #
 # Best-effort for the same reason as the tmux and uv arms: teardown is past its
 # destructive steps, so a failing hook must not strand a removed worktree behind
 # a non-zero exit. Bounded by bounded_run rather than GNU `timeout` (absent on
-# base macOS), which also closes the hook's stdin — no TTY is ever assumed.
-if [ "$removed" -eq 1 ]; then
+# base macOS), which also closes the hook's stdin — no TTY is ever assumed. A
+# hook that itself exits 124 reads as a timeout: bounded_run reports 124 for
+# both, the same contract as timeout(1).
+if [ "$torn_down" -eq 1 ]; then
     post_hook=""
     if [ -n "$GOLEM_POST_REMOVE_HOOK" ]; then
         post_hook="$GOLEM_POST_REMOVE_HOOK"

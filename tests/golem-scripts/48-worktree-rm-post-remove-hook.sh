@@ -231,9 +231,11 @@ test_worktree_rm_post_remove_hook_stdin_is_closed() {
     command chmod +x "$sb/hooks/post"
     run_in "$sb" "$WT_NEW" 82
 
-    RUN_RC=0
-    RUN_OUT="$(printf 'leaked\n' | _hook_rm "$sb" "$sb/hooks/post" 82 && command echo "rc=$RUN_RC")" || true
-    assert_contains "$RUN_OUT" "rc=0" "teardown exits 0"
+    # A here-string, not a pipe: a pipe would run _hook_rm in a subshell and
+    # lose RUN_RC, making the exit assertion vacuous (#1092 review).
+    _hook_rm "$sb" "$sb/hooks/post" 82 <<<"leaked"
+    assert_exit 0 "$RUN_RC" "teardown exits 0"
+    assert_true "[ ! -e '$sb/.worktrees/issue-82' ]" "the worktree was removed"
     assert_equals "eof" "$(command cat "$log" 2>/dev/null)" \
         "the hook read EOF, not the caller's stdin"
 }
@@ -293,4 +295,22 @@ test_worktree_rm_post_remove_hook_repo_local_unrunnable_warns() {
     assert_exit 0 "$RUN_RC" "a non-executable repo-local hook does not fail teardown"
     assert_contains "$RUN_OUT" "post-remove is not an executable file" \
         "a non-executable repo-local hook is reported"
+}
+
+# A core.worktree REPAIR is a mutation, but not a teardown: on a run that found
+# no worktree to remove, the hook must not fire and prune artifacts for a
+# worktree this run never touched (#1092 review).
+test_worktree_rm_post_remove_hook_skipped_on_repair_only() {
+    local sb log
+    new_sandbox sb
+    log="$sb/hook.log"
+    _write_hook "$sb/hooks/post" "$log"
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
+        git -C "$sb" config core.worktree "$sb/.worktrees/issue-87-gone"
+
+    _hook_rm "$sb" "$sb/hooks/post" 87
+    assert_exit 0 "$RUN_RC" "a repair-only run exits 0"
+    assert_contains "$RUN_OUT" "repaired stale core.worktree" \
+        "the repair happened (guards a vacuous pass)"
+    assert_true "[ ! -e '$log' ]" "the hook did not run on a repair-only run"
 }
