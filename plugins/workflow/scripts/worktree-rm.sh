@@ -53,7 +53,9 @@
 #           env GOLEM_WORKTREE_MODE=issue|name
 #   How:    non-interactive (stdin is /dev/null) and bounded to
 #           GOLEM_POST_REMOVE_HOOK_TIMEOUT seconds. Best-effort: a non-zero exit
-#           or a timeout is a WARNING on stderr, never a failed teardown.
+#           or a timeout is a WARNING on stderr, never a failed teardown. Where
+#           bounded_run cannot bound (no sleep/mktemp/cat) the hook still runs,
+#           UNBOUNDED, after a warning — it is never skipped.
 #   Trust:  the repo-local hook is EXECUTED with the caller's environment, so
 #           the main checkout's working tree is trusted exactly as its justfile
 #           or git hooks are. Do not tear down from a checkout of untrusted refs.
@@ -1044,13 +1046,22 @@ if [ "$torn_down" -eq 1 ]; then
             # would read exactly like a hook that ran and found nothing to do.
             command echo "worktree-rm: WARNING: post-remove hook $post_hook is not an" \
                 "executable file; skipped" >&2
-        elif ! bounded_run_available; then
-            command echo "worktree-rm: WARNING: cannot bound the post-remove hook" \
-                "(sleep/mktemp/cat missing); skipped $post_hook" >&2
         else
             post_rc=0
-            GOLEM_WORKTREE_MODE="$wt_mode" bounded_run "$post_timeout" \
-                "$post_hook" "$N" "$root" "$post_wt" || post_rc=$?
+            if bounded_run_available; then
+                GOLEM_WORKTREE_MODE="$wt_mode" bounded_run "$post_timeout" \
+                    "$post_hook" "$N" "$root" "$post_wt" || post_rc=$?
+            else
+                # Unbounded, never skipped (#1123): a skip would orphan the
+                # consumer's artifacts on every teardown on this host to guard a
+                # hang nobody measured — the #543 shape, and the rename-aside's
+                # rule (rename_timeout). </dev/null keeps the no-TTY contract
+                # bounded_run otherwise provides.
+                command echo "worktree-rm: WARNING: cannot bound the post-remove hook" \
+                    "(sleep/mktemp/cat missing); running it unbounded" >&2
+                GOLEM_WORKTREE_MODE="$wt_mode" "$post_hook" "$N" "$root" "$post_wt" \
+                    </dev/null || post_rc=$?
+            fi
             case "$post_rc" in
                 0) ;;
                 124)
