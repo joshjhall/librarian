@@ -77,6 +77,8 @@ trap 'command rm -rf "$FIXTURE"' EXIT
 # worktree-rm.sh removes <GOLEM_UV_CACHE_DIR>/issue-N on teardown (#1091); keep
 # the AC#4 teardown below from reaching the real default (/cache/venv).
 export GOLEM_UV_CACHE_DIR="$FIXTURE/no-uv-cache"
+# ...and from running an operator's own post-remove hook (#1092).
+export GOLEM_POST_REMOVE_HOOK=""
 
 git_clean() {
     /usr/bin/env "${GIT_SCRUB[@]/#/-u}" "$REAL_GIT" "$@"

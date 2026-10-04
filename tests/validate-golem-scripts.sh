@@ -107,6 +107,7 @@ source_fragments "$SCRIPT_DIR/golem-scripts" \
     43-worktree-rm-deregistered.sh \
     45-worktree-rm-symlink.sh \
     47-worktree-rm-named.sh \
+    48-worktree-rm-post-remove-hook.sh \
     50-attach.sh \
     60-status.sh \
     70-status-checkpoint.sh \
@@ -364,6 +365,23 @@ run_fragment_test test_worktree_rm_named_base_ref_resolves_tag "worktree-rm: a t
 run_fragment_test test_worktree_rm_named_ambiguous_base_ref_is_refused "worktree-rm: an AMBIGUOUS bare base is refused, never measured against (#1005 c2)"
 run_fragment_test test_worktree_rm_named_ambiguity_guard_survives_silenced_warning "worktree-rm: the ambiguity guard survives core.warnAmbiguousRefs=false (#1005 c3)"
 run_fragment_test test_worktree_rm_named_issue_nondigit_stays_in_name_mode "worktree-rm: issue-<non-digit> stays in NAME mode (#1005 c2)"
+
+# 48-worktree-rm-post-remove-hook.sh (#1092)
+run_fragment_test test_worktree_rm_post_remove_hook_runs_once_with_args "worktree-rm: the post-remove hook runs once with mode/N/root/path (#1092)"
+run_fragment_test test_worktree_rm_post_remove_hook_normalizes_issue_dir_spelling "worktree-rm: the hook sees issue-N normalized to N (#1092)"
+run_fragment_test test_worktree_rm_post_remove_hook_repo_local_and_precedence "worktree-rm: .golem/post-remove is the fallback; the env hook wins (#1092)"
+run_fragment_test test_worktree_rm_post_remove_hook_skipped_on_dirty_refusal "worktree-rm: a dirty refusal never runs the hook (#1092)"
+run_fragment_test test_worktree_rm_post_remove_hook_skipped_on_unverifiable_refusal "worktree-rm: an unverifiable refusal never runs the hook (#1092)"
+run_fragment_test test_worktree_rm_post_remove_hook_skipped_on_noop "worktree-rm: a no-op teardown never runs the hook (#1092)"
+run_fragment_test test_worktree_rm_post_remove_hook_failure_warns_exit_0 "worktree-rm: a failing hook warns, teardown exits 0 (#1092)"
+run_fragment_test test_worktree_rm_post_remove_hook_timeout_warns_exit_0 "worktree-rm: a hanging hook is bounded and warns (#1092)"
+run_fragment_test test_worktree_rm_post_remove_hook_not_executable_warns "worktree-rm: an unrunnable hook path warns, teardown exits 0 (#1092)"
+run_fragment_test test_worktree_rm_post_remove_hook_stdin_is_closed "worktree-rm: the hook's stdin is closed, never the caller's (#1092)"
+run_fragment_test test_worktree_rm_post_remove_hook_name_mode_args "worktree-rm: name mode passes the name and its path to the hook (#1092)"
+run_fragment_test test_worktree_rm_post_remove_hook_bad_timeout_falls_back "worktree-rm: a bad hook timeout warns and falls back to 300 (#1092 review)"
+run_fragment_test test_worktree_rm_post_remove_hook_repo_local_unrunnable_warns "worktree-rm: a dangling or non-executable .golem/post-remove warns (#1092 review)"
+run_fragment_test test_worktree_rm_post_remove_hook_skipped_on_repair_only "worktree-rm: a core.worktree repair alone never runs the hook (#1092 review)"
+run_fragment_test test_worktree_rm_post_remove_hook_repo_local_symlink_runs "worktree-rm: a .golem/post-remove symlink to an executable runs (#1092 review)"
 run_fragment_test test_attach_non_integer_exits_2 "golem-attach: non-integer arg exits 2"
 run_fragment_test test_attach_no_session_exits_1 "golem-attach: no session/container exits 1"
 run_fragment_test test_status_empty_reports_no_golems "golem-status: empty state reports no active golems"

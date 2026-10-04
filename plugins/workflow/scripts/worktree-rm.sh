@@ -33,6 +33,29 @@
 # Config (env-overridable; defaults in config.sh):
 #   GOLEM_WORKTREE_DIR (.worktrees)   GOLEM_BRANCH_PREFIX (feature/issue-)
 #   GOLEM_UV_CACHE_DIR (/cache/venv) — the per-issue venv removed on teardown
+#   GOLEM_POST_REMOVE_HOOK ("") / GOLEM_POST_REMOVE_HOOK_TIMEOUT (300) — below
+#
+# POST-REMOVE HOOK (#1092) — the one extension point for a CONSUMER repo. A repo
+# that keeps per-checkout artifacts OFF the worktree (venvs, `target/`, CMake
+# trees, `node_modules` under /cache/<kind>/<project>--<worktree-dir>, as
+# containers#1005 does) would orphan them on every teardown, and golem Phase D,
+# `--teardown` and orchestrate all call THIS script directly — so a recipe-tail
+# prune in the consumer's own justfile is skipped by every automated path.
+#   Which:  $GOLEM_POST_REMOVE_HOOK if set, else <main-checkout>/.golem/post-remove
+#           if present. A named hook that is not an executable file WARNS.
+#   When:   once, only after something was actually torn down. Every refusal
+#           (dirty / unverifiable / residue / outside the repo) exits before it,
+#           and a no-op teardown ("nothing to remove") does not run it.
+#   Args:   $1 issue number or worktree name (`issue-42` normalized to `42`)
+#           $2 main-checkout root (absolute; also the hook's cwd)
+#           $3 the removed worktree's absolute path (may no longer exist)
+#           env GOLEM_WORKTREE_MODE=issue|name
+#   How:    non-interactive (stdin is /dev/null) and bounded to
+#           GOLEM_POST_REMOVE_HOOK_TIMEOUT seconds. Best-effort: a non-zero exit
+#           or a timeout is a WARNING on stderr, never a failed teardown.
+#   Trust:  the repo-local hook is EXECUTED with the caller's environment, so
+#           the main checkout's working tree is trusted exactly as its justfile
+#           or git hooks are. Do not tear down from a checkout of untrusted refs.
 #
 # NOTE: the containers recipe also refreshed a bare host's on-disk runtime
 # copies (.claude/hooks, justfile, bin) from origin/main after teardown — that
@@ -52,6 +75,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(command dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=./config.sh
 . "$SCRIPT_DIR/config.sh"
+# shellcheck source=./bounded-run.sh
+. "$SCRIPT_DIR/bounded-run.sh"
 
 # Scrub git's hook-exported environment process-wide (#328). repo_root()
 # (config.sh) already scrubs its OWN rev-parse subshell (#279), but this script
@@ -1524,6 +1549,12 @@ if command -v tmux >/dev/null 2>&1; then
     esac
 fi
 
+# Snapshot "something was torn down" BEFORE the repair below, which also sets
+# `removed=1`: a config repair on an otherwise no-op run must not fire the
+# consumer's post-remove hook, which would prune artifacts for a worktree this
+# run never touched (#1092 review).
+torn_down="$removed"
+
 # Repair a polluted main-repo core.worktree (#258). An interrupted
 # `git worktree remove --force` can leave the MAIN config with a stale
 # core.worktree pointing at a now-deleted path, which makes the whole checkout
@@ -1539,6 +1570,64 @@ if [ -n "$stale_wt" ] && [ ! -e "$stale_wt" ]; then
     removed=1
     if [ "$(command git rev-parse --is-inside-work-tree 2>/dev/null || true)" != "true" ]; then
         command echo "worktree-rm: WARNING: main checkout still not a work tree after core.worktree repair" >&2
+    fi
+fi
+
+# Run the consumer's post-remove hook (#1092; contract in the header). Gated on
+# `torn_down` — `removed` as it stood before the core.worktree repair. Every
+# refusal has already exited 1 above, so a worktree this script declined to
+# remove can never trigger a cleanup of the artifacts it still depends on. The
+# repo-local fallback is resolved against `$root` (the MAIN checkout), never the
+# removed worktree.
+#
+# Best-effort for the same reason as the tmux and uv arms: teardown is past its
+# destructive steps, so a failing hook must not strand a removed worktree behind
+# a non-zero exit. Bounded by bounded_run rather than GNU `timeout` (absent on
+# base macOS), which also closes the hook's stdin — no TTY is ever assumed. A
+# hook that itself exits 124 reads as a timeout: bounded_run reports 124 for
+# both, the same contract as timeout(1).
+if [ "$torn_down" -eq 1 ]; then
+    post_hook=""
+    if [ -n "$GOLEM_POST_REMOVE_HOOK" ]; then
+        post_hook="$GOLEM_POST_REMOVE_HOOK"
+    elif [ -e "$root/.golem/post-remove" ] || [ -L "$root/.golem/post-remove" ]; then
+        post_hook="$root/.golem/post-remove"
+    fi
+    if [ -n "$post_hook" ]; then
+        post_timeout="$GOLEM_POST_REMOVE_HOOK_TIMEOUT"
+        if ! [[ "$post_timeout" =~ ^[1-9][0-9]*$ ]]; then
+            command echo "worktree-rm: WARNING: GOLEM_POST_REMOVE_HOOK_TIMEOUT='$post_timeout'" \
+                "is not a positive integer; using 300" >&2
+            post_timeout=300
+        fi
+        case "$wt" in
+            /*) post_wt="$wt" ;;
+            *) post_wt="$root/$wt" ;;
+        esac
+        if [ ! -f "$post_hook" ] || [ ! -x "$post_hook" ]; then
+            # Named but unrunnable is said out loud: skipping it in silence
+            # would read exactly like a hook that ran and found nothing to do.
+            command echo "worktree-rm: WARNING: post-remove hook $post_hook is not an" \
+                "executable file; skipped" >&2
+        elif ! bounded_run_available; then
+            command echo "worktree-rm: WARNING: cannot bound the post-remove hook" \
+                "(sleep/mktemp/cat missing); skipped $post_hook" >&2
+        else
+            post_rc=0
+            GOLEM_WORKTREE_MODE="$wt_mode" bounded_run "$post_timeout" \
+                "$post_hook" "$N" "$root" "$post_wt" || post_rc=$?
+            case "$post_rc" in
+                0) ;;
+                124)
+                    command echo "worktree-rm: WARNING: post-remove hook $post_hook timed" \
+                        "out after ${post_timeout}s; teardown is otherwise complete" >&2
+                    ;;
+                *)
+                    command echo "worktree-rm: WARNING: post-remove hook $post_hook exited" \
+                        "$post_rc; teardown is otherwise complete" >&2
+                    ;;
+            esac
+        fi
     fi
 fi
 
