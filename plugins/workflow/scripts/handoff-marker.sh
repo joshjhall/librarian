@@ -37,7 +37,8 @@
 #
 # Output (`key=value` lines on stdout, the context-budget.sh convention):
 #   marker      none | open | counted | unreadable
-#   at          (open only) the marker's ISO timestamp, empty if absent
+#   at          (open only) the marker's ISO timestamp; empty if absent or not
+#               ISO-shaped
 #   directive   (open only) the counting instruction to follow before any
 #               other request
 #
@@ -76,13 +77,16 @@ unreadable() {
 command -v jq >/dev/null 2>&1 || unreadable
 
 # Keep in step with golem-handoff-relaunch.sh's two marker reads — the parity
-# case in tests/validate-handoff-marker.sh fails if they diverge. `at` is
-# flattened to one line so a newline in it cannot forge a later key=value line.
+# case in tests/validate-handoff-marker.sh fails if they diverge. `at` is echoed
+# into output an agent reads beside an imperative directive, so only an
+# ISO-8601-shaped value (digits, T/Z, : . + -, 10-40 chars) passes; anything
+# else prints as an empty `at=` — no newline can forge a key, no free text rides.
 classified="$(command jq -r '
     (.checkpoint.handoff_marker // null) as $m
     | if ($m | type) != "object" then "none"
       elif ($m.r_measured // null) != null then "counted"
-      else "open\t\(($m.at // "") | tostring | gsub("[\n\r\t]"; " "))"
+      else "open\t\(($m.at // "") | tostring
+                      | if test("^[0-9][0-9TZ:.+-]{9,39}$") then . else "" end)"
       end' "$state_file" 2>/dev/null)" || unreadable
 
 case "$classified" in
