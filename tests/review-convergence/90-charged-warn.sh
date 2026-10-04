@@ -97,6 +97,29 @@ test_warn_is_emitted_on_every_verdict() {
     assert_contains "$out" "warn=" "warn is emitted on the C2-partial path"
     out="$("$RC" check --cycle 2 --max-cycles 5 --result "$FIXTURES/refuted.json" --delta-lines 500)"
     assert_contains "$out" "warn=" "warn is emitted on the C5 path"
+
+    # Presence alone is satisfied by a warn_of that fires on every verdict. Pin
+    # the VALUE too, at the boundary (cycle+1 == max) where a continue DOES warn,
+    # so a stop that stays empty is empty because it stopped. C4/C5 also carry
+    # next_scope=full there: only the verdict check keeps them empty.
+    out="$("$RC" check --cycle 4 --max-cycles 5 --attempt 10 --max-attempts 10 \
+        --result "$FIXTURES/novel.json" --delta-lines 500)"
+    assert_equals "C0-attempt-cap|" "$(val rule "$out")|$(val warn "$out")" \
+        "warn is empty on the C0-attempt-cap stop"
+    out="$("$RC" check --cycle 5 --max-cycles 5 --result "$FIXTURES/novel.json" --delta-lines 500)"
+    assert_equals "C1-cap|" "$(val rule "$out")|$(val warn "$out")" \
+        "warn is empty on the C1-cap stop"
+    out="$("$RC" check --cycle 4 --max-cycles 5 --result "$FIXTURES/zero.json" \
+        --delta-lines 500 --prev-delta-lines 500)"
+    assert_equals "C4-zero|full|" "$(val rule "$out")|$(val next_scope "$out")|$(val warn "$out")" \
+        "warn is empty on a C4 stop at the boundary"
+    out="$("$RC" check --cycle 4 --max-cycles 5 --result "$FIXTURES/refuted.json" --delta-lines 500)"
+    assert_equals "C5-refuted-only|full|" "$(val rule "$out")|$(val next_scope "$out")|$(val warn "$out")" \
+        "warn is empty on a C5 stop at the boundary"
+    out="$("$RC" check --cycle 4 --max-cycles 5 --result "$FIXTURES/zero.json" \
+        --delta-lines 500 --partial true)"
+    assert_equals "C2-partial|final-full-review" "$(val rule "$out")|$(val warn "$out")" \
+        "warn is final-full-review on a C2-partial continue at the boundary"
 }
 
 # ANTI-TAUTOLOGY pair: identical C3 calls differing ONLY in whether --attempt was
