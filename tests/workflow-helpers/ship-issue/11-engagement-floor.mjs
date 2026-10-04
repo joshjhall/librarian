@@ -249,10 +249,11 @@ export function run() {
     eq(keepNull.length, 2, "wiring: both the first dispatch and the opus retry preserve null and carry `checked`");
 
     eq(count("const retryIdx = selectRetries(dimensions, reviewResults)"), 1, "wiring: retries are selected by selectRetries, once");
+    // Whitespace-tolerant: a reformat of the destructuring must not fail the pin.
     eq(
-      count(";({ results: reviewResults, retrySucceeded } = mergeRetried(reviewResults, retryIdx, retried))"),
+      (orch.match(/\{\s*results:\s*reviewResults,\s*retrySucceeded\s*\}\s*=\s*mergeRetried\(reviewResults,\s*retryIdx,\s*retried\)/g) || []).length,
       1,
-      "wiring: the retries are folded back by mergeRetried, once",
+      "wiring: the retries are folded back by mergeRetried, into reviewResults, once",
     );
     eq(
       count("const stamped = stampEngagement(dimensions, reviewResults, retryIdx, retrySucceeded)"),
@@ -261,16 +262,22 @@ export function run() {
     );
     ok(orch.includes("if (stamped.partial) budgetExhausted = true"), "wiring: stampEngagement's partial flag sets budgetExhausted");
     ok(orch.includes("dimensionsSkipped.push(...stamped.skippedAdds)"), "wiring: stampEngagement's skip list feeds dimensionsSkipped");
+    // The per-dimension log keys its message off unengagedDimensions: swapping
+    // the arms would report an unengaged dimension as failed in the run log.
+    ok(
+      /log\(\s*unengagedDimensions\.includes\(name\)\s*\?\s*`dimension "\$\{name\}" returned without reviewing \(unengaged\)/.test(orch),
+      "wiring: an unengaged dimension is logged as unengaged, not as failed",
+    );
 
     // The opus re-dispatch: matched on the agent() options object itself, so a
     // `model: 'opus'` in a nearby comment cannot satisfy it.
     const retryThunk = orch.match(
-      /const retried = await parallel\(\n {4}retryIdx\.map\(\(i\) => \(\) => \{\n([\s\S]*?)\n {4}\}\)\n {2}\)/,
+      /const retried = await parallel\(\s*retryIdx\.map\(\(i\) => \(\) => \{([\s\S]*?)\n\s*\}\)\s*\)\n/,
     );
     ok(retryThunk, "wiring: unengaged dimensions are re-dispatched under parallel()");
     const thunk = retryThunk ? retryThunk[1] : "";
     ok(
-      /return agent\(prompt, \{\n(?: {8}\w+: [^\n]+,\n)*? {8}model: 'opus',\n/.test(thunk),
+      /return agent\(prompt, \{(?:\s*\w+: [^\n]+,)*?\s*model: 'opus',/.test(thunk),
       "wiring: the re-dispatch's agent() options run on opus (#1111 proposal 3)",
     );
     ok(
