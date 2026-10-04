@@ -107,6 +107,17 @@ test_dimension_with_a_finding_is_not_flagged() {
     assert_equals "0" "$(val unengaged "$out")" "a dimension that produced a finding engaged, whatever its tool count"
 }
 
+test_raw_finding_count_exempts_a_dimension() {
+    # A code-reading dimension with zero tool calls whose findings are NOT in
+    # the post-judge arrays, but whose raw count the harness recorded, is
+    # engaged: the raw count is the source, not the arrays (cycle-4 review).
+    local d="$SANDBOX/raw" r="$SANDBOX/raw.json" out
+    agent "$d" r1 security sonnet "$user" "$(so w1 300)"
+    command printf '{"blocking":[],"deferrable":[],"clean":true,"dimension_engagement":{"security":{"requires_code_reading":true,"findings":2}}}\n' >"$r"
+    out="$("$RE" "$d" "$r")"
+    assert_equals "0" "$(val unengaged "$out")" "a recorded raw finding count exempts the dimension"
+}
+
 test_usage_repeated_per_block_counts_once() {
     local d="$SANDBOX/dedupe" r="$SANDBOX/dedupe.json"
     # One 3-block turn repeating output_tokens=100, then a 1-block turn of 40.
@@ -210,6 +221,7 @@ test_unreadable_input_fails_loud() {
 run_test test_empty_submit_security_is_unengaged "empty-submit security is flagged unengaged"
 run_test test_diff_only_scope_drift_is_not_flagged "diff-only scope-drift is engaged (operator note)"
 run_test test_dimension_with_a_finding_is_not_flagged "a dimension with a finding is engaged"
+run_test test_raw_finding_count_exempts_a_dimension "raw finding count exempts a dimension"
 run_test test_usage_repeated_per_block_counts_once "usage dedupe by message id"
 run_test test_partial_trailing_line_is_tolerated "partial trailing transcript line"
 run_test test_opus_retry_judged_on_last_run "opus retry judged on the last run"

@@ -167,6 +167,13 @@ export function run() {
     const mainIdx = orch.indexOf("const rawFindings = []\nreviewResults.forEach((res, i) => {");
     ok(mainIdx >= 0, "wiring: the main results loop is locatable");
     const mainLoop = orch.slice(mainIdx, mainIdx + 2000);
+    // review-engagement.sh exempts a dimension that produced a finding by THIS
+    // raw count; dropping it would silently revert the script to inferring from
+    // the post-judge arrays (cycle-4 review of PR #1127).
+    ok(
+      mainLoop.includes("findings: res ? res.findings.length : 0,"),
+      "wiring: dimension_engagement records the raw per-dimension finding count",
+    );
     ok(
       mainLoop.includes("unengagedDimensions.push(name)") && mainLoop.includes("dimensionsSkipped.push(name)"),
       "wiring: an unengaged dimension lands in both unengagedDimensions and dimensionsSkipped",

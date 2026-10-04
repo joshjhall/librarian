@@ -2150,6 +2150,12 @@ reviewResults.forEach((res, i) => {
   dimensionEngagement[name] = {
     engagement: verdict,
     checked: res ? res.checked.length : 0,
+    // The dimension's RAW finding count, before the judge. review-engagement.sh
+    // keys its "produced a finding" exemption off this rather than re-deriving
+    // it from the post-judge blocking/deferrable arrays: that only works while
+    // applyJudgeVerdicts never drops a finding (true today: it partitions every
+    // raw finding), and stating the count here removes the dependence.
+    findings: res ? res.findings.length : 0,
     retried: retryIdx.includes(i),
     requires_code_reading: CODE_READING_DIMENSIONS.includes(name),
   }

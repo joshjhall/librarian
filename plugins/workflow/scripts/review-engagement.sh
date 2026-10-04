@@ -145,7 +145,14 @@ command jq --rawfile rows "$rows" '
     ($rows | split("\n") | map(select(length > 0) | split("\t")
         | {dim: .[0], tool_calls: (.[1] | tonumber), output_tokens: (.[2] | tonumber), model: .[3]})) as $r
     | (reduce $r[] as $x ({}; .[$x.dim] += [$x | del(.dim)])) as $metrics
-    | ([(.blocking // [])[], (.deferrable // [])[]] | map(.dimension) | unique) as $withFindings
+    # "Produced a finding" comes from the RAW per-dimension count the harness records
+    # (dimension_engagement.<dim>.findings) when present: the post-judge arrays
+    # agree only while the judge drops nothing, which this script must not
+    # silently depend on. A result without that count (an older harness) falls
+    # back to the arrays.
+    | ([(.blocking // [])[], (.deferrable // [])[]] | map(.dimension) | unique) as $inArrays
+    | (.dimension_engagement // {}) as $engRaw
+    | ([$engRaw | to_entries[] | select((.value.findings // 0) > 0) | .key] + $inArrays | unique) as $withFindings
     | (.dimension_engagement // {}) as $eng
     | ([$metrics | to_entries[] | . as $e
         | select($e.value[-1].tool_calls == 0)
