@@ -62,10 +62,11 @@ a2. **Route the cycle (#550).** Ask the router whether this diff needs the
 full fan-out, and pass its verdict to the harness below as `reviewRoute`:
 
 ```bash
-# Per-run scratch dir (#1094): `init` on this loop's FIRST attempt (empties
-# it, so no earlier run's cycle JSON reaches convergence), `path` after. Read
-# its `dir=` line and substitute it as {dir} — never `$(...)` (#815).
-<skill-base-dir>/../../scripts/review-scratch.sh init --issue {N}
+# Per-run scratch dir (#1094). Read its `dir=` line as {dir}, never `$(...)`
+# (#815). Run exactly ONE of these — `init` empties the dir, so on a later
+# cycle it would delete the cycle JSON convergence reads as --prev-result:
+<skill-base-dir>/../../scripts/review-scratch.sh init --issue {N}   # cycle 1 only
+<skill-base-dir>/../../scripts/review-scratch.sh path --issue {N}   # every later cycle
 git diff --name-only origin/main...HEAD > "{dir}/files.txt"
 # Pass the diff size and the HIGH pre-scan categories too — without them the
 # R6-max-lines ceiling and the R4-prescan carve-out can never fire:

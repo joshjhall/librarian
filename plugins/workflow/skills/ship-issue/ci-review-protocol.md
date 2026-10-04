@@ -46,11 +46,12 @@ unregistered loop reads as an idle golem for its whole duration. Protocol:
 a. **Gather the changed scope** (now includes any CI fixes):
 
 ```bash
-# Per-run scratch dir (#1094): `init` when attempt = 1 (empties it, so neither
-# an earlier run nor the pre-PR loop leaves cycle JSON for convergence to read),
-# `path` after. Read its `dir=` line as {dir} — never `$(...)` (#815).
-# Route (#550) -> `reviewRoute` in step (c); pass {N} + categories.
-<skill-base-dir>/../../scripts/review-scratch.sh init --issue {N}
+# Per-run scratch dir (#1094). Read its `dir=` line as {dir}, never `$(...)`
+# (#815). Run exactly ONE — `init` empties the dir (dropping the pre-PR loop's
+# and any earlier run's cycle JSON), so on a later attempt it would delete this
+# loop's --prev-result history. Route (#550) -> `reviewRoute` in step (c).
+<skill-base-dir>/../../scripts/review-scratch.sh init --issue {N}   # attempt 1 only
+<skill-base-dir>/../../scripts/review-scratch.sh path --issue {N}   # every later attempt
 git diff --name-only origin/main...HEAD > "{dir}/files.txt"
 git diff origin/main...HEAD > "{dir}/diff.txt"
 <skill-base-dir>/../../scripts/review-route.sh check \

@@ -132,21 +132,40 @@ test_unsafe_inputs_fail_loud() {
     assert_exit 2 "$RC" "unknown flag is refused"
 }
 
+# fenced_bash <file> — print only the lines inside ```bash fences: the recipe
+# an agent executes, so a prose mention of the helper cannot satisfy AC3.
+fenced_bash() {
+    command awk '/^```bash/ { f = 1; next } /^```/ { f = 0 } f' "$1"
+}
+
+# A recipe line STARTS with the call: anchoring on a leading newline keeps a
+# commented-out `# <skill-base-dir>/…` line from satisfying the assertion.
+NL='
+'
+CALL='<skill-base-dir>/../../scripts/review-scratch.sh'
+
 # AC3: the three recipe sites that used to spell the derivation inline must all
-# call the helper, and none may keep the old shared fallback. Reverting any one
-# site turns this red.
+# call the helper from a fenced recipe, worktree-safely, and none may keep the
+# old shared fallback.
 test_every_recipe_site_uses_the_helper() {
-    local f
+    local f body
     for f in adversarial-review-step.md ci-review-protocol.md review-routing.md; do
-        assert_file_contains "$SHIP/$f" "scripts/review-scratch.sh" \
-            "$f derives the scratch dir through review-scratch.sh"
-        assert_file_not_contains "$SHIP/$f" 'GOLEM_ID or "solo"' \
+        body="$NL$(fenced_bash "$SHIP/$f")"
+        assert_contains "$body" "$NL$CALL path --issue {N}" \
+            "$f has a fenced review-scratch.sh path recipe"
+        assert_not_contains "$body" 'GOLEM_ID or "solo"' \
             "$f no longer carries the shared solo fallback"
+        # #815: the helper must be run bare and READ, never captured.
+        if command printf '%s\n' "$body" | command grep 'review-scratch' |
+            command grep -E '\$\(|CLAUDE_PLUGIN_ROOT' >/dev/null; then
+            _fail "$f captures review-scratch.sh in a worktree-unsafe spelling"
+        fi
     done
-    # Both review LOOPS must start clean, not just mention the helper.
+    # Both review LOOPS must show the cycle-1 wipe AND the later-cycle keep: a
+    # recipe showing only `init` deletes the --prev-result history on cycle 2.
     for f in adversarial-review-step.md ci-review-protocol.md; do
-        assert_file_contains "$SHIP/$f" "review-scratch.sh init" \
-            "$f starts its loop with init"
+        assert_contains "$NL$(fenced_bash "$SHIP/$f")" "$NL$CALL init --issue {N}" \
+            "$f starts its loop with a fenced init recipe"
     done
 }
 
