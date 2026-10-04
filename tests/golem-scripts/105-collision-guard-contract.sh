@@ -74,3 +74,21 @@ test_collision_guard_mismatch_still_asks() {
     assert_contract_carries "$_GUARD_ID" "$region" 'Any mismatch still asks, at every level' \
         "collision guard mismatch fallback"
 }
+
+# The per-conjunct tests above catch a DELETION, but they are substring checks:
+# an edit that ADDS words beside an unchanged token keeps every one green —
+# "(or `--level 2`)", ", or a stale state file", "at every level except L4" each
+# widen the unprompted resume while all four conjuncts are still "present". So
+# the operative rule is also pinned EXACTLY, whitespace-normalised (reflowing it
+# stays free). Only the text up to the em dash is pinned; the rationale after it
+# may be reworded.
+test_collision_guard_rule_is_not_widened() {
+    local region rule
+    region="$(_guard_region)"
+    rule="$(command printf '%s\n' "$region" | command tr -s '[:space:]' ' ' |
+        command sed -e 's/^ //' -e 's/ — .*$//')"
+    assert_equals \
+        'Under `--level 3` or `--level 4` it is a routine gate (with no flag the level is not yet known here, so it asks): resume **without asking** when the worktree is on `feature/issue-N` **and** holds `.claude/memory/tmp/next-issue-N.json`. Any mismatch still asks, at every level' \
+        "$rule" \
+        "collision guard rule is pinned exactly — an insertion widens it"
+}

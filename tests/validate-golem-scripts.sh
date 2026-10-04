@@ -651,5 +651,6 @@ run_fragment_test test_collision_guard_requires_level_flag "golem SKILL: collisi
 run_fragment_test test_collision_guard_requires_branch_match "golem SKILL: collision guard auto-resume needs the feature/issue-N branch (#1119)"
 run_fragment_test test_collision_guard_requires_state_file "golem SKILL: collision guard auto-resume needs the next-issue state file (#1119)"
 run_fragment_test test_collision_guard_mismatch_still_asks "golem SKILL: collision guard mismatch still asks at every level (#1119)"
+run_fragment_test test_collision_guard_rule_is_not_widened "golem SKILL: collision guard rule is pinned exactly, so an insertion fails (#1119)"
 
 generate_report
