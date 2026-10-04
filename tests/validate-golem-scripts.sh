@@ -376,6 +376,8 @@ run_fragment_test test_worktree_rm_post_remove_hook_timeout_warns_exit_0 "worktr
 run_fragment_test test_worktree_rm_post_remove_hook_not_executable_warns "worktree-rm: an unrunnable hook path warns, teardown exits 0 (#1092)"
 run_fragment_test test_worktree_rm_post_remove_hook_stdin_is_closed "worktree-rm: the hook's stdin is closed, never the caller's (#1092)"
 run_fragment_test test_worktree_rm_post_remove_hook_name_mode_args "worktree-rm: name mode passes the name and its path to the hook (#1092)"
+run_fragment_test test_worktree_rm_post_remove_hook_bad_timeout_falls_back "worktree-rm: a bad hook timeout warns and falls back to 300 (#1092 review)"
+run_fragment_test test_worktree_rm_post_remove_hook_repo_local_unrunnable_warns "worktree-rm: a dangling or non-executable .golem/post-remove warns (#1092 review)"
 run_fragment_test test_attach_non_integer_exits_2 "golem-attach: non-integer arg exits 2"
 run_fragment_test test_attach_no_session_exits_1 "golem-attach: no session/container exits 1"
 run_fragment_test test_status_empty_reports_no_golems "golem-status: empty state reports no active golems"

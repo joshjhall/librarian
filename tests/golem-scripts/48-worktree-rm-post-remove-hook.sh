@@ -254,3 +254,43 @@ test_worktree_rm_post_remove_hook_name_mode_args() {
     assert_equals "name|scratch|$root|$root/.worktrees/scratch" "$(command cat "$log" 2>/dev/null)" \
         "the hook got name mode, the name, the root and the worktree path"
 }
+
+# A bad timeout falls back to the default out loud — and the hook still runs.
+# Without the validation a `0` or non-number would reach bounded_run's `sleep`.
+test_worktree_rm_post_remove_hook_bad_timeout_falls_back() {
+    local sb log bad n=83
+    new_sandbox sb
+    log="$sb/hook.log"
+    _write_hook "$sb/hooks/post" "$log"
+    for bad in abc 0; do
+        run_in "$sb" "$WT_NEW" "$n"
+        _hook_rm "$sb" "$sb/hooks/post" "$n" "$bad"
+        assert_exit 0 "$RUN_RC" "timeout '$bad' does not fail teardown"
+        assert_contains "$RUN_OUT" "GOLEM_POST_REMOVE_HOOK_TIMEOUT='$bad' is not a positive integer; using 300" \
+            "timeout '$bad' is reported and replaced"
+        n=$((n + 1))
+    done
+    assert_equals "2" "$(_line_count "$log")" "the hook still ran once per teardown"
+}
+
+# The repo-local fallback is held to the same rule as an env hook: a dangling
+# symlink or a non-executable file there is reported, never skipped silently.
+test_worktree_rm_post_remove_hook_repo_local_unrunnable_warns() {
+    local sb
+    new_sandbox sb
+    command mkdir -p "$sb/.golem"
+    command ln -s "$sb/nowhere" "$sb/.golem/post-remove"
+    run_in "$sb" "$WT_NEW" 85
+    _hook_rm "$sb" "" 85
+    assert_exit 0 "$RUN_RC" "a dangling repo-local hook does not fail teardown"
+    assert_contains "$RUN_OUT" "post-remove is not an executable file" \
+        "a dangling repo-local hook is reported"
+
+    command rm -f "$sb/.golem/post-remove"
+    command printf '#!/usr/bin/env bash\nexit 0\n' >"$sb/.golem/post-remove"
+    run_in "$sb" "$WT_NEW" 86
+    _hook_rm "$sb" "" 86
+    assert_exit 0 "$RUN_RC" "a non-executable repo-local hook does not fail teardown"
+    assert_contains "$RUN_OUT" "post-remove is not an executable file" \
+        "a non-executable repo-local hook is reported"
+}
