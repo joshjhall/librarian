@@ -65,6 +65,9 @@ SCRIPTS="$REPO_ROOT/plugins/workflow/scripts"
     # doc (not a bundled script), so its write_status() is tested by extraction
     # (#415, mirrors validate-template-sync.sh's inline-template extraction).
     PROVISION_PROTOCOL="$REPO_ROOT/plugins/workflow/skills/provision-agent/provision-protocol.md"
+    # Phase A's collision-guard auto-resume rule is LLM-followed prose, pinned by
+    # contract id (#1119).
+    GOLEM_SKILL="$REPO_ROOT/plugins/workflow/skills/golem/SKILL.md"
 }
 
 # Both are read by the sourced fragments/library rather than by this file — same
@@ -119,6 +122,7 @@ source_fragments "$SCRIPT_DIR/golem-scripts" \
     90-transcript-liveness.sh \
     95-work-registry.sh \
     100-mode-check.sh \
+    105-collision-guard-contract.sh \
     110-tracks-runbook.sh
 
 # --- Run all tests ----------------------------------------------------------
@@ -641,5 +645,12 @@ run_fragment_test test_runbook_reports_unknowable_staleness "tracks-runbook: an 
 run_fragment_test test_runbook_corrupt_json_fails_loudly "tracks-runbook: a corrupt plan exits 3, never renders as an empty one (#673)"
 run_fragment_test test_runbook_footer_suppresses_empty_sections "tracks-runbook: empty rationale/deferred print no bare section headers (#673)"
 run_fragment_test test_runbook_without_jq_fails_loudly "tracks-runbook: a missing jq exits 3 rather than rendering an empty plan (#673)"
+
+run_fragment_test test_collision_guard_outcome_is_resume_without_asking "golem SKILL: collision guard contract grants resume without asking (#1119)"
+run_fragment_test test_collision_guard_requires_level_flag "golem SKILL: collision guard auto-resume needs a --level 3|4 flag; no flag asks (#1119)"
+run_fragment_test test_collision_guard_requires_branch_match "golem SKILL: collision guard auto-resume needs the feature/issue-N branch (#1119)"
+run_fragment_test test_collision_guard_requires_state_file "golem SKILL: collision guard auto-resume needs the next-issue state file (#1119)"
+run_fragment_test test_collision_guard_mismatch_still_asks "golem SKILL: collision guard mismatch still asks at every level (#1119)"
+run_fragment_test test_collision_guard_rule_is_not_widened "golem SKILL: collision guard rule is pinned exactly, so an insertion fails (#1119)"
 
 generate_report
