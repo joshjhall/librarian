@@ -407,7 +407,7 @@ bound, a fallback that also stops charging crashed cycles would be unbounded. Th
 loop stays bounded either way; it only loses the early-stop, the narrow-zero
 protection, and the `capped_over` disambiguation.
 
-Write each cycle's harness result to `{dir}/cycle<cycle>.json` (step a's
+Write each trip's harness result to `{dir}/attempt<attempt>.json` (step a's
 scratch dir, #1094) so the next cycle can pass it as
 `--prev-result` (repeatable — duplicate detection is against **all** earlier
 cycles, not just the previous one). On cycle 1 omit `--prev-result` and
@@ -488,9 +488,11 @@ no-signal attempts explicitly:
 > signal** (harness failed before any dimension ran) and are not evidence about
 > convergence. Attempt 5 was an uncharged narrow clean cycle (`C3`).
 
-If the loop ended at `C0-attempt-cap`, say so plainly — that is "the harness kept
-crashing", a fundamentally different dead-end from "reviewers kept finding
-problems", and it points at infrastructure rather than at the code. Likewise, if
+If the loop ended at `C0-attempt-cap`, say so plainly and name **what spent the
+attempts** — two uncharged rules do (#1120). Mostly `C0b-no-signal` means "the
+harness kept crashing", which points at infrastructure; mostly uncharged
+`C3-narrow-zero` means fix cycles kept alternating with clean narrow ones, so the
+review was still productive. Neither is "reviewers kept finding problems". Likewise, if
 it ended at `C1-cap` with a `capped_over` of `C3-narrow-zero` or `C8-novel`, note
 that the review was still productive when the budget ran out (#635).
 Surface it on the feed as a `dead-end` event (message begins `DEAD-END:`):

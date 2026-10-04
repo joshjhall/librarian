@@ -1250,6 +1250,14 @@ test_narrow_zero_is_uncharged_only_with_an_explicit_attempt() {
     assert_equals "C3-narrow-zero" "$(val rule "$unmigrated")" "the unmigrated call is C3"
     assert_equals "false" "$(val charged "$migrated")" "C3 with --attempt is uncharged"
     assert_equals "true" "$(val charged "$unmigrated")" "C3 without --attempt stays charged"
+    # An EMPTY --attempt value also falls back to --cycle, so it must read as
+    # absent: keying the guard on the flag's presence would un-charge C3 here
+    # while both counters stay frozen.
+    local empty
+    empty="$("$RC" check --cycle 2 --max-cycles 5 --attempt "" \
+        --result "$FIXTURES/zero.json" --delta-lines 100 --prev-delta-lines 1000)"
+    assert_equals "C3-narrow-zero|true" "$(val rule "$empty")|$(val charged "$empty")" \
+        "an empty --attempt keeps C3 charged"
 }
 
 test_every_other_rule_is_charged() {
@@ -1275,6 +1283,17 @@ test_every_other_rule_is_charged() {
     out="$("$RC" check --cycle 2 --max-cycles 5 --attempt 2 --result "$FIXTURES/novel.json" \
         --prev-result "$FIXTURES/novel.json" --delta-lines 500)"
     assert_equals "C6-duplicate|true" "$(val rule "$out")|$(val charged "$out")" "C6 is charged"
+    out="$("$RC" check --cycle 2 --max-cycles 5 --attempt 2 --result "$FIXTURES/recursive.json" \
+        --delta-files "$FIXTURES/delta-files.txt" --delta-lines 400 --prev-delta-lines 400)"
+    assert_equals "C7-recursive|true" "$(val rule "$out")|$(val charged "$out")" "C7 is charged"
+    # C2b is a CONTINUE, so un-charging it by analogy with C0b would let an
+    # unengaged review loop on attempts alone. Its fixture is written inline here
+    # rather than shared, so this case does not depend on run_test order.
+    command printf '{"blocking":[],"deferrable":[],"unengaged_dimensions":["security"]}\n' \
+        >"$FIXTURES/charged-unengaged.json"
+    out="$("$RC" check --cycle 2 --max-cycles 5 --attempt 2 --result "$FIXTURES/charged-unengaged.json" \
+        --delta-lines 400 --prev-delta-lines 400)"
+    assert_equals "C2b-unengaged|true" "$(val rule "$out")|$(val charged "$out")" "C2b is charged"
     # C0b needs no --attempt to go uncharged — unlike C3 — because it was
     # uncharged before #1120 (the caller read no_review_signal itself), so this
     # only reports existing behavior rather than introducing a new uncharged path.

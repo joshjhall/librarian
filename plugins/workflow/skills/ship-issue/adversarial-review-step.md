@@ -345,7 +345,8 @@ review loop" step (f), and in the script header:
 Substitute `<skill-base-dir>` and the `{...}` placeholders with literal values
 — worktree-isolated when ship is chained in-turn (#815,
 `next-issue/worktree-safe-recipes.md`). Write each cycle's result as
-`{dir}/cycle<cycle>.json` in the scratch dir from step a2, so `--prev-result`
+`{dir}/attempt<attempt>.json` in the scratch dir from step a2 — keyed on the
+attempt, since an uncharged trip reuses its cycle number (#1120) — so `--prev-result`
 only ever names this run's cycles (#1094).
 
 Before consulting the predicate, fold the transcript-measured engagement into
