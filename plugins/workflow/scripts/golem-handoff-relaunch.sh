@@ -134,9 +134,40 @@ _check_pane() {
     return 0
 }
 
+# _read_liveness — run golem-transcript-liveness.sh on $_wt, setting _lv (stdout
+# verdict), _lv_rc, _lv_err (stderr, kept apart so an indeterminate's SHAPE can
+# be read) and _lv_turn_ended (1 on the #890 "turn ended after a
+# background-capable tool" exit 2). Returns 1, with _reason set, only when the
+# read could not be attempted.
+_read_liveness() {
+    _lv_rc=0
+    _lv_turn_ended=0
+    _lv_errf="$(command mktemp "${TMPDIR:-/tmp}/handoff-relaunch.XXXXXX")" || _lv_errf=""
+    if [ -z "$_lv_errf" ]; then
+        _reason="mktemp failed — cannot read liveness"
+        return 1
+    fi
+    _lv="$("$liveness" "$_wt" 2>"$_lv_errf")" || _lv_rc=$?
+    _lv_err="$(command cat "$_lv_errf" 2>/dev/null)"
+    command rm -f "$_lv_errf"
+    if [ "$_lv_rc" -eq 2 ]; then
+        case "$_lv_err" in
+            *"turn ended after a background-capable tool"*) _lv_turn_ended=1 ;;
+        esac
+    fi
+    return 0
+}
+
 # _detect_half <at> — a `cleared <at>` stamp: /clear landed, the resume may not
 # have. The budget is no longer a signal (the cleared session reads near the
-# floor), so this path reads the marker and the pane only.
+# floor), so this path reads the marker, liveness and the pane.
+#
+# Two ways the stamp outlives its purpose, both of which must NOT strand the
+# golem: the resume was delivered some other way (an operator attached and typed
+# it, or verify-text missed a submit that landed). Then either the session is
+# working — refuse, never type into it — or the golem has since handed off AGAIN
+# with a new `at`, and the stamp is stale: return 1 so detect() runs the normal
+# four-signal path for the new marker.
 _detect_half() {
     _at="$1"
     if ! command -v jq >/dev/null 2>&1; then
@@ -162,8 +193,7 @@ _detect_half() {
             ;;
     esac
     if [ "$(command printf '%s' "$_marker" | command cut -f2)" != "$_at" ]; then
-        _reason="cleared-stamp ($_at) does not match the open marker — attach and check"
-        return 0
+        return 1
     fi
     _level="$(command printf '%s' "$_marker" | command cut -f3)"
     case "$_level" in
@@ -173,9 +203,31 @@ _detect_half() {
             return 0
             ;;
     esac
+    # Liveness: a cleared session that never got its resume holds only the
+    # `/clear` record — `idle`, or "no top-level turn" (exit 2). Anything showing
+    # work means the resume arrived by another route.
+    _read_liveness || return 0
+    case "$_lv_rc:$_lv" in
+        0:idle) ;;
+        0:*)
+            _state="not-due"
+            _reason="cleared for handoff at $_at but golem is $_lv — resumed by another route"
+            return 0
+            ;;
+        *)
+            case "$_lv_err" in
+                *"no top-level turn"*) ;;
+                *)
+                    _reason="cleared for handoff at $_at; liveness indeterminate (golem-transcript-liveness.sh exit $_lv_rc)"
+                    return 0
+                    ;;
+            esac
+            ;;
+    esac
     _check_pane || return 0
     _state="resume-due"
     _reason="/clear landed for handoff at $_at but the resume never did"
+    return 0
 }
 
 # detect <N> — set _state / _reason / _level / _at. Never exits.
@@ -197,8 +249,13 @@ detect() {
     _stamp_body="$(command cat "$_stamp" 2>/dev/null || true)"
     case "$_stamp_body" in
         "cleared "*)
-            _detect_half "${_stamp_body#cleared }"
-            return 0
+            # 1 = stale stamp from an earlier handoff: fall through to the
+            # normal path for the current marker.
+            _detect_half "${_stamp_body#cleared }" && return 0
+            _state="unknown"
+            _reason=""
+            _level=""
+            _at=""
             ;;
     esac
 
@@ -269,21 +326,7 @@ detect() {
     # (3) idle at the prompt. Indeterminate (non-zero) is unknown, not idle —
     # except the #890 turn-ended shape, which the open marker disambiguates (see
     # header). stderr is kept apart from the verdict so the shape can be read.
-    _lv_rc=0
-    _lv_errf="$(command mktemp "${TMPDIR:-/tmp}/handoff-relaunch.XXXXXX")" || _lv_errf=""
-    if [ -z "$_lv_errf" ]; then
-        _reason="mktemp failed — cannot read liveness"
-        return 0
-    fi
-    _lv="$("$liveness" "$_wt" 2>"$_lv_errf")" || _lv_rc=$?
-    _lv_err="$(command cat "$_lv_errf" 2>/dev/null)"
-    command rm -f "$_lv_errf"
-    _lv_turn_ended=0
-    if [ "$_lv_rc" -eq 2 ]; then
-        case "$_lv_err" in
-            *"turn ended after a background-capable tool"*) _lv_turn_ended=1 ;;
-        esac
-    fi
+    _read_liveness || return 0
     if [ "$_lv_turn_ended" -ne 1 ]; then
         if [ "$_lv_rc" -ne 0 ] || [ -z "$_lv" ]; then
             _reason="liveness indeterminate (golem-transcript-liveness.sh exit $_lv_rc)"
