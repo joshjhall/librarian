@@ -225,7 +225,9 @@ Authoritative status comes from **PR + issue-label state**. The
    a human gate is never cleared — then sends `/clear` and
    `/workflow:next-issue N --level L` via `verify-text`, once per handoff. Exit 1
    with `state=not-due`/`unknown` prints why; `unknown` is a reading that did
-   not happen, not a pass.
+   not happen, not a pass (an unreadable pane is `unknown`). If `/clear` landed
+   but the resume did not, the next sweep reports `resume-due` and re-sends the
+   resume only — the cleared golem's `ok` budget does not hide it.
 
    **Attention markers ride the `STATE` column**
    as plain text (`⚠ BLOCKED`

@@ -37,14 +37,20 @@
 #      Every OTHER indeterminate (stale `working`, no top-level turn) stays
 #      unknown.
 #   +  no prompt overlay on the pane — a plan/permission/AskUserQuestion modal
-#      means a human gate is open, and `/clear` would destroy it. On the accepted
-#      indeterminate path an UNREADABLE pane is unknown, not a pass: that path
-#      has given up the transcript's own proof of an idle prompt, so the pane is
-#      the only remaining witness.
+#      means a human gate is open, and `/clear` would destroy it. An UNREADABLE
+#      pane is unknown, never a pass, on every path: this is a safety guard, and
+#      the pane is the only witness to a gate the transcript cannot show.
 #   4. not already relaunched      — a stamp keyed on the marker's `at`. After
 #      `/clear` the fresh session's transcript is newer and reads near the floor,
 #      so (1) normally clears on its own; the stamp covers the window before the
 #      fresh session's first request lands, and stops a second sweep re-sending.
+#
+# HALF-RELAUNCH. If `/clear` lands and the resume does not, the cleared session
+# reads near the floor, (1) says `ok`, and every later sweep would call the golem
+# not-due — stranded, its handoff never resumed. So the stamp is written as
+# `cleared <at>` BEFORE the resume is sent, and checked FIRST: a `cleared` stamp
+# whose marker is still open is `resume-due`, and relaunch then sends ONLY the
+# resume (never a second `/clear`), still behind the overlay guard.
 #
 # Each missing signal reports WHY on stdout (`state=…`), so an operator reading a
 # sweep can tell "not due" from "could not tell" — a reading that did not happen
@@ -54,6 +60,7 @@
 #   check <N>      read-only. Prints `golem=golem-N`, `state=<s>`, `reason=…`.
 #                  state is one of:
 #                    due        all four signals hold — relaunch is warranted
+#                    resume-due `/clear` landed, the resume did not — send it
 #                    not-due    a signal says no (reason names which)
 #                    unknown    a signal could not be read (reason names which)
 #                  Exit 0 for every state; non-zero only on a usage error.
@@ -110,6 +117,67 @@ pane_has_gate() {
     return 1
 }
 
+# _check_pane — the overlay guard. Returns 0 when the pane is readable and shows
+# no gate; otherwise sets _state/_reason (not-due on a gate, unknown on an
+# unreadable pane — fail CLOSED, never a pass) and returns 1.
+_check_pane() {
+    _pane="$(tmux capture-pane -p -t "golem-$_n" 2>/dev/null || true)"
+    if [ -z "$_pane" ]; then
+        _reason="pane unreadable (tmux capture-pane golem-$_n) — cannot rule out an open gate"
+        return 1
+    fi
+    if pane_has_gate "$_pane"; then
+        _state="not-due"
+        _reason="pane shows a prompt overlay (plan/permission/question gate) — never cleared"
+        return 1
+    fi
+    return 0
+}
+
+# _detect_half <at> — a `cleared <at>` stamp: /clear landed, the resume may not
+# have. The budget is no longer a signal (the cleared session reads near the
+# floor), so this path reads the marker and the pane only.
+_detect_half() {
+    _at="$1"
+    if ! command -v jq >/dev/null 2>&1; then
+        _reason="jq not found — cannot read $_sf"
+        return 0
+    fi
+    _marker="$(jq -r '
+        (.checkpoint.handoff_marker // null) as $m
+        | if ($m | type) != "object" then "none"
+          elif ($m.r_measured // null) != null then "resumed"
+          else "open\t\($m.at // "")\t\(.autonomy_level // "")"
+          end' "$_sf" 2>/dev/null)" || _marker=""
+    case "$_marker" in
+        resumed)
+            _state="not-due"
+            _reason="handoff_marker resumed after /clear (r_measured set)"
+            return 0
+            ;;
+        open*) ;;
+        *)
+            _reason="cleared for handoff at $_at but the state file's marker is unreadable: $_sf"
+            return 0
+            ;;
+    esac
+    if [ "$(command printf '%s' "$_marker" | command cut -f2)" != "$_at" ]; then
+        _reason="cleared-stamp ($_at) does not match the open marker — attach and check"
+        return 0
+    fi
+    _level="$(command printf '%s' "$_marker" | command cut -f3)"
+    case "$_level" in
+        1 | 2 | 3 | 4) ;;
+        *)
+            _reason="state file has no valid autonomy_level ('$_level')"
+            return 0
+            ;;
+    esac
+    _check_pane || return 0
+    _state="resume-due"
+    _reason="/clear landed for handoff at $_at but the resume never did"
+}
+
 # detect <N> — set _state / _reason / _level / _at. Never exits.
 detect() {
     _n="$1"
@@ -124,6 +192,15 @@ detect() {
         _reason="no worktree at $_wt"
         return 0
     fi
+
+    _stamp="$root/$GOLEM_STATUS_DIR/handoff-relaunched-golem-$_n"
+    _stamp_body="$(command cat "$_stamp" 2>/dev/null || true)"
+    case "$_stamp_body" in
+        "cleared "*)
+            _detect_half "${_stamp_body#cleared }"
+            return 0
+            ;;
+    esac
 
     # (1) budget verdict. The script's own exit code is the fail-loud signal: a
     # non-zero exit is an UNKNOWN budget, never `ok`.
@@ -182,6 +259,12 @@ detect() {
             return 0
             ;;
     esac
+    # The stamp is keyed on `at`; an empty one would match an empty stamp
+    # forever and silence every later handoff.
+    if [ -z "$_at" ]; then
+        _reason="handoff_marker has no 'at' timestamp — cannot key the relaunch stamp"
+        return 0
+    fi
 
     # (3) idle at the prompt. Indeterminate (non-zero) is unknown, not idle —
     # except the #890 turn-ended shape, which the open marker disambiguates (see
@@ -214,21 +297,10 @@ detect() {
     fi
 
     # (+) no human gate painted on the pane.
-    _pane="$(tmux capture-pane -p -t "golem-$_n" 2>/dev/null || true)"
-    if [ -n "$_pane" ]; then
-        if pane_has_gate "$_pane"; then
-            _state="not-due"
-            _reason="pane shows a prompt overlay (plan/permission/question gate) — never cleared"
-            return 0
-        fi
-    elif [ "$_lv_turn_ended" -eq 1 ]; then
-        _reason="turn ended after a background-capable tool and the pane is unreadable — cannot rule out an open gate"
-        return 0
-    fi
+    _check_pane || return 0
 
     # (4) not already relaunched for this marker.
-    _stamp="$root/$GOLEM_STATUS_DIR/handoff-relaunched-golem-$_n"
-    if [ -f "$_stamp" ] && [ "$(command cat "$_stamp" 2>/dev/null)" = "$_at" ]; then
+    if [ -f "$_stamp" ] && [ "$_stamp_body" = "$_at" ]; then
         _state="not-due"
         _reason="already relaunched for handoff at $_at"
         return 0
@@ -277,20 +349,36 @@ detect "$n"
 command printf 'golem=golem-%s\nstate=%s\nreason=%s\n' "$n" "$_state" "$_reason"
 
 [ "$cmd" = "check" ] && exit 0
-[ "$_state" = "due" ] || exit 1
+case "$_state" in
+    due | resume-due) ;;
+    *) exit 1 ;;
+esac
 
 # `/clear` first, then the resume. Each through verify-text, which refuses an
 # occupied composer and confirms the submit landed (#974) — a relaunch that
 # assumed the keystroke worked would be the silent shape this issue is about.
-if ! "$modecheck" verify-text "$n" "/clear"; then
-    command echo "golem-handoff-relaunch: /clear not confirmed for golem-$n — not sending the resume" >&2
+stamp="$root/$GOLEM_STATUS_DIR/handoff-relaunched-golem-$n"
+if ! command mkdir -p "$root/$GOLEM_STATUS_DIR" 2>/dev/null; then
+    command echo "golem-handoff-relaunch: cannot create $root/$GOLEM_STATUS_DIR — refusing to /clear without a stamp" >&2
     exit 1
+fi
+if [ "$_state" = "due" ]; then
+    if ! "$modecheck" verify-text "$n" "/clear"; then
+        command echo "golem-handoff-relaunch: /clear not confirmed for golem-$n — not sending the resume" >&2
+        exit 1
+    fi
+    # Recorded BEFORE the resume, so a resume that fails is found next sweep as
+    # resume-due rather than lost behind an `ok` budget (see HALF-RELAUNCH).
+    command printf 'cleared %s\n' "$_at" >"$stamp"
 fi
 if ! "$modecheck" verify-text "$n" "/workflow:next-issue $n --level $_level"; then
-    command echo "golem-handoff-relaunch: resume command not confirmed for golem-$n — attach and check" >&2
+    command echo "golem-handoff-relaunch: resume command not confirmed for golem-$n — next sweep reports resume-due" >&2
     exit 1
 fi
-command mkdir -p "$root/$GOLEM_STATUS_DIR" 2>/dev/null
-command printf '%s\n' "$_at" >"$root/$GOLEM_STATUS_DIR/handoff-relaunched-golem-$n"
-command echo "relaunched golem-$n: /clear + /workflow:next-issue $n --level $_level"
+command printf '%s\n' "$_at" >"$stamp"
+if [ "$_state" = "due" ]; then
+    command echo "relaunched golem-$n: /clear + /workflow:next-issue $n --level $_level"
+else
+    command echo "relaunched golem-$n: resume only (/clear had landed) — /workflow:next-issue $n --level $_level"
+fi
 exit 0

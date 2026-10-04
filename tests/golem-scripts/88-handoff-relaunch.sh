@@ -85,11 +85,13 @@ _hr_state_open() {
     command printf '{"version":2,"issue":%s,"phase":"implement","autonomy_level":3,"checkpoint":{"completed_phase":"implement","next_action":"x","handoff_marker":{"context_tokens":200100,"threshold":175000,"floor":104000,"pct_of_threshold":114,"at":"2026-10-03T12:00:00Z","r_measured":null}}}' "$1"
 }
 
-# plant_relaunch_tmux <sandbox> — a tmux stub whose composer empties on every
-# Enter (a healthy golem), logging each send so the ORDER and SEPARATION of the
-# two directives can be asserted.
+# plant_relaunch_tmux <sandbox> [fail-on] — a tmux stub whose composer empties on
+# every Enter (a healthy golem), logging each send so the ORDER and SEPARATION of
+# the two directives can be asserted. With <fail-on>, a literal payload
+# containing that text is typed but its Enter never submits — the composer stays
+# occupied, so verify-text reports the send as not landed.
 plant_relaunch_tmux() {
-    local sb="$1"
+    local sb="$1" fail_on="${2:-}"
     command mkdir -p "$sb/bin"
     command printf 'work output\n\n\342\235\257\302\240\n  \342\217\265\342\217\265 auto mode on (shift+tab to cycle)\n' >"$sb/pane.txt"
     command cat >"$sb/bin/tmux" <<EOF
@@ -100,8 +102,12 @@ case "\$1" in
     send-keys)
         printf '%s\n' "\$*" >>"$sb/send-keys.log"
         case "\$*" in
-            *-l*) printf 'work output\n\n\342\235\257\302\240typed\n  \342\217\265\342\217\265 auto mode on (shift+tab to cycle)\n' >"$sb/pane.txt" ;;
-            *Enter*) printf 'work output\n\n\342\235\257\302\240\n  \342\217\265\342\217\265 auto mode on (shift+tab to cycle)\n' >"$sb/pane.txt" ;;
+            *-l*)
+                : >"$sb/stuck"
+                case "\$*" in *"$fail_on"*) [ -n "$fail_on" ] && printf x >"$sb/stuck" ;; esac
+                printf 'work output\n\n\342\235\257\302\240typed\n  \342\217\265\342\217\265 auto mode on (shift+tab to cycle)\n' >"$sb/pane.txt" ;;
+            *Enter*)
+                [ -s "$sb/stuck" ] || printf 'work output\n\n\342\235\257\302\240\n  \342\217\265\342\217\265 auto mode on (shift+tab to cycle)\n' >"$sb/pane.txt" ;;
         esac
         ;;
 esac
@@ -140,6 +146,7 @@ test_relaunch_check_due_when_all_signals_hold() {
     local sb
     new_sandbox sb
     _hr_golem "$sb" 42 "$_HR_IDLE_HANDOFF" "$(_hr_state_open 42)"
+    plant_pane_tmux "$sb" "$_HR_PANE_IDLE"
     run_relaunch "$sb" check 42
     assert_exit 0 "$RUN_RC" "check exits 0"
     assert_contains "$RUN_OUT" "state=due" "handoff + open marker + idle is due"
@@ -322,17 +329,20 @@ test_relaunch_not_due_when_pane_shows_plan_gate() {
 
 # On the disambiguated path the pane is the only witness left, so an unreadable
 # pane is UNKNOWN — not a pass.
-test_relaunch_unknown_on_write_tail_when_pane_unreadable() {
+test_relaunch_unknown_when_pane_unreadable() {
     _hr_need_jq || return 0
-    local sb
-    new_sandbox sb
-    _hr_golem "$sb" 42 "$_HR_HANDOFF_WRITE_TAIL" "$(_hr_state_open 42)"
-    command mkdir -p "$sb/bin"
-    command printf '#!/usr/bin/env bash\nexit 1\n' >"$sb/bin/tmux"
-    command chmod +x "$sb/bin/tmux"
-    run_relaunch "$sb" check 42
-    assert_contains "$RUN_OUT" "state=unknown" "an unreadable pane on the indeterminate path is unknown"
-    assert_contains "$RUN_OUT" "pane is unreadable" "and says why"
+    local sb body
+    for body in "$_HR_HANDOFF_WRITE_TAIL" "$_HR_IDLE_HANDOFF"; do
+        new_sandbox sb
+        _hr_golem "$sb" 42 "$body" "$(_hr_state_open 42)"
+        command mkdir -p "$sb/bin"
+        command printf '#!/usr/bin/env bash\nexit 1\n' >"$sb/bin/tmux"
+        command chmod +x "$sb/bin/tmux"
+        run_relaunch "$sb" relaunch 42
+        assert_contains "$RUN_OUT" "state=unknown" "an unreadable pane is unknown on every liveness path"
+        assert_contains "$RUN_OUT" "pane unreadable" "and says why"
+        assert_true "[ ! -e \"$sb/.worktrees/.status/handoff-relaunched-golem-42\" ]" "nothing was stamped"
+    done
 }
 
 # Registered background work still vetoes: liveness reads it as `background`
@@ -379,4 +389,93 @@ test_relaunch_refuses_when_gate_matchers_unavailable() {
     run_relaunch "$sb" check 42
     assert_contains "$RUN_OUT" "state=not-due" "missing gate matchers refuse"
     assert_contains "$RUN_OUT" "prompt overlay" "by treating the pane as gated"
+}
+
+# --- delivery failures and the half-relaunch (#1057 review) ------------------
+
+# A /clear that never lands must not be followed by the resume, and leaves no
+# stamp — the next sweep sees the same `due` golem and retries cleanly.
+test_relaunch_clear_not_confirmed_sends_no_resume() {
+    _hr_need_jq || return 0
+    local sb
+    new_sandbox sb
+    _hr_golem "$sb" 42 "$_HR_HANDOFF_WRITE_TAIL" "$(_hr_state_open 42)"
+    plant_relaunch_tmux "$sb" "/clear"
+    run_relaunch "$sb" relaunch 42
+    assert_exit 1 "$RUN_RC" "an unconfirmed /clear fails the relaunch"
+    assert_contains "$RUN_OUT" "/clear not confirmed" "and says which send failed"
+    assert_not_contains "$(command cat "$sb/send-keys.log" 2>/dev/null)" "next-issue" "the resume was never sent"
+    assert_true "[ ! -e \"$sb/.worktrees/.status/handoff-relaunched-golem-42\" ]" "nothing was stamped"
+}
+
+# /clear lands, the resume does not: the golem is cleared, so its budget now
+# reads ok. The `cleared <at>` stamp must surface it as resume-due, and the next
+# relaunch sends ONLY the resume — a second /clear would wipe nothing useful but
+# a resumed session is exactly what it must never hit.
+test_relaunch_half_relaunch_is_resume_due() {
+    _hr_need_jq || return 0
+    local sb
+    new_sandbox sb
+    _hr_golem "$sb" 42 "$_HR_HANDOFF_WRITE_TAIL" "$(_hr_state_open 42)"
+    plant_relaunch_tmux "$sb" "next-issue"
+    run_relaunch "$sb" relaunch 42
+    assert_exit 1 "$RUN_RC" "an unconfirmed resume fails the relaunch"
+    assert_contains "$RUN_OUT" "resume-due" "the failure names the recovery state"
+    assert_equals "cleared 2026-10-03T12:00:00Z" "$(command cat "$sb/.worktrees/.status/handoff-relaunched-golem-42" 2>/dev/null)" "the half-relaunch is stamped"
+    # The cleared session now reads near the floor — an `ok` budget.
+    _hr_golem "$sb" 42 "$_HR_IDLE_OK" "$(_hr_state_open 42)"
+    run_relaunch "$sb" check 42
+    assert_contains "$RUN_OUT" "state=resume-due" "an ok budget does not hide the stranded golem"
+    plant_relaunch_tmux "$sb"
+    command rm -f "$sb/send-keys.log"
+    run_relaunch "$sb" relaunch 42
+    assert_exit 0 "$RUN_RC" "the resume-only relaunch succeeds"
+    assert_not_contains "$(command cat "$sb/send-keys.log" 2>/dev/null)" "/clear" "no second /clear"
+    assert_contains "$(command cat "$sb/send-keys.log" 2>/dev/null)" "-l -- /workflow:next-issue 42 --level 3" "the resume is sent"
+    assert_equals "2026-10-03T12:00:00Z" "$(command cat "$sb/.worktrees/.status/handoff-relaunched-golem-42" 2>/dev/null)" "the stamp completes"
+}
+
+# A half-relaunch is still behind the overlay guard, and stops once the fresh
+# session has resumed (r_measured set).
+test_relaunch_resume_due_respects_gate_and_resume() {
+    _hr_need_jq || return 0
+    local sb
+    new_sandbox sb
+    _hr_golem "$sb" 42 "$_HR_IDLE_OK" "$(_hr_state_open 42)"
+    command mkdir -p "$sb/.worktrees/.status"
+    command printf 'cleared 2026-10-03T12:00:00Z\n' >"$sb/.worktrees/.status/handoff-relaunched-golem-42"
+    plant_pane_tmux "$sb" "$_HR_PANE_PERMISSION_GATE"
+    run_relaunch "$sb" check 42
+    assert_contains "$RUN_OUT" "prompt overlay" "a gate vetoes the resume-only send too"
+    _hr_golem "$sb" 42 "$_HR_IDLE_OK" \
+        '{"version":2,"issue":42,"phase":"implement","autonomy_level":3,"checkpoint":{"handoff_marker":{"at":"2026-10-03T12:00:00Z","r_measured":3}}}'
+    plant_pane_tmux "$sb" "$_HR_PANE_IDLE"
+    run_relaunch "$sb" check 42
+    assert_contains "$RUN_OUT" "state=not-due" "a resumed marker ends the half-relaunch"
+}
+
+# The stamp is keyed on `at`: a LATER handoff for the same golem relaunches.
+test_relaunch_new_handoff_after_stamped_one_is_due() {
+    _hr_need_jq || return 0
+    local sb
+    new_sandbox sb
+    _hr_golem "$sb" 42 "$_HR_HANDOFF_WRITE_TAIL" "$(_hr_state_open 42)"
+    plant_pane_tmux "$sb" "$_HR_PANE_IDLE"
+    command mkdir -p "$sb/.worktrees/.status"
+    command printf '2026-09-30T08:00:00Z\n' >"$sb/.worktrees/.status/handoff-relaunched-golem-42"
+    run_relaunch "$sb" check 42
+    assert_contains "$RUN_OUT" "state=due" "a stamp for an older handoff does not block a new one"
+}
+
+# An empty `at` cannot key the stamp — unknown, not a permanent match.
+test_relaunch_unknown_when_marker_has_no_at() {
+    _hr_need_jq || return 0
+    local sb
+    new_sandbox sb
+    _hr_golem "$sb" 42 "$_HR_HANDOFF_WRITE_TAIL" \
+        '{"version":2,"issue":42,"phase":"implement","autonomy_level":3,"checkpoint":{"handoff_marker":{"context_tokens":200100,"r_measured":null}}}'
+    plant_pane_tmux "$sb" "$_HR_PANE_IDLE"
+    run_relaunch "$sb" check 42
+    assert_contains "$RUN_OUT" "state=unknown" "a marker with no at is unknown"
+    assert_contains "$RUN_OUT" "no 'at' timestamp" "and says why"
 }
