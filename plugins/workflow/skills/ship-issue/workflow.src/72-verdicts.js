@@ -277,15 +277,19 @@ const stampEngagement = (dimensions, reviewResults, retryIdx, retrySucceeded) =>
   reviewResults.forEach((res, i) => {
     const name = dimensions[i].dim.name
     const verdict = classifyEngagement(name, res)
+    // Guarded like classifyEngagement: the dispatch `.then` always sets both
+    // arrays today, but a result missing one must be counted, not thrown on.
+    const checked = res && Array.isArray(res.checked) ? res.checked : []
+    const findings = res && Array.isArray(res.findings) ? res.findings : []
     dimensionEngagement[name] = {
       engagement: verdict,
-      checked: res ? res.checked.length : 0,
+      checked: checked.length,
       // The dimension's RAW finding count, before the judge. review-engagement.sh
       // keys its "produced a finding" exemption off this rather than re-deriving
       // it from the post-judge blocking/deferrable arrays: that only works while
       // applyJudgeVerdicts never drops a finding (true today: it partitions every
       // raw finding), and stating the count here removes the dependence.
-      findings: res ? res.findings.length : 0,
+      findings: findings.length,
       retry_attempted: retryIdx.includes(i),
       retry_succeeded: retrySucceeded.includes(i),
       requires_code_reading: CODE_READING_DIMENSIONS.includes(name),
@@ -301,7 +305,7 @@ const stampEngagement = (dimensions, reviewResults, retryIdx, retrySucceeded) =>
       partial = true
       return
     }
-    for (const f of res.findings) rawFindings.push({ ...f, dimension: res.dim })
+    for (const f of findings) rawFindings.push({ ...f, dimension: res.dim })
   })
   return { rawFindings, unengagedDimensions, dimensionEngagement, skippedAdds, partial }
 }
