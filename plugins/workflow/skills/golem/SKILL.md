@@ -72,7 +72,8 @@ For 2+ issues in parallel, or detached/headless work, use **`/workflow:orchestra
 1. **Worktree collision guard.** If `.worktrees/issue-N` already exists, offer to
    **resume into it** (`EnterWorktree`, skip Phase B's create) rather than
    recreate — a prior `/workflow:golem` run for this issue may have paused. This
-   is the primary `/clear` resume path (#1059). At **L3–L4** it is a routine gate:
+   is the primary `/clear` resume path (#1059). Under `--level 3` or `--level 4` it
+   is a routine gate (with no flag the level is not yet known here, so it asks):
    resume **without asking** when the worktree is on `feature/issue-N` **and**
    holds `.claude/memory/tmp/next-issue-N.json`. Any mismatch still asks, at every
    level — a worktree that disagrees with its state is not safe to assume.
