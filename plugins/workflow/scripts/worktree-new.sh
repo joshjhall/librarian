@@ -486,9 +486,16 @@ seed_cache_env "$GOLEM_CARGO_CACHE_DIR" CARGO_TARGET_DIR
 # not worth keeping across an issue's lifetime — which is also why it is
 # namespaced by REPO (golem_repo_key): a deleted path must never be one another
 # repo's issue of the same number is using.
+#
+# The key is computed FIRST and a failed or empty one skips the seed (#1091
+# pr-review c2): passed inline, a failure substitutes "" and seed_cache_env
+# treats that as "no subdir" — seeding the un-namespaced <cache>/issue-N that
+# teardown never removes and that another repo's issue N would share.
 if [ -f "$wt/pyproject.toml" ] || [ -f "$wt/uv.lock" ]; then
-    seed_cache_env "$GOLEM_UV_CACHE_DIR" UV_PROJECT_ENVIRONMENT \
-        "$(golem_repo_key "$root")"
+    uv_key="$(golem_repo_key "$root")" || uv_key=""
+    if [ -n "$uv_key" ]; then
+        seed_cache_env "$GOLEM_UV_CACHE_DIR" UV_PROJECT_ENVIRONMENT "$uv_key"
+    fi
 fi
 
 # Seed a workspace-trust entry for the new worktree path so the copied

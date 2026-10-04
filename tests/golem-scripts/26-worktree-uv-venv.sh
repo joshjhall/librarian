@@ -473,6 +473,34 @@ test_worktree_new_uv_unignored_settings_is_noop() {
     assert_equals "" "$st" "the worktree stays CLEAN"
 }
 
+# A FAILED repo key skips the uv seed (#1091 pr-review c2). Inline, a failure
+# substituted "" and seeded the un-namespaced <cache>/issue-N — shared across
+# repos and never removed by teardown, which requires a key. A PATH stub fails
+# only cksum (the key's one external), so everything else runs normally;
+# -uBASH_ENV so this image's /etc/bash_env cannot restore the real PATH.
+# Positive control: test_worktree_new_uv_seeds_project_environment.
+test_worktree_new_uv_failed_repo_key_skips_seed() {
+    local sb
+    new_sandbox sb
+    _uv_need_jq || return 0
+    _uv_project "$sb"
+    local cache="$sb/venvs"
+    command mkdir -p "$cache" "$sb/stubbin"
+    command printf '#!/usr/bin/env bash\nexit 1\n' >"$sb/stubbin/cksum"
+    command chmod +x "$sb/stubbin/cksum"
+
+    _uv_env "$sb" "$cache" "$sb/no-cargo-cache"
+    RUN_RC=0
+    RUN_OUT="$(cd "$sb" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" -uBASH_ENV "${_UV_ENV[@]}" \
+            PATH="$sb/stubbin:$PATH" \
+            "$REAL_BASH" "$WT_NEW" 75 2>&1)" || RUN_RC=$?
+    assert_exit 0 "$RUN_RC" "worktree-new exits 0 when the repo key cannot be computed"
+    assert_not_contains "$RUN_OUT" "UV_PROJECT_ENVIRONMENT" "no uv seed without a repo key"
+    assert_equals "" "$(command ls -A "$cache")" \
+        "nothing is provisioned — in particular no un-namespaced issue-N"
+}
+
 # golem_repo_key's uniqueness rests on the cksum suffix: two repos that share a
 # BASENAME (two checkouts of one project) must still get different keys. The
 # cross-repo teardown test uses mktemp-named sandboxes whose basenames already
