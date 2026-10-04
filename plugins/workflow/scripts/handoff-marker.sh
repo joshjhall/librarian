@@ -76,12 +76,13 @@ unreadable() {
 command -v jq >/dev/null 2>&1 || unreadable
 
 # Keep in step with golem-handoff-relaunch.sh's two marker reads — the parity
-# case in tests/validate-handoff-marker.sh fails if they diverge.
+# case in tests/validate-handoff-marker.sh fails if they diverge. `at` is
+# flattened to one line so a newline in it cannot forge a later key=value line.
 classified="$(command jq -r '
     (.checkpoint.handoff_marker // null) as $m
     | if ($m | type) != "object" then "none"
       elif ($m.r_measured // null) != null then "counted"
-      else "open\t\($m.at // "")"
+      else "open\t\(($m.at // "") | tostring | gsub("[\n\r\t]"; " "))"
       end' "$state_file" 2>/dev/null)" || unreadable
 
 case "$classified" in
