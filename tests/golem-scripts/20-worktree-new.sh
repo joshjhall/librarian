@@ -35,6 +35,28 @@ test_worktree_new_creates_worktree() {
     assert_not_empty "$branches" "the feature/issue-31 branch was created"
 }
 
+# Launch hint (#1100): the hint must never assert an autonomy level the caller
+# did not supply. It used to hardcode `--level 4`, so a pasted hint launched an
+# L4 golem (no plan gate, unasked merge) on an L3 run. It now points at
+# golem-launch.sh with a literal `<L>` placeholder. GOLEM_LEVEL=3 is exported
+# deliberately: wiring the hint to GOLEM_LEVEL would ALSO assert a level nobody
+# passed (config.sh defaults it to 4), and this run catches that regression as
+# well as a revert to the hardcoded 4.
+test_worktree_new_launch_hint_asserts_no_level() {
+    local sb
+    new_sandbox sb
+    GOLEM_LEVEL=3 run_in "$sb" "$WT_NEW" 31
+    assert_exit 0 "$RUN_RC" "worktree-new exits 0 on a fresh issue"
+    assert_contains "$RUN_OUT" "golem-launch.sh launch 31 --level <L>" \
+        "the hint delegates to golem-launch.sh with a <L> level placeholder"
+    local concrete_level=no level_re='--level [0-9]'
+    [[ "$RUN_OUT" =~ $level_re ]] && concrete_level=yes
+    assert_equals "no" "$concrete_level" \
+        "no concrete --level appears anywhere in the output"
+    assert_not_contains "$RUN_OUT" "tmux new-session" \
+        "the hint no longer duplicates golem-launch.sh's tmux launch line"
+}
+
 # Idempotency guard: a second worktree-new for the SAME issue → exit 1 (worktree
 # already exists), distinct from the bad-arg exit 2.
 test_worktree_new_duplicate_exits_1() {
