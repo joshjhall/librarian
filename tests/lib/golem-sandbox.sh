@@ -545,7 +545,12 @@ run_status_scrape() {
     shift
     RUN_RC=0
     RUN_OUT="$(cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
+        # CONTEXT_BUDGET_* are tuning knobs config.sh EXPORTS, so a parent session
+        # can hand down a stale value (observed: the pre-#1056 floor 91000) that
+        # wins over the script's `:=` default and fails the default-value
+        # assertions locally only. Scrubbed so a case sets them explicitly via
+        # its trailing VAR=VAL args, which are applied after these unsets.
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" -uCONTEXT_BUDGET_FLOOR -uCONTEXT_BUDGET_THRESHOLD \
             HOME="$sb" \
             GOLEM_PLUGIN_PROBE="$sb/no-plugin-probe" \
             TMUX= TMUX_TMPDIR="${SANDBOX_TMUX_DIR:-$sb/.tmux}" \
@@ -631,7 +636,12 @@ run_ctx_budget() {
     shift 2
     RUN_RC=0
     RUN_OUT="$(cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
+        # CONTEXT_BUDGET_* are tuning knobs config.sh EXPORTS, so a parent session
+        # can hand down a stale value (observed: the pre-#1056 floor 91000) that
+        # wins over the script's `:=` default and fails the default-value
+        # assertions locally only. Scrubbed so a case sets them explicitly via
+        # its trailing VAR=VAL args, which are applied after these unsets.
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" -uCONTEXT_BUDGET_FLOOR -uCONTEXT_BUDGET_THRESHOLD \
             HOME="$sb" \
             GOLEM_PLUGIN_PROBE="$sb/no-plugin-probe" \
             CLAUDE_PROJECTS_DIR="$sb/projects" \

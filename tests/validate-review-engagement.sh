@@ -57,7 +57,7 @@ agent() {
 user='{"type":"user","message":{"role":"user","content":"x"}}'
 so() { command printf '{"type":"assistant","message":{"id":"%s","content":[{"type":"tool_use","name":"StructuredOutput"}],"usage":{"output_tokens":%s}}}' "$1" "$2"; }
 # A turn that records the answering model, as real transcripts do.
-som() { command printf '{"type":"assistant","message":{"id":"%s","model":"%s","content":[{"type":"tool_use","name":"StructuredOutput"}],"usage":{"output_tokens":%s}}}' "$1" "$2" "$3"; }
+so_model() { command printf '{"type":"assistant","message":{"id":"%s","model":"%s","content":[{"type":"tool_use","name":"StructuredOutput"}],"usage":{"output_tokens":%s}}}' "$1" "$2" "$3"; }
 tool() { command printf '{"type":"assistant","message":{"id":"%s","content":[{"type":"tool_use","name":"%s"}],"usage":{"output_tokens":%s}}}' "$1" "$2" "$3"; }
 text() { command printf '{"type":"assistant","message":{"id":"%s","content":[{"type":"text","text":"t"}],"usage":{"output_tokens":%s}}}' "$1" "$2"; }
 
@@ -152,7 +152,7 @@ test_model_read_from_transcript() {
     local d="$SANDBOX/model" r="$SANDBOX/model.json"
     command mkdir -p "$d"
     command printf '{"description":"review:tests"}\n' >"$d/agent-k1.meta.json"
-    command printf '%s\n%s\n' "$(tool v1 Read 10)" "$(som v2 claude-sonnet-5-5 20)" >"$d/agent-k1.jsonl"
+    command printf '%s\n%s\n' "$(tool v1 Read 10)" "$(so_model v2 claude-sonnet-5-5 20)" >"$d/agent-k1.jsonl"
     clean_result "$r"
     "$RE" "$d" "$r" >/dev/null
     assert_equals "claude-sonnet-5-5" "$(command jq -r '.dimension_metrics.tests[0].model' "$r")" "the transcript's message.model is reported"
