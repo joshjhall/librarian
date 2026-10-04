@@ -243,3 +243,57 @@ test_worktree_rm_invalid_rename_timeout_warns_and_defaults() {
         "warns about the malformed bound"
     assert_contains "$RUN_OUT" "stays occupied" "the run otherwise proceeds as normal"
 }
+
+# rename_timeout's VALUE, not just its warning: the test above pins the message,
+# whose "using 30" text is a literal — it would still print if the reset were
+# dropped and the malformed value reached bounded_run. Drive the helper directly
+# and assert what it hands the renames.
+run_rename_timeout() {
+    /usr/bin/env -uBASH_ENV "$REAL_BASH" -c '
+        . "$1"
+        . "$2"
+        rename_timeout
+    ' _ "$SCRIPTS/bounded-run.sh" "$WT_RM_LEFTOVER" 2>/dev/null
+}
+
+test_worktree_rm_rename_timeout_value() {
+    assert_equals "30" "$(GOLEM_RENAME_TIMEOUT=soon run_rename_timeout)" \
+        "a malformed bound resolves to 30, not the malformed value"
+    assert_equals "30" "$(GOLEM_RENAME_TIMEOUT=0 run_rename_timeout)" \
+        "zero is rejected — it would make every rename an instant timeout"
+    assert_equals "30" "$(GOLEM_RENAME_TIMEOUT='' run_rename_timeout)" \
+        "an empty bound resolves to 30"
+    assert_equals "7" "$(GOLEM_RENAME_TIMEOUT=7 run_rename_timeout)" \
+        "a valid bound passes through unchanged"
+}
+
+# bounded_run cannot bound (no `sleep` on PATH): the rename must still RUN,
+# unbounded, with a warning — skipping it would leave the path occupied to
+# protect against a hang nobody measured (the #543 shape).
+test_worktree_rm_rename_runs_unbounded_without_bounded_run() {
+    local sb blocked saved_path
+    skip_if_root && return 0
+    new_sandbox sb
+    ignore_build_dir "$sb"
+    run_in "$sb" "$WT_NEW" 166
+    assert_exit 0 "$RUN_RC" "worktree-new succeeds"
+    blocked="$(make_undeletable "$sb/.worktrees/issue-166")"
+
+    saved_path="$PATH"
+    PATH="$(path_without sleep "$sb/farm")"
+    if command -v sleep >/dev/null 2>&1; then
+        PATH="$saved_path"
+        restore_undeletable "$blocked"
+        assert_true "false" "path_without failed to hide sleep"
+        return 0
+    fi
+    run_with_early_deregistering_git "$sb" 166
+    PATH="$saved_path"
+    restore_undeletable "$blocked"
+
+    assert_exit 0 "$RUN_RC" "teardown completes"
+    assert_contains "$RUN_OUT" "cannot bound the rename-aside (sleep/mktemp/cat missing); running it unbounded" \
+        "warns that the rename is unbounded"
+    assert_contains "$RUN_OUT" "moved aside to" "the rename still ran and quarantined the tree"
+    assert_true "[ ! -e '$sb/.worktrees/issue-166' ]" "the path is free"
+}

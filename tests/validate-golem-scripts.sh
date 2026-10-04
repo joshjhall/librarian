@@ -349,6 +349,8 @@ run_fragment_test test_worktree_rm_rename_landed_before_timeout_reports_the_quar
 run_fragment_test test_worktree_rm_hanging_unwedge_fallback_is_bounded "worktree-rm: a hung unwedge-worktree is bounded, path reported occupied (#1096)"
 run_fragment_test test_worktree_rm_unwedge_timeout_after_move_reports_path_free "worktree-rm: an unwedge-worktree killed after its rename reports the path free (#1096)"
 run_fragment_test test_worktree_rm_invalid_rename_timeout_warns_and_defaults "worktree-rm: a malformed GOLEM_RENAME_TIMEOUT warns and uses 30 (#1096)"
+run_fragment_test test_worktree_rm_rename_timeout_value "worktree-rm: rename_timeout hands the renames 30 for a malformed bound, the value for a valid one (#1096 review)"
+run_fragment_test test_worktree_rm_rename_runs_unbounded_without_bounded_run "worktree-rm: without bounded_run the rename still runs, unbounded, with a warning (#1096 review)"
 run_fragment_test test_worktree_new_already_exists_matches_a_bracketed_repo_path "worktree-new: the already-exists guard is a fixed-string match, safe under a bracketed repo path (#1088 review)"
 run_fragment_test test_worktree_rm_repairs_stale_core_worktree "worktree-rm: repairs a stale main-repo core.worktree (#258)"
 run_fragment_test test_worktree_rm_preserves_valid_core_worktree "worktree-rm: preserves a valid core.worktree (#258)"
