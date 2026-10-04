@@ -58,7 +58,8 @@ source_fragments "$SCRIPT_DIR/gate-watch" \
     30-helpers-and-modes.sh \
     40-stream-dedup.sh \
     50-prompt-line.sh \
-    60-pane-registry.sh
+    60-pane-registry.sh \
+    70-classifiers-load.sh
 
 # --- Run all tests ----------------------------------------------------------
 
@@ -168,5 +169,6 @@ run_fragment_test test_pane_registry_liveness_consistent "pane registry (#1097):
 run_fragment_test test_pane_registry_mutation_removes_guard "pane registry (#1097): mutant without the guard reports idle (AC1 not vacuous)"
 run_fragment_test test_pane_registry_bounded_read_fails_open "pane registry (#1097): a hung registry read is bounded and fails open"
 run_fragment_test test_pane_registry_garbage_answer_fails_open "pane registry (#1097): a non-numeric or failing registry answer fails open"
+run_fragment_test test_missing_classifiers_fails_loud "Missing classifiers fragment fails loud; handoff-relaunch refuses (#1109)"
 
 generate_report

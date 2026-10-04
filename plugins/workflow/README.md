@@ -119,7 +119,7 @@ them as `${CLAUDE_PLUGIN_ROOT}/scripts/<name>.sh`.
 | `golem-attach.sh <N>` | Attach to issue N's golem (worktree tmux or container) |
 | `tracks-runbook.sh render` | Render a banked (`dispatched: false`) track composition as an operator runbook — per-lane launch commands built via `golem-launch.sh print`, serial remainder, staleness flagged. Never dispatches (#673) |
 | `golem-watch.sh` | Stream proactive gate notifications until Ctrl-C |
-| `golem-gate-watch.sh` | Gate-detection engine shared by status + watch |
+| `golem-gate-watch.sh` | Gate-detection engine shared by status + watch. Its pane classifiers (`pane_is_*`, prompt-line / API-error reads) live in the sourced fragment `golem-gate-watch-classifiers.sh` (#1109) |
 | `golem-resolve.sh <N>` | Emit a `resolved` feed line to clear a golem's send-keys-resolved plan gate from the BLOCKED list on the next sweep (#422) |
 | `golem-token-scrape.sh <worktree>` | Scrape a Mode-2 golem's top-level token count from its newest transcript (deduped by `message.id`), feeding `golem-status.sh`'s frozen-counter signal (#371) |
 | `golem-work.sh register\|complete\|list\|count` | The background-work registry (#949): a golem records work that outlives its turn (backgrounded Bash, `Monitor`, `Workflow`) so a liveness read reports it working, not `idle at prompt`. Protocol: `skills/golem/background-work.md` |
