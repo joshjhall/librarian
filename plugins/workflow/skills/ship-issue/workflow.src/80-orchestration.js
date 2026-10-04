@@ -195,7 +195,7 @@ for (const d of conditional) {
   dimensions.push({ kind: 'reused', dim: d, diff: d.diff })
 }
 
-const reviewResults = await parallel(
+let reviewResults = await parallel(
   dimensions.map((entry) => () => {
     // Re-check the ceiling INSIDE the thunk, not just at build time above.
     // parallel() invokes thunks as slots free up, so a barrier built when the
@@ -229,18 +229,10 @@ const reviewResults = await parallel(
 // tokens. Only the unengaged are retried, so an engaged cycle pays nothing. Still
 // unengaged after the retry means the dimension is reported missed: listed in
 // both `unengagedDimensions` and `dimensionsSkipped`, and buildResult forces the
-// cycle partial so it can never read clean.
-const unengagedDimensions = []
-const dimensionEngagement = {}
-const retryIdx = []
-// Indices whose opus retry actually RAN and returned a result. Distinct from
-// retryIdx (selected for a retry): the retry is skipped below the budget floor
-// and agent() can return null, and either leaves the sonnet result in place —
-// so "selected" must not be reported as "re-run on opus" (cycle-5 review).
-const retrySucceeded = []
-reviewResults.forEach((res, i) => {
-  if (res && classifyEngagement(dimensions[i].dim.name, res) === 'unengaged') retryIdx.push(i)
-})
+// cycle partial so it can never read clean. The selection, merge, and stamping
+// are pure helpers above ORCH_BOUNDARY (#1128); only the dispatch lives here.
+const retryIdx = selectRetries(dimensions, reviewResults)
+let retrySucceeded = []
 if (retryIdx.length > 0) {
   log(
     `unengaged dimension(s): ${retryIdx.map((i) => dimensions[i].dim.name).join(', ')} — ` +
@@ -249,6 +241,8 @@ if (retryIdx.length > 0) {
   const retried = await parallel(
     retryIdx.map((i) => () => {
       const entry = dimensions[i]
+      // Declining to spend returns null, which mergeRetried treats exactly like
+      // a failed retry: the original unengaged result stays in place.
       if (reviewBudget.total && reviewBudget.remaining() < BUDGET_FLOOR) return null
       const prompt =
         entry.kind === 'new'
@@ -263,62 +257,21 @@ if (retryIdx.length > 0) {
       }).then((r) => (r ? { dim: entry.dim.name, findings: r.findings || [], checked: r.checked || [] } : null))
     })
   )
-  retryIdx.forEach((i, k) => {
-    // A retry that itself failed leaves the original (unengaged) result in
-    // place, so the dimension is still reported unengaged below — never dropped
-    // to the null/failed path, which would lose the reason.
-    if (retried[k]) {
-      reviewResults[i] = retried[k]
-      retrySucceeded.push(i)
-    }
-  })
+  ;({ results: reviewResults, retrySucceeded } = mergeRetried(reviewResults, retryIdx, retried))
 }
 
-const rawFindings = []
-reviewResults.forEach((res, i) => {
-  const name = dimensions[i].dim.name
-  const verdict = classifyEngagement(name, res)
-  dimensionEngagement[name] = {
-    engagement: verdict,
-    checked: res ? res.checked.length : 0,
-    // The dimension's RAW finding count, before the judge. review-engagement.sh
-    // keys its "produced a finding" exemption off this rather than re-deriving
-    // it from the post-judge blocking/deferrable arrays: that only works while
-    // applyJudgeVerdicts never drops a finding (true today: it partitions every
-    // raw finding), and stating the count here removes the dependence.
-    findings: res ? res.findings.length : 0,
-    retry_attempted: retryIdx.includes(i),
-    retry_succeeded: retrySucceeded.includes(i),
-    requires_code_reading: CODE_READING_DIMENSIONS.includes(name),
-  }
-  if (verdict === 'unengaged') {
-    unengagedDimensions.push(name)
-    dimensionsSkipped.push(name)
-    // Set locally too, not only derived in buildResult: the judge prompt and
-    // applyJudgeVerdicts' default disposition both read this flag, and a partial
-    // cycle must default unjudged findings to deferrable on THIS path as well.
-    budgetExhausted = true
-    log(`dimension "${name}" returned without reviewing (unengaged) — cycle now partial`)
-    return
-  }
-  if (!res) {
-    // A null result means the dimension never produced findings: its agent
-    // threw (runtime budget exhausted mid-barrier, or any other terminal
-    // failure — parallel() nulls both), OR the in-thunk ceiling check above
-    // declined to spend. Either way the cycle is now PARTIAL: mark it exhausted
-    // so a finding the judge never returned a verdict for defaults to deferrable
-    // (filed, never dropped) and `clean` is forced false — the skill must not
-    // treat a half-reviewed cycle as a clean pass (#270).
-    budgetExhausted = true
-    dimensionsSkipped.push(dimensions[i].dim.name)
-    log(
-      `dimension "${dimensions[i].dim.name}" did not complete (failed or budget-skipped) — ` +
-        `continuing without its findings (cycle now partial)`
-    )
-    return
-  }
-  for (const f of res.findings) rawFindings.push({ ...f, dimension: res.dim })
-})
+const stamped = stampEngagement(dimensions, reviewResults, retryIdx, retrySucceeded)
+const { rawFindings, unengagedDimensions, dimensionEngagement } = stamped
+if (stamped.partial) budgetExhausted = true
+dimensionsSkipped.push(...stamped.skippedAdds)
+for (const name of stamped.skippedAdds) {
+  log(
+    unengagedDimensions.includes(name)
+      ? `dimension "${name}" returned without reviewing (unengaged) — cycle now partial`
+      : `dimension "${name}" did not complete (failed or budget-skipped) — ` +
+          `continuing without its findings (cycle now partial)`
+  )
+}
 
 // --- Comments (pr-cycle only: fold open PR review comments) -----------------
 const commentsAddressed = []

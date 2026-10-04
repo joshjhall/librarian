@@ -172,20 +172,20 @@ export async function run() {
   // parallel() — which would reopen exactly #646's hole one phase later —
   // fails here.
   ok(
-    /const reviewResults = await parallel\(/.test(orch),
+    /^(const|let) reviewResults = await parallel\(/m.test(orch),
     "ship-issue: dimensions run under parallel(), which nulls a thrown thunk (#646 AC2)",
   );
-  // Anchored on the MAIN results loop (`const rawFindings = []` opens it), not
-  // the first `reviewResults.forEach`: #1111 added an earlier engagement pass
-  // over the same array, and a first-match anchor silently re-pointed this pin at
-  // a loop with no null branch. `slice(idx)` on a -1 would scan from the end, so
-  // the anchor's presence is asserted separately rather than assumed.
-  const nullBranchIdx = orch.indexOf("const rawFindings = []\nreviewResults.forEach((res, i) => {");
-  ok(nullBranchIdx >= 0, "ship-issue: the main dimension-results loop is locatable (#646 AC2, #1111)");
-  const nullBranch = orch.slice(nullBranchIdx, nullBranchIdx + 2000);
+  // The null branch moved into the pure helper `stampEngagement` (#1128), so the
+  // property is exercised directly rather than read out of a 2000-char slice: a
+  // nulled dimension is reported partial and named in the skip list.
+  const { stampEngagement } = extractHelpers(SHIP, ["stampEngagement"], { cycle: 1, phase: "pre-pr", files: ["a.js"] });
+  const nulled = stampEngagement([{ dim: { name: "security" } }], [null], [], []);
+  eq(nulled.partial, true, "ship-issue: a nulled dimension still marks the cycle partial — a throw there is already handled (#646 AC2)");
+  eq(JSON.stringify(nulled.skippedAdds), '["security"]', "ship-issue: a nulled dimension is named in skippedAdds (#646 AC2)");
+  // ...and the call site consumes both halves of that verdict.
   ok(
-    nullBranch.includes("budgetExhausted = true") && nullBranch.includes("dimensionsSkipped.push("),
-    "ship-issue: a nulled dimension still marks the cycle partial — a throw there is already handled (#646 AC2)",
+    orch.includes("if (stamped.partial) budgetExhausted = true") && orch.includes("dimensionsSkipped.push(...stamped.skippedAdds)"),
+    "ship-issue: the orchestration body applies stampEngagement's partial flag and skip list (#646 AC2, #1128)",
   );
 }
 }

@@ -218,5 +218,93 @@ const classifyEngagement = (dimName, result) => {
   return 'engaged'
 }
 
+// The engagement floor's post-barrier bookkeeping (#1111), extracted here for
+// the same reason as `computeAllDimensionsFailed` (#1128): the orchestration
+// body only dispatches, and a retry merge or stamp written inline past
+// ORCH_BOUNDARY could be pinned only by source greps — which kept passing with
+// the replace line deleted or inverted.
+//
+// selectRetries — indices of dimensions that RETURNED but reviewed nothing, the
+// only ones re-dispatched on opus. A null result is the failed path, not a
+// retry candidate; an engaged one pays nothing.
+const selectRetries = (dimensions, reviewResults) =>
+  reviewResults.reduce((idx, res, i) => {
+    if (res && classifyEngagement(dimensions[i].dim.name, res) === 'unengaged') idx.push(i)
+    return idx
+  }, [])
+
+// mergeRetried — fold the opus retries back over the first-pass results.
+// Returns `{ results, retrySucceeded }` and never mutates its input. A truthy
+// retry REPLACES the original and records its index. A null retry — agent()
+// returned null, or the thunk declined to spend below BUDGET_FLOOR — leaves the
+// original (unengaged) result in place, so the dimension is still reported
+// unengaged — never dropped to the null/failed path, which would lose the
+// reason. `retrySucceeded` is distinct from `retryIdx` so "selected for a retry"
+// is never reported as "re-run on opus" (PR #1127 cycle-5 review).
+const mergeRetried = (reviewResults, retryIdx, retried) => {
+  const results = reviewResults.slice()
+  const retrySucceeded = []
+  retryIdx.forEach((i, k) => {
+    if (retried[k]) {
+      results[i] = retried[k]
+      retrySucceeded.push(i)
+    }
+  })
+  return { results, retrySucceeded }
+}
+
+// stampEngagement — classify every dimension result once the retries are in.
+// Returns `{ rawFindings, unengagedDimensions, dimensionEngagement, skippedAdds,
+// partial }`:
+//   - unengaged -> listed in BOTH `unengagedDimensions` (which says why) and
+//     `skippedAdds` (appended to dimensionsSkipped), and the cycle is partial.
+//   - null -> `skippedAdds` and partial. Its agent threw (runtime budget
+//     exhausted mid-barrier, or any other terminal failure — parallel() nulls
+//     both), OR the in-thunk ceiling check declined to spend. A finding the
+//     judge never returned a verdict for must default to deferrable (filed,
+//     never dropped) and `clean` is forced false (#270).
+//   - engaged -> its findings join `rawFindings`, tagged with the dimension.
+// `partial` is applied to the caller's local `budgetExhausted`, not only derived
+// in buildResult: the judge prompt and applyJudgeVerdicts' default disposition
+// both read that flag, and a partial cycle must default unjudged findings to
+// deferrable on THIS path as well. `skippedAdds` keeps iteration order.
+const stampEngagement = (dimensions, reviewResults, retryIdx, retrySucceeded) => {
+  const rawFindings = []
+  const unengagedDimensions = []
+  const dimensionEngagement = {}
+  const skippedAdds = []
+  let partial = false
+  reviewResults.forEach((res, i) => {
+    const name = dimensions[i].dim.name
+    const verdict = classifyEngagement(name, res)
+    dimensionEngagement[name] = {
+      engagement: verdict,
+      checked: res ? res.checked.length : 0,
+      // The dimension's RAW finding count, before the judge. review-engagement.sh
+      // keys its "produced a finding" exemption off this rather than re-deriving
+      // it from the post-judge blocking/deferrable arrays: that only works while
+      // applyJudgeVerdicts never drops a finding (true today: it partitions every
+      // raw finding), and stating the count here removes the dependence.
+      findings: res ? res.findings.length : 0,
+      retry_attempted: retryIdx.includes(i),
+      retry_succeeded: retrySucceeded.includes(i),
+      requires_code_reading: CODE_READING_DIMENSIONS.includes(name),
+    }
+    if (verdict === 'unengaged') {
+      unengagedDimensions.push(name)
+      skippedAdds.push(name)
+      partial = true
+      return
+    }
+    if (!res) {
+      skippedAdds.push(name)
+      partial = true
+      return
+    }
+    for (const f of res.findings) rawFindings.push({ ...f, dimension: res.dim })
+  })
+  return { rawFindings, unengagedDimensions, dimensionEngagement, skippedAdds, partial }
+}
+
 const computeClean = (blockingLen, unresolvedLen, budgetExhausted) =>
   blockingLen === 0 && unresolvedLen === 0 && !budgetExhausted

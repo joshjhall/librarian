@@ -2,7 +2,7 @@
 //
 // A review dimension that RETURNS `findings: []` having read nothing used to be
 // counted clean: 54 of 250 measured reviewer runs were a lone StructuredOutput
-// call of ~53 output tokens. This area pins the floor at the three places it
+// call of ~53 output tokens. This area pins the floor at the four places it
 // lives:
 //
 //   (1) BEHAVIOUR of `classifyEngagement` — the truth table, including the
@@ -15,9 +15,13 @@
 //       through buildResult/emptyResult must not read clean (AC5), and the
 //       unengaged list must force the partial flag even if a call site forgets
 //       to (the derivation lives inside buildResult, past nothing).
-//   (3) WIRING past ORCH_BOUNDARY — the null-preserving `.then`, the opus
-//       re-dispatch, and both returns passing the new fields, pinned against the
-//       raw source because no extracted helper can reach them.
+//   (3) BEHAVIOUR of the retry path (#1128) — `selectRetries`, `mergeRetried`,
+//       and `stampEngagement`: an engaged retry replaces, a null or
+//       budget-skipped retry keeps the unengaged original, and `retry_*` and the
+//       partial flag are stamped from what actually happened.
+//   (4) WIRING past ORCH_BOUNDARY — the null-preserving `.then`, the opus
+//       re-dispatch, one call to each helper, and both returns passing the new
+//       fields, pinned against the raw source as call-site checks.
 //
 // Assertions are collect-all (they record, never throw) — see tests/lib/mjs-assert.mjs.
 
@@ -25,9 +29,27 @@ import { ok, eq } from "../../lib/mjs-assert.mjs";
 import { extractHelpers, harnessSource, SHIP } from "../../lib/extract-helpers.mjs";
 
 export function run() {
-  const { classifyEngagement, CODE_READING_DIMENSIONS, FINDINGS_SCHEMA, buildResult, emptyResult } = extractHelpers(
+  const {
+    classifyEngagement,
+    CODE_READING_DIMENSIONS,
+    FINDINGS_SCHEMA,
+    buildResult,
+    emptyResult,
+    selectRetries,
+    mergeRetried,
+    stampEngagement,
+  } = extractHelpers(
     SHIP,
-    ["classifyEngagement", "CODE_READING_DIMENSIONS", "FINDINGS_SCHEMA", "buildResult", "emptyResult"],
+    [
+      "classifyEngagement",
+      "CODE_READING_DIMENSIONS",
+      "FINDINGS_SCHEMA",
+      "buildResult",
+      "emptyResult",
+      "selectRetries",
+      "mergeRetried",
+      "stampEngagement",
+    ],
     { cycle: 1, phase: "pre-pr", files: ["a.js"] },
   );
 
@@ -147,9 +169,76 @@ export function run() {
     );
   }
 
-  // --- (3) WIRING past ORCH_BOUNDARY ----------------------------------------
+  // --- (3) BEHAVIOUR of the retry path (#1128) --------------------------------
+  //
+  // The selection, merge, and stamping used to be inline past ORCH_BOUNDARY,
+  // pinned only by source greps that kept passing with the replace line deleted
+  // or inverted. They are pure helpers now, so each outcome is exercised here.
+  {
+    const dims = ["security", "tests", "scope-drift"].map((name) => ({ dim: { name } }));
+    const unengaged = (dim) => ({ dim, findings: [], checked: [] });
+    const engagedRetry = { dim: "security", findings: [finding], checked: read };
+    // security: unengaged; tests: unengaged; scope-drift: engaged with a real read.
+    const first = [unengaged("security"), unengaged("tests"), { dim: "scope-drift", findings: [], checked: read }];
+
+    eq(JSON.stringify(selectRetries(dims, first)), "[0,1]", "retry: only the unengaged dimensions are selected");
+    eq(
+      JSON.stringify(selectRetries(dims, [null, first[1], first[2]])),
+      "[1]",
+      "retry: a null (failed) result is never a retry candidate — the #846 path owns it",
+    );
+
+    // security's retry engages; tests' retry returns null (agent null, or the
+    // thunk declined to spend below BUDGET_FLOOR — both arrive as null).
+    const retryIdx = selectRetries(dims, first);
+    const snapshot = JSON.stringify(first);
+    const { results, retrySucceeded } = mergeRetried(first, retryIdx, [engagedRetry, null]);
+    eq(JSON.stringify(first), snapshot, "retry: mergeRetried does not mutate the first-pass results");
+    ok(results[0] === engagedRetry, "retry: an engaged retry REPLACES the original result");
+    ok(results[1] === first[1], "retry: a null retry KEEPS the original unengaged result");
+    ok(results[2] === first[2], "retry: a dimension that was not retried is untouched");
+    eq(JSON.stringify(retrySucceeded), "[0]", "retry: retrySucceeded names only the retry that returned a result");
+
+    const st = stampEngagement(dims, results, retryIdx, retrySucceeded);
+    eq(st.dimensionEngagement.security.engagement, "engaged", "stamp: the engaged retry is no longer reported unengaged");
+    ok(!st.unengagedDimensions.includes("security"), "stamp: ...and is absent from unengagedDimensions");
+    eq(st.rawFindings.length, 1, "stamp: the engaged retry's finding reaches rawFindings");
+    eq(st.rawFindings[0].dimension, "security", "stamp: the raw finding is tagged with its dimension");
+    // The kept original must stay UNENGAGED, not fall to 'failed': that would
+    // lose the reason the dimension was missed.
+    eq(st.dimensionEngagement.tests.engagement, "unengaged", "stamp: a null retry leaves the dimension unengaged, not failed");
+    eq(JSON.stringify(st.unengagedDimensions), '["tests"]', "stamp: the still-unengaged dimension is listed in unengagedDimensions");
+    eq(JSON.stringify(st.skippedAdds), '["tests"]', "stamp: ...and in skippedAdds, which feeds dimensionsSkipped");
+    eq(st.partial, true, "stamp: an unengaged dimension makes the cycle partial (judge defaults to deferrable)");
+
+    // retry_attempted vs retry_succeeded across the three cases.
+    const e = st.dimensionEngagement;
+    eq([e.security.retry_attempted, e.security.retry_succeeded].join(), "true,true", "stamp: selected + succeeded");
+    eq([e.tests.retry_attempted, e.tests.retry_succeeded].join(), "true,false", "stamp: selected + null retry is attempted, not succeeded");
+    eq([e["scope-drift"].retry_attempted, e["scope-drift"].retry_succeeded].join(), "false,false", "stamp: not selected");
+    eq(e.security.findings, 1, "stamp: dimension_engagement records the raw per-dimension finding count");
+    eq(e.tests.requires_code_reading, true, "stamp: requires_code_reading is stamped from CODE_READING_DIMENSIONS");
+    eq(e["scope-drift"].requires_code_reading, false, "stamp: ...and false for a diff-only dimension");
+
+    // The skip list keeps iteration order across unengaged and failed entries.
+    const mixed = stampEngagement(dims, [null, first[1], first[2]], [1], []);
+    eq(JSON.stringify(mixed.skippedAdds), '["security","tests"]', "stamp: skippedAdds keeps iteration order across failed and unengaged");
+    eq(mixed.dimensionEngagement.security.engagement, "failed", "stamp: a null first-pass result stays 'failed'");
+    ok(!mixed.unengagedDimensions.includes("security"), "stamp: a failed dimension is not reported unengaged");
+
+    // The negative direction: an all-engaged cycle is not partial.
+    const clean = stampEngagement(dims, [engagedRetry, first[2], first[2]], [], []);
+    eq(clean.partial, false, "stamp: an all-engaged cycle is not partial");
+    eq(clean.skippedAdds.length, 0, "stamp: ...and skips nothing");
+  }
+
+  // --- (4) WIRING past ORCH_BOUNDARY ----------------------------------------
+  //
+  // Only the dispatch and the call sites remain in the orchestration body; the
+  // behavior above is what the helpers do, and these pins prove the body calls them.
   {
     const orch = harnessSource(SHIP);
+    const count = (s) => orch.split(s).length - 1;
     // The #846 mechanism: `(r && r.findings) || []` turned a dead dimension into
     // a non-null empty result that the partial-cycle guard never saw.
     ok(
@@ -159,35 +248,34 @@ export function run() {
     const keepNull = orch.match(/\.then\(\(r\) => \(r \? \{ dim: entry\.dim\.name, findings: r\.findings \|\| \[\], checked: r\.checked \|\| \[\] \} : null\)\)/g) || [];
     eq(keepNull.length, 2, "wiring: both the first dispatch and the opus retry preserve null and carry `checked`");
 
-    const retryStart = orch.indexOf("const retried = await parallel(");
-    ok(retryStart >= 0, "wiring: unengaged dimensions are re-dispatched under parallel()");
-    const retryBlock = orch.slice(retryStart, retryStart + 1200);
-    ok(retryBlock.includes("model: 'opus'"), "wiring: the re-dispatch runs on opus (#1111 proposal 3)");
+    eq(count("const retryIdx = selectRetries(dimensions, reviewResults)"), 1, "wiring: retries are selected by selectRetries, once");
+    eq(
+      count(";({ results: reviewResults, retrySucceeded } = mergeRetried(reviewResults, retryIdx, retried))"),
+      1,
+      "wiring: the retries are folded back by mergeRetried, once",
+    );
+    eq(
+      count("const stamped = stampEngagement(dimensions, reviewResults, retryIdx, retrySucceeded)"),
+      1,
+      "wiring: the results are stamped by stampEngagement, once",
+    );
+    ok(orch.includes("if (stamped.partial) budgetExhausted = true"), "wiring: stampEngagement's partial flag sets budgetExhausted");
+    ok(orch.includes("dimensionsSkipped.push(...stamped.skippedAdds)"), "wiring: stampEngagement's skip list feeds dimensionsSkipped");
 
-    // `retry_succeeded` is recorded ONLY inside the branch that installs a
-    // non-null retry result, so a budget-skipped or nulled retry reads false
-    // (cycle-5 review: the old `retried` reported selection as success).
+    // The opus re-dispatch: matched on the agent() options object itself, so a
+    // `model: 'opus'` in a nearby comment cannot satisfy it.
+    const retryThunk = orch.match(
+      /const retried = await parallel\(\n {4}retryIdx\.map\(\(i\) => \(\) => \{\n([\s\S]*?)\n {4}\}\)\n {2}\)/,
+    );
+    ok(retryThunk, "wiring: unengaged dimensions are re-dispatched under parallel()");
+    const thunk = retryThunk ? retryThunk[1] : "";
     ok(
-      /if \(retried\[k\]\) \{\s*reviewResults\[i\] = retried\[k\]\s*retrySucceeded\.push\(i\)\s*\}/.test(orch),
-      "wiring: retry success is recorded only when the retry returned a result",
+      /return agent\(prompt, \{\n(?: {8}\w+: [^\n]+,\n)*? {8}model: 'opus',\n/.test(thunk),
+      "wiring: the re-dispatch's agent() options run on opus (#1111 proposal 3)",
     );
     ok(
-      orch.includes("retry_succeeded: retrySucceeded.includes(i),") && !orch.includes("retried: retryIdx.includes(i)"),
-      "wiring: retry_succeeded is keyed off actual success, not selection",
-    );
-    const mainIdx = orch.indexOf("const rawFindings = []\nreviewResults.forEach((res, i) => {");
-    ok(mainIdx >= 0, "wiring: the main results loop is locatable");
-    const mainLoop = orch.slice(mainIdx, mainIdx + 2000);
-    // review-engagement.sh exempts a dimension that produced a finding by THIS
-    // raw count; dropping it would silently revert the script to inferring from
-    // the post-judge arrays (cycle-4 review of PR #1127).
-    ok(
-      mainLoop.includes("findings: res ? res.findings.length : 0,"),
-      "wiring: dimension_engagement records the raw per-dimension finding count",
-    );
-    ok(
-      mainLoop.includes("unengagedDimensions.push(name)") && mainLoop.includes("dimensionsSkipped.push(name)"),
-      "wiring: an unengaged dimension lands in both unengagedDimensions and dimensionsSkipped",
+      thunk.includes("if (reviewBudget.total && reviewBudget.remaining() < BUDGET_FLOOR) return null"),
+      "wiring: the retry thunk declines to spend below BUDGET_FLOOR (yielding the null mergeRetried keeps)",
     );
 
     // Both returns must pass the new fields — buildResult defaults them to
