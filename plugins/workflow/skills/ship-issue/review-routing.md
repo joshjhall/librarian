@@ -26,14 +26,13 @@ Before invoking the harness, ask the router. It is a bundled script, not a
 judgement call:
 
 ```bash
-# Under $HOME, not a world-writable /tmp (predictable path = symlink race), and
-# NOT `WORK=$(mktemp -d)`: a command substitution is REFUSED in a worktree-
-# isolated run (#815, next-issue/worktree-safe-recipes.md). `$HOME` unbraced and
-# an inline-assigned variable are both spellings that harness CAN evaluate.
-gid={GOLEM_ID or "solo"}; mkdir -p "$HOME/.cache/librarian-review/$gid"
-git diff --name-only origin/main...HEAD > "$HOME/.cache/librarian-review/$gid/files.txt"
+# The per-run scratch dir (#1094) — the loop's first attempt already ran
+# `init`; `path` keeps its files. Read its `dir=` line as {dir}, not via
+# `$(...)`: a command substitution is REFUSED worktree-isolated (#815).
+<skill-base-dir>/../../scripts/review-scratch.sh path --issue {N}
+git diff --name-only origin/main...HEAD > "{dir}/files.txt"
 <skill-base-dir>/../../scripts/review-route.sh check \
-  --files "$HOME/.cache/librarian-review/$gid/files.txt" --diff-lines {line count of the full diff} \
+  --files "{dir}/files.txt" --diff-lines {line count of the full diff} \
   --prescan-categories "<comma list of HIGH pre-scan categories>"
 # -> route=full|cheap  rule=R0-empty|…|R7-doc-only  reason=<slug>
 #    source_files=N doc_files=N config_files=N unknown_files=N

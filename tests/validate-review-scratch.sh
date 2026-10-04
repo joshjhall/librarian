@@ -1,0 +1,160 @@
+#!/usr/bin/env bash
+# review-scratch.sh — per-run review scratch directory (issue #1094).
+#
+# Every solo golem used to share $HOME/.cache/librarian-review/solo/, never
+# cleared, so one issue's cycle JSON fed another issue's convergence decision.
+# Each acceptance criterion maps to a case below, and each case is built on an
+# input where the OLD derivation gives the wrong answer — asserting a fresh dir
+# on a fixture that was already empty would pass with and without the fix.
+#
+#   AC1 different issues never share  -> test_solo_runs_on_different_issues_are_isolated
+#   AC2 cycle 1 never sees stale files -> test_init_removes_an_earlier_runs_files
+#   AC3 one derivation at every site   -> test_every_recipe_site_uses_the_helper
+#
+# Every run uses a sandboxed HOME; the real cache is never touched.
+#
+# Pure bash + coreutils via `command`. bash-3.2 clean, BSD-regex clean.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+RS="$REPO_ROOT/plugins/workflow/scripts/review-scratch.sh"
+SHIP="$REPO_ROOT/plugins/workflow/skills/ship-issue"
+
+# shellcheck source=tests/lib/harness.sh
+source "$SCRIPT_DIR/lib/harness.sh"
+
+test_suite "review-scratch.sh per-run scratch dir (#1094)"
+
+SANDBOX="$(command mktemp -d)"
+trap 'command rm -rf "$SANDBOX"' EXIT
+
+# val <key> <output> — echo the value of a `key=value` line.
+val() {
+    command printf '%s\n' "$2" | command grep "^$1=" | command sed "s/^$1=//"
+}
+
+# rs [ENV=...] -- <args> — run the helper with a sandboxed HOME and GOLEM_ID
+# scrubbed unless the caller sets it. Prints combined output; status in $RC.
+rs() {
+    RC=0
+    OUT="$(command env -uGOLEM_ID HOME="$SANDBOX/home" "$@" 2>&1)" || RC=$?
+}
+
+test_solo_runs_on_different_issues_are_isolated() {
+    rs bash "$RS" path --issue 1094
+    assert_exit 0 "$RC" "solo path succeeds"
+    local a b
+    a="$(val dir "$OUT")"
+    assert_equals "solo-1094" "$(val gid "$OUT")" "solo gid is scoped by issue"
+    assert_equals "$SANDBOX/home/.cache/librarian-review/solo-1094" "$a" \
+        "dir sits under \$HOME/.cache/librarian-review"
+    assert_true "[ -d '$a' ]" "path creates the directory"
+
+    rs bash "$RS" path --issue 1095
+    b="$(val dir "$OUT")"
+    assert_not_empty "$b" "second issue yields a dir"
+    if [ "$a" = "$b" ]; then
+        _fail "two solo issues share one scratch dir" "Dir: $a"
+    fi
+}
+
+test_golem_id_wins_over_the_issue() {
+    rs GOLEM_ID=golem-7 bash "$RS" path --issue 1094
+    assert_exit 0 "$RC" "orchestrated path succeeds"
+    assert_equals "golem-7" "$(val gid "$OUT")" "GOLEM_ID is the gid when set"
+    assert_equals "$SANDBOX/home/.cache/librarian-review/golem-7" "$(val dir "$OUT")" \
+        "orchestrated dir is keyed by GOLEM_ID"
+
+    rs GOLEM_ID= bash "$RS" path --issue 12
+    assert_equals "solo-12" "$(val gid "$OUT")" "an empty GOLEM_ID reads as unset"
+}
+
+test_init_removes_an_earlier_runs_files() {
+    rs bash "$RS" path --issue 77
+    local d
+    d="$(val dir "$OUT")"
+    command printf '{"stale":true}\n' >"$d/cycle1.json"
+
+    rs bash "$RS" path --issue 77
+    assert_true "[ -f '$d/cycle1.json' ]" "path keeps the run's own files between cycles"
+
+    rs bash "$RS" init --issue 77
+    assert_exit 0 "$RC" "init succeeds"
+    assert_equals "$d" "$(val dir "$OUT")" "init and path agree on the dir"
+    assert_true "[ -d '$d' ]" "init leaves the directory in place"
+    assert_true "[ ! -e '$d/cycle1.json' ]" "init removes an earlier run's cycle JSON"
+}
+
+test_init_on_a_symlinked_dir_removes_only_the_link() {
+    local target="$SANDBOX/outside" base="$SANDBOX/home/.cache/librarian-review"
+    command mkdir -p "$target" "$base"
+    command printf 'keep\n' >"$target/sentinel"
+    command ln -s "$target" "$base/solo-88"
+
+    rs bash "$RS" init --issue 88
+    assert_exit 0 "$RC" "init over a symlink succeeds"
+    assert_true "[ -f '$target/sentinel' ]" "init never deletes through a symlink"
+    assert_true "[ -d '$base/solo-88' ] && [ ! -L '$base/solo-88' ]" \
+        "init replaces the link with a real directory"
+}
+
+test_unsafe_inputs_fail_loud() {
+    local base="$SANDBOX/home/.cache/librarian-review"
+    command mkdir -p "$base/keep"
+    command printf 'keep\n' >"$base/keep/sentinel"
+
+    rs bash "$RS" init
+    assert_exit 2 "$RC" "missing --issue is refused"
+    rs bash "$RS" init --issue abc
+    assert_exit 2 "$RC" "non-numeric --issue is refused"
+    rs bash "$RS" init --issue ""
+    assert_exit 2 "$RC" "empty --issue is refused"
+    rs GOLEM_ID=.. bash "$RS" init --issue 1
+    assert_exit 2 "$RC" "GOLEM_ID=.. is refused"
+    rs GOLEM_ID=../keep bash "$RS" init --issue 1
+    assert_exit 2 "$RC" "GOLEM_ID with a separator is refused"
+    rs GOLEM_ID=. bash "$RS" init --issue 1
+    assert_exit 2 "$RC" "GOLEM_ID=. is refused"
+    assert_true "[ -f '$base/keep/sentinel' ]" "no refused init deleted anything"
+
+    RC=0
+    OUT="$(command env -uGOLEM_ID HOME= bash "$RS" path --issue 1 2>&1)" || RC=$?
+    assert_exit 2 "$RC" "empty HOME is refused"
+    RC=0
+    OUT="$(command env -uGOLEM_ID HOME=relative bash "$RS" path --issue 1 2>&1)" || RC=$?
+    assert_exit 2 "$RC" "relative HOME is refused"
+
+    rs bash "$RS" wipe --issue 1
+    assert_exit 2 "$RC" "unknown subcommand is refused"
+    rs bash "$RS" path --issue 1 --bogus
+    assert_exit 2 "$RC" "unknown flag is refused"
+}
+
+# AC3: the three recipe sites that used to spell the derivation inline must all
+# call the helper, and none may keep the old shared fallback. Reverting any one
+# site turns this red.
+test_every_recipe_site_uses_the_helper() {
+    local f
+    for f in adversarial-review-step.md ci-review-protocol.md review-routing.md; do
+        assert_file_contains "$SHIP/$f" "scripts/review-scratch.sh" \
+            "$f derives the scratch dir through review-scratch.sh"
+        assert_file_not_contains "$SHIP/$f" 'GOLEM_ID or "solo"' \
+            "$f no longer carries the shared solo fallback"
+    done
+    # Both review LOOPS must start clean, not just mention the helper.
+    for f in adversarial-review-step.md ci-review-protocol.md; do
+        assert_file_contains "$SHIP/$f" "review-scratch.sh init" \
+            "$f starts its loop with init"
+    done
+}
+
+run_test test_solo_runs_on_different_issues_are_isolated
+run_test test_golem_id_wins_over_the_issue
+run_test test_init_removes_an_earlier_runs_files
+run_test test_init_on_a_symlinked_dir_removes_only_the_link
+run_test test_unsafe_inputs_fail_loud
+run_test test_every_recipe_site_uses_the_helper
+
+generate_report
