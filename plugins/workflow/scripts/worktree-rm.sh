@@ -1047,8 +1047,9 @@ if [ "$torn_down" -eq 1 ]; then
             command echo "worktree-rm: WARNING: post-remove hook $post_hook is not an" \
                 "executable file; skipped" >&2
         else
-            post_rc=0
+            post_rc=0 post_bounded=0
             if bounded_run_available; then
+                post_bounded=1
                 GOLEM_WORKTREE_MODE="$wt_mode" bounded_run "$post_timeout" \
                     "$post_hook" "$N" "$root" "$post_wt" || post_rc=$?
             else
@@ -1062,9 +1063,11 @@ if [ "$torn_down" -eq 1 ]; then
                 GOLEM_WORKTREE_MODE="$wt_mode" "$post_hook" "$N" "$root" "$post_wt" \
                     </dev/null || post_rc=$?
             fi
-            case "$post_rc" in
-                0) ;;
-                124)
+            # A 124 is only a timeout when a bound was applied; unbounded, it is
+            # the hook's own status and takes the generic arm.
+            case "$post_bounded:$post_rc" in
+                *:0) ;;
+                1:124)
                     command echo "worktree-rm: WARNING: post-remove hook $post_hook timed" \
                         "out after ${post_timeout}s; teardown is otherwise complete" >&2
                     ;;

@@ -382,4 +382,19 @@ test_worktree_rm_post_remove_hook_runs_unbounded_without_bounded_run() {
         "the hook got its args, and read EOF rather than the caller's stdin"
     assert_not_contains "$RUN_OUT" "timed out" "no timeout warning on the unbounded path"
     assert_not_contains "$RUN_OUT" "skipped" "the hook was not skipped"
+
+    # Unbounded, a hook's OWN exit 124 is not a timeout — no bound was applied,
+    # so the generic "exited 124" warning must be printed, never "timed out"
+    # (#1123 review).
+    command printf '#!/usr/bin/env bash\nexit 124\n' >"$sb/hooks/rc124"
+    command chmod +x "$sb/hooks/rc124"
+    run_in "$sb" "$WT_NEW" 91
+    PATH="$(path_without sleep "$sb/farm2")"
+    _hook_rm "$sb" "$sb/hooks/rc124" 91
+    PATH="$saved_path"
+    assert_exit 0 "$RUN_RC" "an unbounded hook exiting 124 does not fail teardown"
+    assert_contains "$RUN_OUT" "running it unbounded" "the 124 case also took the unbounded path"
+    assert_contains "$RUN_OUT" "post-remove hook $sb/hooks/rc124 exited 124" \
+        "an unbounded 124 is reported as the hook's own exit status"
+    assert_not_contains "$RUN_OUT" "timed out" "an unbounded 124 is never called a timeout"
 }
