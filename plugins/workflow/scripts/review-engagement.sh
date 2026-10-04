@@ -62,8 +62,10 @@ command jq -e 'type == "object"' "$result" >/dev/null 2>&1 ||
 rows="$(command mktemp)"
 order="$(command mktemp)"
 tmp_out="$(command mktemp)"
+tmp_ua="$(command mktemp)"
+tmp_final="$(command mktemp)"
 # shellcheck disable=SC2064  # expand the paths now, at trap-set time
-trap "command rm -f '$rows' '$order' '$tmp_out'" EXIT
+trap "command rm -f '$rows' '$order' '$tmp_out' '$tmp_ua' '$tmp_final'" EXIT
 
 # Dispatch order: the journal records `started` with each agentId in order. It
 # only makes `dimension_metrics` read chronologically; the unengaged decision
@@ -154,6 +156,11 @@ fi
 #   - several, no harness signal      -> flag only if EVERY run made zero calls,
 #     (an older harness)                  so ambiguity can never manufacture an
 #                                         unengaged verdict.
+#   - several, harness signal, but    -> the no-signal rule above, plus a
+#     NO run matches its model filter     WARNING naming the dimension (#1133):
+#     (usually a model read `unknown`)    an empty subset used to SKIP the
+#                                         dimension, so an unengaged kept retry
+#                                         went unflagged.
 command jq --rawfile rows "$rows" '
     ($rows | split("\n") | map(select(length > 0) | split("\t")
         | {dim: .[0], tool_calls: (.[1] | tonumber), output_tokens: (.[2] | tonumber), model: .[3]})) as $r
@@ -172,18 +179,33 @@ command jq --rawfile rows "$rows" '
         | ($e.value | if length == 1 then .
             elif $de.retry_succeeded == true then map(select(.model | test("opus")))
             elif $de.retry_attempted == true then map(select(.model | test("opus") | not))
-            else . end) as $kept
-        | select(($kept | length) > 0 and ($kept | all(.tool_calls == 0)))
-        | select(($withFindings | index($e.key)) == null)
-        | select($eng[$e.key].requires_code_reading == true)
-        | $e.key]) as $flag
+            else . end) as $selected
+        | {key: $e.key, unattributed: (($selected | length) == 0),
+           kept: (if ($selected | length) > 0 then $selected else $e.value end)}]) as $judged
+    | ([$judged[] | select(.kept | all(.tool_calls == 0)) | .key as $k
+        | select(($withFindings | index($k)) == null)
+        | select($eng[$k].requires_code_reading == true)
+        | $k]) as $flag
+    | ([$judged[] | select(.unattributed) | .key]) as $unattributed
     | .dimension_metrics = $metrics
     | .engagement_measured = true
+    | ._unattributed = $unattributed
     | .unengaged_dimensions = (((.unengaged_dimensions // []) + $flag) | unique)
     | .dimensions_skipped = (((.dimensions_skipped // []) + $flag) | unique)
     | if ($flag | length) > 0 then .clean = false | .budget_exhausted = true else . end
 ' "$result" >"$tmp_out" || die "review-engagement: failed to fold metrics into '$result'"
-command cat "$tmp_out" >"$result"
+# The fold hands the fallback dims out through a scratch key (jq's `stderr`
+# builtin varies by version); warn on each, then strip the key. Both reads
+# finish into temp files BEFORE "$result" is touched, so a jq failure here
+# dies with the result untouched rather than truncated.
+command jq -r '._unattributed[]' "$tmp_out" >"$tmp_ua" ||
+    die "review-engagement: failed to read unattributed dimensions from the fold"
+command jq 'del(._unattributed)' "$tmp_out" >"$tmp_final" ||
+    die "review-engagement: failed to strip the scratch key from the fold"
+while IFS= read -r ua; do
+    command printf 'WARNING: review-engagement: no run of %s matched the kept-run model filter (model unattributable?) — judged on every run\n' "$ua" >&2
+done <"$tmp_ua"
+command cat "$tmp_final" >"$result"
 
 command printf 'measured=true\n'
 command printf 'dimensions=%s\n' "$(command jq -r '.dimension_metrics | length' "$result")"

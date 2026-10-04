@@ -12,6 +12,7 @@
 #       legitimately diff-only; flagging it would block convergence forever)
 #   usage repeated once per content block   -> counted once per message id
 #   an opus retry after an empty first run  -> judged on the LAST run
+#   a retry signal but no attributable model -> every-run rule + WARNING (#1133)
 #   no review agents in the dir             -> engagement_measured:false + WARNING
 #   unreadable input                        -> exit 2, result untouched
 #
@@ -254,6 +255,58 @@ test_ambiguous_multi_run_flags_only_if_every_run_empty() {
     assert_equals "1" "$(val unengaged "$out")" "every run empty is still flagged"
 }
 
+test_unattributable_model_falls_back_to_every_run() {
+    # #1133: retry_succeeded, but NO run carries a model (no message.model, no
+    # meta model), so every run reads `unknown` and the opus filter selects
+    # nothing. That empty subset used to SKIP the dimension; it now falls back
+    # to the no-signal rule (flag only if EVERY run is empty) and warns.
+    local d="$SANDBOX/unattr" r="$SANDBOX/unattr.json" out err="$SANDBOX/unattr.err"
+    noj_agent "$d" a0x correctness opus "$user" "$(so v1 55)"
+    noj_agent "$d" afy correctness sonnet "$user" "$(so v2 53)"
+    retry_result "$r" true true
+    out="$("$RE" "$d" "$r" 2>"$err")"
+    assert_equals "unknown" "$(command jq -r '.dimension_metrics.correctness[0].model' "$r")" "fixture: the model is unattributable"
+    assert_equals "1" "$(val unengaged "$out")" "every run empty is flagged though no run's model could be attributed (AC1)"
+    assert_equals "1" "$(command grep -c 'WARNING: review-engagement: no run of correctness matched the kept-run model filter' "$err")" \
+        "a stderr warning names the unattributable dimension (AC3)"
+    assert_equals "false" "$(command jq -r 'has("_unattributed")' "$r")" "the scratch key does not leak into the result"
+    local d2="$SANDBOX/unattr2" r2="$SANDBOX/unattr2.json"
+    noj_agent "$d2" a0x correctness opus "$user" "$(tool v3 Read 400)" "$(so v4 60)"
+    noj_agent "$d2" afy correctness sonnet "$user" "$(so v5 53)"
+    retry_result "$r2" true true
+    local err2="$SANDBOX/unattr2.err"
+    out="$("$RE" "$d2" "$r2" 2>"$err2")"
+    assert_equals "0" "$(val unengaged "$out")" "one engaged run among unattributable runs is not flagged (AC2)"
+    assert_equals "1" "$(command grep -c 'no run of correctness matched' "$err2")" "the warning fires whether or not the dimension is flagged"
+    # Two dimensions, only one unattributable: exactly one warning, naming it.
+    local d4="$SANDBOX/unattr4" r4="$SANDBOX/unattr4.json" err4="$SANDBOX/unattr4.err"
+    noj_agent "$d4" a0x correctness opus "$user" "$(so v8 55)"
+    noj_agent "$d4" afy correctness sonnet "$user" "$(so v9 53)"
+    noj_agent "$d4" b0x security opus "$user" "$(toolm w1 claude-opus-5-5 Read 400)"
+    noj_agent "$d4" bfy security sonnet "$user" "$(so_model w2 claude-sonnet-5-5 53)"
+    command printf '{"blocking":[],"deferrable":[],"clean":true,"dimension_engagement":{"correctness":{"requires_code_reading":true,"retry_attempted":true,"retry_succeeded":true},"security":{"requires_code_reading":true,"retry_attempted":true,"retry_succeeded":true}}}\n' >"$r4"
+    "$RE" "$d4" "$r4" >/dev/null 2>"$err4"
+    assert_equals "1" "$(command grep -c 'no run of' "$err4")" "only the unattributable dimension warns"
+    assert_equals "1" "$(command grep -c 'no run of correctness' "$err4")" "and the warning names it"
+    # The retry_attempted-only arm: a failed retry keeps the NON-opus run, so
+    # when every run reads opus that filter selects nothing too.
+    local d5="$SANDBOX/unattr5" r5="$SANDBOX/unattr5.json" err5="$SANDBOX/unattr5.err"
+    noj_agent "$d5" a0x correctness opus "$user" "$(so_model x1 claude-opus-5-5 55)"
+    noj_agent "$d5" afy correctness opus "$user" "$(so_model x2 claude-opus-5-5 53)"
+    retry_result "$r5" true false
+    out="$("$RE" "$d5" "$r5" 2>"$err5")"
+    assert_equals "1" "$(val unengaged "$out")" "a failed retry with no non-opus run falls back to every run"
+    assert_equals "1" "$(command grep -c 'no run of correctness matched' "$err5")" "and warns"
+    # Negative control: an ATTRIBUTABLE retry (the opus run carries
+    # message.model) selects its run, so no warning may fire.
+    local d3="$SANDBOX/unattr3" r3="$SANDBOX/unattr3.json" err3="$SANDBOX/unattr3.err"
+    noj_agent "$d3" a0x correctness opus "$user" "$(toolm v6 claude-opus-5-5 Read 400)"
+    noj_agent "$d3" afy correctness sonnet "$user" "$(so_model v7 claude-sonnet-5-5 53)"
+    retry_result "$r3" true true
+    "$RE" "$d3" "$r3" >/dev/null 2>"$err3"
+    assert_equals "0" "$(command grep -c 'no run of' "$err3" || true)" "an attributable retry emits no warning"
+}
+
 test_rerun_is_idempotent() {
     # Running twice on one result must not duplicate a flagged dimension.
     local d="$SANDBOX/idem" r="$SANDBOX/idem.json"
@@ -333,6 +386,7 @@ run_test test_journal_id_cannot_escape_the_dir "journal agentId cannot escape th
 run_test test_kept_run_is_found_without_journal_order "no journal: the kept opus run is judged (cycle-6 case)"
 run_test test_failed_retry_judges_the_kept_sonnet_run "retry not kept: the sonnet answer is judged"
 run_test test_ambiguous_multi_run_flags_only_if_every_run_empty "no retry signal: flag only if every run empty"
+run_test test_unattributable_model_falls_back_to_every_run "unattributable model: fall back to every run + warn"
 run_test test_rerun_is_idempotent "second run does not duplicate flags"
 run_test test_missing_jq_fails_loud "missing jq -> exit 2, result untouched"
 run_test test_no_review_agents_is_not_a_clean_measurement "no review agents -> measured=false"

@@ -36,6 +36,11 @@ can be absent.
   stayed in place.
 - **No retry signal** (an older harness): flagged only if **every** run made
   zero calls. An ambiguous case can never produce an unengaged verdict.
+- **Retry signal, but the model filter selects no run** (usually because no
+  run's model could be attributed and it reads `unknown`): the no-signal rule
+  above, plus a stderr `WARNING` naming the dimension. An empty subset must
+  not skip the dimension, or an unengaged kept retry would go unflagged
+  (#1133).
 
 ## Which dimensions may be diff-only
 
