@@ -107,6 +107,7 @@ source_fragments "$SCRIPT_DIR/golem-scripts" \
     25-worktree-new-cargo.sh \
     26-worktree-uv-venv.sh \
     27-cache-entry.sh \
+    28-uv-foreign-owner.sh \
     30-config-repo-root.sh \
     40-worktree-rm.sh \
     42-worktree-rm-wedged.sh \
@@ -256,9 +257,6 @@ run_fragment_test test_worktree_new_uv_failed_repo_key_skips_seed "worktree-new:
 run_fragment_test test_worktree_rm_failed_repo_key_warns_and_keeps_venv "worktree-rm: a failed repo key warns, removes nothing, exits 0 (#1091 pr-review c4)"
 run_fragment_test test_golem_repo_key_separates_same_basename "config: golem_repo_key separates two repos sharing a basename (#1091 review c2)"
 run_fragment_test test_worktree_rm_failed_uv_venv_removal_warns_and_exits_0 "worktree-rm: a failed uv venv removal warns and still exits 0 (#1091 review c1)"
-run_fragment_test test_worktree_new_uv_refuses_foreign_owned_venv "worktree-new: a foreign-owned uv venv dir is not seeded, refusal announced (#1115)"
-run_fragment_test test_worktree_new_uv_refuses_foreign_owned_repo_key_dir "worktree-new: a foreign-owned repo-key dir is not seeded, refusal announced (#1115)"
-run_fragment_test test_worktree_rm_refuses_foreign_owned_uv_venv "worktree-rm: a foreign-owned uv venv is not deleted, refusal announced (#1115)"
 run_fragment_test test_worktree_uv_relative_cache_root_is_refused "worktree-new/rm: a RELATIVE uv cache root is refused by both (#1091 review c1)"
 run_fragment_test test_worktree_rm_without_uv_venv_is_quiet "worktree-rm: no uv venv present — no venv line (#1091)"
 run_fragment_test test_worktree_rm_dirty_refusal_keeps_uv_venv "worktree-rm: a dirty refusal keeps the uv venv (#1091)"
@@ -274,7 +272,11 @@ run_fragment_test test_cache_entry_remove_deletes_a_verified_entry "cache-entry:
 run_fragment_test test_cache_entry_remove_refuses_a_parent_that_is_not_where_expected "cache-entry: a <key> swapped for a link fails the pwd -P re-check (#1115)"
 run_fragment_test test_cache_entry_remove_refuses_a_leaf_that_is_a_link "cache-entry: an issue-N swapped for a link is refused, target intact (#1115)"
 run_fragment_test test_cache_entry_remove_refuses_a_foreign_owned_parent "cache-entry: teardown refuses a keyed parent owned by another uid (#1115)"
+run_fragment_test test_cache_entry_remove_refuses_a_foreign_owned_leaf "cache-entry: teardown refuses a foreign-owned issue-N leaf, content intact (#1115)"
 run_fragment_test test_cache_entry_path_is_the_one_derivation "cache-entry: worktree-new.sh and worktree-rm.sh both route through it (#1113 AC1)"
+run_fragment_test test_worktree_new_uv_refuses_foreign_owned_venv "worktree-new: a foreign-owned uv venv dir is not seeded, refusal announced (#1115)"
+run_fragment_test test_worktree_new_uv_refuses_foreign_owned_repo_key_dir "worktree-new: a foreign-owned repo-key dir is not seeded, refusal announced (#1115)"
+run_fragment_test test_worktree_rm_refuses_foreign_owned_uv_venv "worktree-rm: a foreign-owned uv venv is not deleted, refusal announced (#1115)"
 run_fragment_test test_config_repo_root_no_hardcoded_usr_bin "config.sh: repo_root has no hardcoded /usr/bin/* tool paths (#278)"
 run_fragment_test test_config_repo_root_honors_path "config.sh: repo_root resolves via PATH, not command git (#278)"
 run_fragment_test test_config_repo_root_dirname_root_edge "config.sh: repo_root returns '/' for a /.git common dir (#278)"

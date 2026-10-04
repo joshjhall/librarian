@@ -35,6 +35,26 @@ _ce_fn() {
     )" || CE_RC=$?
 }
 
+# _make_foreign <dir> — hand <dir> to another uid (nobody, 65534) so the
+# ownership refusal (#1115) has something to refuse. Also used by
+# 28-uv-foreign-owner.sh, sourced after this file. Mode 0777 FIRST, so the
+# sandbox cleanup — running as us — can still empty and unlink it. Needs root
+# or passwordless sudo; otherwise skips (AC3): a non-root runner cannot create a
+# foreign-owned fixture, and faking one would test nothing.
+_make_foreign() {
+    command chmod 0777 "$1" 2>/dev/null || return 1
+    if [ "$(command id -u)" = 0 ]; then
+        command chown 65534 "$1" 2>/dev/null
+    else
+        command sudo -n chown 65534 "$1" 2>/dev/null
+    fi
+    if [ -O "$1" ]; then
+        skip_test "cannot create a foreign-owned fixture (not root, no passwordless sudo)"
+        return 1
+    fi
+    return 0
+}
+
 # --- tests ------------------------------------------------------------------
 
 test_cache_entry_path_accepts_plain_and_keyless_paths() {
@@ -211,6 +231,21 @@ test_cache_entry_remove_refuses_a_foreign_owned_parent() {
     assert_equals 0 "$CE_RC" "keyless, the root-owned cache root is not an ownership refusal"
     assert_true "[ ! -e \"$leaf\" ]" "...and our own leaf under it is removed"
     command rmdir "$leaf" 2>/dev/null || true
+}
+
+# The LEAF ownership guard, run on `.` from inside the re-verified issue-N: a
+# foreign-owned issue-N under OUR <key> dir is refused and its content kept.
+# Only chown can build this fixture, so it skips without root/sudo (AC3).
+test_cache_entry_remove_refuses_a_foreign_owned_leaf() {
+    local sb real
+    new_sandbox sb
+    command mkdir -p "$sb/cache/key/issue-7"
+    command printf 'theirs\n' >"$sb/cache/key/issue-7/marker"
+    _make_foreign "$sb/cache/key/issue-7" || return 0
+    real="$(command readlink -f "$sb/cache/key")"
+    _ce_fn cache_entry_remove "$sb/cache/key" "$real" key 7
+    assert_equals 3 "$CE_RC" "a foreign-owned issue-N is refused as not-ours"
+    assert_true "[ -f \"$sb/cache/key/issue-7/marker\" ]" "its content survives"
 }
 
 # Patterns are `$`-free on purpose: assert_file_contains is a BRE grep, where a
