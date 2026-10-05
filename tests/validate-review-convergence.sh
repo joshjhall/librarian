@@ -196,6 +196,8 @@ run_fragment_test test_bad_issue_value_fails_loud "a bad --issue value -> exit 2
 run_fragment_test test_string_cycle_does_not_match_the_number "a string cycle does not match the integer (#1150)"
 run_fragment_test test_unusable_prev_result_is_refused_on_a_zero_cycle "a missing/invalid/non-object --prev-result -> exit 2 on a zero cycle (#1150)"
 run_fragment_test test_unstamped_prev_result_is_refused_under_issue "an unstamped --prev-result under --issue -> exit 2 (#1150)"
+run_fragment_test test_non_object_result_is_refused_under_issue "an array --result under --issue -> exit 2, not a jq crash (#1150)"
+run_fragment_test test_null_cycle_result_is_accepted "an explicit null cycle stamp is accepted (#1150)"
 
 # Every `test_*` function defined in a fragment must actually be dispatched by a
 # `run_fragment_test` line above. A test that is written but never registered passes silently by

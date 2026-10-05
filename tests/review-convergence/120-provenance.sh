@@ -185,3 +185,23 @@ test_unstamped_prev_result_is_refused_under_issue() {
     assert_contains "$REFUSED_ERR" "prior-cycle result" "the null prev names its role"
     assert_contains "$REFUSED_ERR" "has issue null" "the null prev names the missing stamp"
 }
+
+test_non_object_result_is_refused_under_issue() {
+    # The `result` role's half of the type guard: an array --result reads as
+    # unstamped and is refused with a provenance message, not a bare jq crash.
+    command printf '[1,2]\n' >"$FIXTURES/prov-array-result.json"
+    refused "an array --result under --issue" --cycle 1 --max-cycles 5 --issue 1150 \
+        --result "$FIXTURES/prov-array-result.json" --delta-lines 40
+    assert_contains "$REFUSED_ERR" "result file" "the array result names its role"
+    assert_contains "$REFUSED_ERR" "has issue null" "the array result reads as unstamped"
+}
+
+test_null_cycle_result_is_accepted() {
+    # The documented pre-stamp case: an explicit `"cycle": null` skips the
+    # cycle check (only a PRESENT cycle can disagree) and reaches a verdict.
+    local f out rc=0
+    f="$(stamped null-cycle null 1150 "")"
+    out="$("$RC" check --cycle 3 --max-cycles 5 --issue 1150 --result "$f" --delta-lines 40)" || rc=$?
+    assert_exit "0" "$rc" "a null cycle stamp is not a mismatch"
+    assert_equals "C4-zero" "$(val rule "$out")" "a null cycle stamp reaches the rule list"
+}
