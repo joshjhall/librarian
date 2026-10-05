@@ -588,6 +588,7 @@ test_launch_does_not_leak_config_defaults() {
     # Control: the dump carries this launch's own env, so the absences below
     # cannot pass on an empty or unrelated log. Only the knob lines are ever
     # read back — the dump is a whole env, and a failure must not echo it.
+    # lint-allow-unanchored: $envlog is a per-run env dump, no committed prose
     assert_file_contains "$envlog" "TMUX_STUB_LOG=$sb/tmux-args.log" \
         "control: the env log is this launch's tmux env"
     leaked="$(command grep -E '^(CONTEXT_BUDGET_FLOOR|CONTEXT_BUDGET_THRESHOLD|GOLEM_LEVEL)=' "$envlog" || true)"
@@ -607,6 +608,7 @@ test_launch_keeps_operator_exported_override() {
     )
     rc="$(command cat "$sb/rc" 2>/dev/null || true)"
     assert_exit 0 "$rc" "launch dispatches (exit 0)"
+    # lint-allow-unanchored: $envlog is a per-run env dump, no committed prose
     assert_file_contains "$envlog" "CONTEXT_BUDGET_FLOOR=12345" \
         "an operator-exported CONTEXT_BUDGET_FLOOR still reaches tmux"
 }
