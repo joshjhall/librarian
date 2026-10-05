@@ -179,6 +179,8 @@ run_fragment_test test_launch_auth_cache_injects_token "golem-launch: cache toke
 run_fragment_test test_launch_auth_no_source_no_injection "golem-launch: no token source → no injection, no warning (#244)"
 run_fragment_test test_launch_auth_op_hang_is_bounded "golem-launch: a hanging op read is time-bounded, dispatch completes (#244)"
 run_fragment_test test_launch_auth_cache_marker_no_token_warns "golem-launch: cache marker but no token warns, still dispatches (#244)"
+run_fragment_test test_launch_does_not_leak_config_defaults "golem-launch: config.sh defaults are not frozen into the tmux server env (#1125)"
+run_fragment_test test_launch_keeps_operator_exported_override "golem-launch: an operator-exported knob still reaches tmux (#1125)"
 run_fragment_test test_launch_plugin_resolvable_passes "golem-launch: a resolvable plugin passes the guard (#946)"
 run_fragment_test test_launch_plugin_absent_refuses_exit_3 "golem-launch: an unresolvable plugin refuses dispatch (exit 3) (#946)"
 run_fragment_test test_launch_plugin_zero_skills_refuses "golem-launch: exit 0 with zero skills still refuses (#946)"
