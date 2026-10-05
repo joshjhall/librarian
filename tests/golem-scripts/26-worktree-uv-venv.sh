@@ -219,7 +219,7 @@ test_worktree_new_uv_coexists_with_cargo_seed() {
     command mkdir -p "$sb/venvs" "$sb/targets"
 
     _uv_run "$WT_NEW" "$sb" "$sb/venvs" 87 "$sb/targets"
-    assert_equals "$sb/targets/issue-87" "$(_uv_key_of "$sb" 87 CARGO_TARGET_DIR)" \
+    assert_equals "$(_uv_venv "$sb" "$sb/targets" 87)" "$(_uv_key_of "$sb" 87 CARGO_TARGET_DIR)" \
         "CARGO_TARGET_DIR survives the uv merge"
     assert_equals "$(_uv_venv "$sb" "$sb/venvs" 87)" "$(_uv_key_of "$sb" 87)" \
         "UV_PROJECT_ENVIRONMENT sits alongside it"

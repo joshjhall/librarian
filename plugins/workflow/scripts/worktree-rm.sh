@@ -33,6 +33,7 @@
 # Config (env-overridable; defaults in config.sh):
 #   GOLEM_WORKTREE_DIR (.worktrees)   GOLEM_BRANCH_PREFIX (feature/issue-)
 #   GOLEM_UV_CACHE_DIR (/cache/venv) — the per-issue venv removed on teardown
+#   GOLEM_CARGO_CACHE_DIR (/cache/target) — the per-issue cargo target dir, likewise
 #   GOLEM_POST_REMOVE_HOOK ("") / GOLEM_POST_REMOVE_HOOK_TIMEOUT (300) — below
 #   GOLEM_RENAME_TIMEOUT (30) — bounds each rename-aside of a wedged leftover
 #
@@ -800,17 +801,23 @@ if [ -n "$br" ] && [ -n "$(command git branch --list "$br")" ]; then
     fi
 fi
 
-# Remove the per-worktree uv virtualenv worktree-new.sh seeded OFF the repo
-# mount (#1091) — remove_uv_venv in cache-entry.sh, which derives and verifies
-# the path through the SAME cache_entry_path the seed used (#1113). Placed AFTER
-# every refusal above: a dirty or unverifiable worktree exits before this point,
-# so its venv survives with it. Issue mode only — a name-mode worktree never had
-# one. Best-effort: the `if` keeps a refusal or failed removal (which warn on
+# Remove the per-issue cache entries worktree-new.sh seeded OFF the repo mount —
+# the uv virtualenv (#1091) and the cargo target dir (#1117) — through
+# remove_cache_entry in cache-entry.sh, which derives and verifies each path
+# through the SAME cache_entry_path the seed used (#1113). Placed AFTER every
+# refusal above: a dirty or unverifiable worktree exits before this point, so
+# its entries survive with it. Issue mode only — a name-mode worktree never had
+# one. Best-effort: each `if` keeps a refusal or failed removal (which warn on
 # stderr) from tripping `set -e`, for the same reason the tmux arm below does —
 # teardown is past its destructive git steps, so failing here would strand a
 # removed worktree behind a non-zero exit.
-if [ "$wt_mode" = "issue" ] && remove_uv_venv "$GOLEM_UV_CACHE_DIR" "$root" "$N"; then
-    removed=1
+if [ "$wt_mode" = "issue" ]; then
+    if remove_cache_entry "uv venv" "$GOLEM_UV_CACHE_DIR" "$root" "$N"; then
+        removed=1
+    fi
+    if remove_cache_entry "cargo target dir" "$GOLEM_CARGO_CACHE_DIR" "$root" "$N"; then
+        removed=1
+    fi
 fi
 
 # tmux_kill_outcome <rc> <stderr> — classify one `tmux kill-session` attempt as

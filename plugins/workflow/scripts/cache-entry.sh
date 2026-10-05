@@ -18,10 +18,11 @@
 #   cache_entry_path   derive <cache>/[<sub>/]issue-N and verify it is ours
 #   cache_entry_owned  verify the entry (and its <sub> parent) is OWNED by us (#1115)
 #   cache_entry_remove delete a verified entry RELATIVE to its re-verified parent (#1115)
-#   remove_uv_venv     teardown of the uv venv worktree-new.sh seeded (#1091)
+#   remove_cache_entry teardown of a per-issue entry worktree-new.sh seeded —
+#                      the uv venv (#1091) and the cargo target dir (#1117)
 #
 # THE PARENT'S GLOBALS this file touches: none. Every input is an argument, and
-# remove_uv_venv reports a removal through its exit status (the caller sets its
+# remove_cache_entry reports a removal through its exit status (the caller sets its
 # own `removed`). It calls golem_repo_key, so config.sh is sourced first. Every
 # function is only DEFINED here; nothing runs at source time.
 #
@@ -86,8 +87,8 @@ cache_entry_path() {
 # A path that does not exist is not owned, so the seed calls this AFTER its
 # `mkdir -p`.
 #
-# The parent is checked only in the KEYED shape: keyless (the cargo shape), the
-# parent IS the operator-chosen cache root, which may legitimately belong to
+# The parent is checked only in the KEYED shape (both callers since #1117):
+# keyless, the parent IS the operator-chosen cache root, which may legitimately belong to
 # someone else (root-owned /cache with a world-writable mode). `-O` is POSIX
 # `test`, so this stays bash-3.2 and BSD clean.
 #
@@ -149,72 +150,75 @@ cache_entry_remove() {
     )
 }
 
-# remove_uv_venv <cache-root> <repo-root> <N> — remove the per-worktree uv
-# virtualenv worktree-new.sh seeded OFF the repo mount (#1091). It lives under
-# the cache, not in the worktree, so removing the worktree does not remove it
-# and nothing else ever would. Returns 0 ONLY when it removed something; the
-# caller sets `removed=1` on that.
+# remove_cache_entry <label> <cache-root> <repo-root> <N> — remove a per-issue
+# cache entry worktree-new.sh seeded OFF the repo mount: the uv virtualenv
+# (#1091, label "uv venv") or the cargo target dir (#1117, label "cargo target
+# dir"). It lives under the cache, not in the worktree, so removing the worktree
+# does not remove it and nothing else ever would. <label> only names the entry
+# in output. Returns 0 ONLY when it removed something; the caller sets
+# `removed=1` on that.
 #
-# Issue mode only (the caller gates it) — worktree-new.sh keys the venv by issue
-# number and never creates one for a name-mode worktree. The path is
+# Issue mode only (the caller gates it) — worktree-new.sh keys every entry by
+# issue number and never creates one for a name-mode worktree. The path is
 # <cache>/<golem_repo_key>/issue-N, from cache_entry_path, the SAME function the
 # seed used: keyed by repo as well as issue, because the cache is shared across
-# repos and another repo's issue N is somebody else's live venv. <N> is a
+# repos and another repo's issue N is somebody else's live entry. <N> is a
 # validated number, and the cache must be ABSOLUTE (a relative one would resolve
-# inside this checkout).
+# inside this checkout). A pre-#1117 un-namespaced cargo `<cache>/issue-N` is
+# never touched: nothing ties it to this repo.
 #
-# A refusal of an EXISTING venv says so on stderr — a silent skip would leak the
-# venv while reading exactly like "there was nothing to remove". Best-effort: a
+# A refusal of an EXISTING entry says so on stderr — a silent skip would leak it
+# while reading exactly like "there was nothing to remove". Best-effort: a
 # failed removal warns and returns 1, never aborting the caller — teardown is
 # past its destructive git steps by now, so failing here would strand a removed
 # worktree behind a non-zero exit.
-remove_uv_venv() {
-    local cache="$1" root="$2" n="$3" key venv root_real rc
+remove_cache_entry() {
+    local label="$1" cache="$2" root="$3" n="$4" key entry root_real rc
     case "$cache" in
         /?*) ;;
         *) return 1 ;;
     esac
     key="$(golem_repo_key "$root")" || key=""
     if [ -z "$key" ]; then
-        # No key means no path to check — so say so when a venv COULD exist (the
+        # No key means no path to check — so say so when an entry COULD exist (the
         # cache root is present), rather than skip in silence (#1091 pr-review c4).
         if [ -d "$cache" ]; then
             command echo "worktree-rm: WARNING: could not derive the repo key for $root —" \
-                "any uv venv for issue $n under $cache was left in place" >&2
+                "any $label for issue $n under $cache was left in place" >&2
         fi
         return 1
     fi
-    if ! venv="$(cache_entry_path "$cache" "$key" "$n")"; then
-        if [ -e "$venv" ] || [ -L "$venv" ]; then
-            command echo "worktree-rm: WARNING: refusing to remove uv venv $venv —" \
+    if ! entry="$(cache_entry_path "$cache" "$key" "$n")"; then
+        if [ -e "$entry" ] || [ -L "$entry" ]; then
+            command echo "worktree-rm: WARNING: refusing to remove $label $entry —" \
                 "it is, or sits under, a symlink (or its path could not be verified); inspect it by hand" >&2
         fi
         return 1
     fi
-    [ -d "$venv" ] || return 1
+    [ -d "$entry" ] || return 1
     # cache_entry_path succeeded, so the root canonicalizes; this is the path
     # the parent must PHYSICALLY be once cache_entry_remove has entered it.
     root_real="$(command readlink -f "$cache" 2>/dev/null)" || root_real=""
     rc=2
     if [ -n "$root_real" ]; then
-        cache_entry_remove "${venv%/*}" "$root_real/$key" "$key" "$n"
+        cache_entry_remove "${entry%/*}" "$root_real/$key" "$key" "$n"
         rc=$?
     fi
     case "$rc" in
         0)
-            command echo "  removed uv venv $venv"
+            command echo "  removed $label $entry"
             return 0
             ;;
         2)
-            command echo "worktree-rm: WARNING: refusing to remove uv venv $venv —" \
+            command echo "worktree-rm: WARNING: refusing to remove $label $entry —" \
                 "it moved, or became a symlink, after it was verified; inspect it by hand" >&2
             ;;
         3)
-            command echo "worktree-rm: WARNING: refusing to remove uv venv $venv —" \
+            command echo "worktree-rm: WARNING: refusing to remove $label $entry —" \
                 "it, or its parent, is not owned by you; inspect it by hand" >&2
             ;;
         *)
-            command echo "worktree-rm: WARNING: could not remove uv venv $venv — delete it by hand" >&2
+            command echo "worktree-rm: WARNING: could not remove $label $entry — delete it by hand" >&2
             ;;
     esac
     return 1

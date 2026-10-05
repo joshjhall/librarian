@@ -257,9 +257,13 @@ test_cache_entry_path_is_the_one_derivation() {
     assert_file_contains "$WT_NEW" 'cache_entry_path "' \
         "worktree-new.sh's seed derives its target through cache_entry_path"
     assert_file_contains "$CACHE_ENTRY" 'cache_entry_path "' \
-        "remove_uv_venv derives its target through cache_entry_path"
-    assert_file_contains "$WT_RM" 'remove_uv_venv "' \
-        "worktree-rm.sh tears the venv down through remove_uv_venv"
+        "remove_cache_entry derives its target through cache_entry_path"
+    assert_file_contains "$WT_RM" 'remove_cache_entry "uv venv" "' \
+        "worktree-rm.sh tears the venv down through remove_cache_entry"
+    assert_file_contains "$WT_RM" 'remove_cache_entry "cargo target dir" "' \
+        "worktree-rm.sh tears the cargo target dir down through the SAME body (#1117)"
+    assert_file_not_contains "$CACHE_ENTRY" 'remove_uv_venv' \
+        "no per-key teardown copy survives the generalization (#1117)"
     assert_file_not_contains "$WT_RM" 'uv_root_real' \
         "worktree-rm.sh keeps no inline copy of the path verification"
     assert_file_not_contains "$WT_NEW" 'parent_real' \
@@ -267,7 +271,7 @@ test_cache_entry_path_is_the_one_derivation() {
     assert_file_contains "$WT_NEW" 'cache_entry_owned "' \
         "worktree-new.sh's seed checks ownership through cache_entry_owned (#1115)"
     assert_file_contains "$CACHE_ENTRY" 'cache_entry_remove "' \
-        "remove_uv_venv deletes through cache_entry_remove (#1115)"
+        "remove_cache_entry deletes through cache_entry_remove (#1115)"
     assert_file_not_contains "$CACHE_ENTRY" 'command rm -rf' \
         "cache-entry.sh deletes nothing by name with rm -rf (#1115)"
 }

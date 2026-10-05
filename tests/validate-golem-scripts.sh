@@ -108,6 +108,7 @@ source_fragments "$SCRIPT_DIR/golem-scripts" \
     26-worktree-uv-venv.sh \
     27-cache-entry.sh \
     28-uv-foreign-owner.sh \
+    29-worktree-rm-cargo.sh \
     30-config-repo-root.sh \
     40-worktree-rm.sh \
     42-worktree-rm-wedged.sh \
@@ -237,6 +238,7 @@ run_fragment_test test_worktree_new_cargo_malformed_settings_leaves_original_int
 run_fragment_test test_worktree_new_cargo_unignored_settings_is_noop "worktree-new: refuses to seed where the settings path is not gitignored — worktree stays clean (#944)"
 run_fragment_test test_worktree_new_cargo_no_jq_is_noop "worktree-new: jq absent — the cargo seed skips cleanly (#944)"
 run_fragment_test test_worktree_new_cargo_relative_cache_root_is_noop "worktree-new: a RELATIVE cargo cache root is refused by the shared seed (#1091)"
+run_fragment_test test_worktree_new_cargo_failed_repo_key_skips_seed "worktree-new: a failed repo key skips the cargo seed — no un-namespaced issue-N (#1117)"
 run_fragment_test test_worktree_new_uv_seeds_project_environment "worktree-new: seeds a per-worktree UV_PROJECT_ENVIRONMENT off the repo mount (#1091)"
 run_fragment_test test_worktree_new_uv_venv_is_per_worktree "worktree-new: two worktrees get DISTINCT uv venvs (#1091)"
 run_fragment_test test_worktree_new_uv_lock_alone_triggers_seed "worktree-new: a uv.lock alone marks a uv project (#1091)"
@@ -278,6 +280,15 @@ run_fragment_test test_worktree_new_uv_refuses_foreign_owned_venv "worktree-new:
 run_fragment_test test_worktree_new_uv_refuses_foreign_owned_repo_key_dir "worktree-new: a foreign-owned repo-key dir is not seeded, refusal announced (#1115)"
 run_fragment_test test_worktree_rm_refuses_foreign_owned_uv_venv "worktree-rm: a foreign-owned uv venv is not deleted, refusal announced (#1115)"
 run_fragment_test test_worktree_rm_refuses_foreign_owned_uv_repo_key_dir "worktree-rm: a foreign-owned repo-key dir keeps the venv, refusal names ownership (#1115)"
+run_fragment_test test_worktree_rm_removes_cargo_target_dir "worktree-rm: removes the per-issue cargo target dir; siblings and cache root survive (#1117 AC1)"
+run_fragment_test test_worktree_rm_dirty_refusal_keeps_cargo_target_dir "worktree-rm: a dirty-worktree refusal keeps the cargo target dir (#1117 AC2)"
+run_fragment_test test_worktree_rm_spares_another_repos_same_issue_cargo_target "worktree-rm: another repo's same-issue cargo target dir survives — keyed by repo (#1117 AC3)"
+run_fragment_test test_worktree_rm_leaves_legacy_unkeyed_cargo_target "worktree-rm: a pre-#1117 un-namespaced cargo target dir is left alone (#1117)"
+run_fragment_test test_worktree_rm_refuses_symlinked_cargo_target_dir "worktree-rm: a symlinked cargo target leaf is refused, announced, exit 0 (#1117 AC4)"
+run_fragment_test test_worktree_rm_refuses_symlinked_cargo_repo_key_dir "worktree-rm: a symlinked cargo repo-key dir is refused, link target survives (#1117 AC4)"
+run_fragment_test test_worktree_rm_failed_cargo_removal_warns_and_exits_0 "worktree-rm: a failed cargo target removal warns and exits 0 (#1117 AC4)"
+run_fragment_test test_worktree_rm_absent_cargo_cache_is_noop "worktree-rm: an absent cargo cache is a silent no-op (#1117 AC5)"
+run_fragment_test test_worktree_rm_name_mode_leaves_cargo_cache_alone "worktree-rm: name mode never touches the cargo cache (#1117)"
 run_fragment_test test_config_repo_root_no_hardcoded_usr_bin "config.sh: repo_root has no hardcoded /usr/bin/* tool paths (#278)"
 run_fragment_test test_config_repo_root_honors_path "config.sh: repo_root resolves via PATH, not command git (#278)"
 run_fragment_test test_config_repo_root_dirname_root_edge "config.sh: repo_root returns '/' for a /.git common dir (#278)"
