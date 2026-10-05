@@ -107,6 +107,27 @@ test_launch_sh_quote_round_trips_edge_shapes() {
     done
 }
 
+# The token file is gone by the time the session starts (a tmp cleaner, a manual
+# cleanup). Under a POSIX sh an unguarded `.` of a missing file EXITS the whole
+# command, so both claude calls would be skipped and the golem would die with no
+# session. Guarded, it must degrade to a tokenless start that still runs claude.
+# Runs the session command under `sh` itself (dash on Debian/Ubuntu), the shell
+# that exits — plain bash would continue either way and prove nothing.
+test_launch_auth_missing_token_file_still_starts_claude() {
+    local sb authf
+    new_sandbox sb
+    run_launch_auth "$sb" OP_SECRETS_CACHE="$sb/no-such-cache" TMUX_STUB_CMD_LOG="$sb/session-cmd" \
+        ANTHROPIC_AUTH_TOKEN=sk-vanished-1153 # gitleaks:allow (fake fixture token)
+    assert_exit 0 "$RUN_RC" "launch dispatches (exit 0)"
+    authf="$(command ls "$sb"/golem-auth.* 2>/dev/null | command head -n 1)"
+    assert_not_empty "$authf" "control: a token file was written, so deleting it is meaningful"
+    command rm -f "$authf"
+    _run_session_cmd "$sb"
+    assert_equals "|
+|" "$(command cat "$sb/claude-env.log" 2>/dev/null)" \
+        "both claude calls still run, tokenless, when the token file has vanished"
+}
+
 # A token carrying shell metacharacters round-trips byte-for-byte: the file is
 # sourced by sh, so an unquoted `'` would break it and a `$` would expand.
 test_launch_auth_token_quoting_round_trips() {

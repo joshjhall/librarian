@@ -179,6 +179,7 @@ run_fragment_test test_launch_version_undeterminable_skips "golem-launch: undete
 run_fragment_test test_launch_auth_cache_injects_token "golem-launch: cache token reaches the golem via a 0600 file, never argv (#244, #1153)"
 run_fragment_test test_launch_auth_launcher_base_url_not_overridden "golem-launch: a launcher ANTHROPIC_BASE_URL is not overridden by the cache (#244, #1153)"
 run_fragment_test test_launch_sh_quote_round_trips_edge_shapes "golem-launch: _sh_quote round-trips quote/empty edge shapes and uses no patsub replacement (#1153)"
+run_fragment_test test_launch_auth_missing_token_file_still_starts_claude "golem-launch: a vanished token file degrades to a tokenless start, never a dead session (#1153)"
 run_fragment_test test_launch_auth_token_quoting_round_trips "golem-launch: a metachar token round-trips through the token file (#1153)"
 run_fragment_test test_launch_auth_inherited_token_not_in_tmux_env "golem-launch: an inherited token never reaches tmux's env or argv (#1153)"
 run_fragment_test test_launch_auth_relative_tmpdir_path_is_absolute "golem-launch: a relative TMPDIR still yields an absolute token-file path (#1153)"

@@ -746,7 +746,11 @@ case "$cmd" in
         auth_prefix=""
         if [ -n "$RESOLVED_AUTH_TOKEN" ]; then
             if auth_file="$(write_auth_file)"; then
-                auth_prefix=". $(_sh_quote "$auth_file"); rm -f $(_sh_quote "$auth_file"); "
+                # Guard the `.`: a POSIX sh (dash, bash --posix) EXITS the whole
+                # command when `.` cannot read its file, so a token file gone
+                # before the session starts would skip both `claude` calls.
+                # Guarded, a missing file degrades to a tokenless start.
+                auth_prefix="[ -r $(_sh_quote "$auth_file") ] && . $(_sh_quote "$auth_file"); rm -f $(_sh_quote "$auth_file"); "
             else
                 auth_file=""
                 command echo "golem-launch: WARNING could not write a private token file under ${TMPDIR:-/tmp}; golem-$N starts without the resolved ANTHROPIC_AUTH_TOKEN. Dispatching anyway." >&2
