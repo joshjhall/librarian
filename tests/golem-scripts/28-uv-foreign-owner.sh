@@ -77,7 +77,7 @@ test_worktree_rm_refuses_foreign_owned_uv_venv() {
 }
 
 # Teardown's keyed-PARENT refusal, end to end: our own issue-N under a
-# foreign-owned <repo-key> dir is kept, and remove_uv_venv names ownership — the
+# foreign-owned <repo-key> dir is kept, and remove_cache_entry names ownership — the
 # rc-3 mapping 27-cache-entry.sh cannot reach, since it calls the inner function.
 test_worktree_rm_refuses_foreign_owned_uv_repo_key_dir() {
     local sb

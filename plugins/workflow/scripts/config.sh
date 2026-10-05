@@ -273,10 +273,12 @@
 : "${GOLEM_WORKTREE_LOCAL_FILES:=.env .claude/settings.local.json}"
 
 # Root under which each worktree gets its own Rust build-artifact directory
-# (worktree-new.sh seeds CARGO_TARGET_DIR=<this>/issue-N, #944). Points OFF the
-# repo mount on purpose: on the macOS Docker stack the repo lives on virtiofs,
-# whose lost inode mappings are what wedge a worktree (#936), and every wedged
-# entry in the live remnants was a high-churn `target/debug/incremental/*.o`.
+# (worktree-new.sh seeds CARGO_TARGET_DIR=<this>/<golem_repo_key>/issue-N, #944;
+# worktree-rm.sh removes it, #1117 — keyed by repo for the reason the uv venv
+# below is). Points OFF the repo mount on purpose: on the macOS Docker stack the
+# repo lives on virtiofs, whose lost inode mappings are what wedge a worktree
+# (#936), and every wedged entry in the live remnants was a high-churn
+# `target/debug/incremental/*.o`.
 #
 # A DEFAULT, not an assertion: worktree-new.sh probes this location at runtime
 # (present, writable, and not itself on the wedging filesystem) and no-ops when
@@ -286,8 +288,8 @@
 : "${GOLEM_CARGO_CACHE_DIR:=/cache/target}"
 
 # Root under which each worktree of a uv project gets its own Python virtualenv
-# (worktree-new.sh seeds UV_PROJECT_ENVIRONMENT=<this>/issue-N, #1091;
-# worktree-rm.sh removes it). Same mount, same reason, different symptom: a uv
+# (worktree-new.sh seeds UV_PROJECT_ENVIRONMENT=<this>/<golem_repo_key>/issue-N,
+# #1091; worktree-rm.sh removes it). Same mount, same reason, different symptom: a uv
 # `.venv` holds `lib/` plus the symlink `lib64 -> lib`, and on the
 # case-insensitive virtiofs+bindfs stack teardown leaves a phantom `.venv/Lib`
 # that readdir lists but rmdir/rename/unlink answer ENOENT (containers#1004).

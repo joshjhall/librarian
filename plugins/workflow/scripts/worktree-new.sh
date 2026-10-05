@@ -470,7 +470,28 @@ seed_cache_env() {
     return 0
 }
 
-seed_cache_env "$GOLEM_CARGO_CACHE_DIR" CARGO_TARGET_DIR
+# The cargo target dir is namespaced by REPO, like the uv venv below (#1117):
+# worktree-rm.sh removes <cache>/<repo-key>/issue-N on teardown, and the cache
+# is one mount shared by every repo in the container while issue numbers are
+# per-repo — keyed by issue alone, finishing repo A's issue 42 would delete
+# repo B's live target dir (the #1104 review defect). The key is computed FIRST
+# and a failed or empty one skips the seed (#1091 pr-review c2): passed inline,
+# a failure would substitute "" and seed the un-namespaced <cache>/issue-N that
+# teardown never removes and that another repo's issue N would share.
+#
+# That skip is SAID when a seed could otherwise have happened (either cache
+# root is present), mirroring worktree-rm.sh's warning for the same failure: the
+# cargo seed did not depend on the key before #1117, so a host where cksum fails
+# would otherwise lose the #944 wedge prevention with output identical to
+# "cache unsuitable" — and the uv venv seed the same way. With both roots
+# absent it stays silent, as it always has.
+repo_key="$(golem_repo_key "$root")" || repo_key=""
+if [ -n "$repo_key" ]; then
+    seed_cache_env "$GOLEM_CARGO_CACHE_DIR" CARGO_TARGET_DIR "$repo_key"
+elif [ -d "$GOLEM_CARGO_CACHE_DIR" ] || [ -d "$GOLEM_UV_CACHE_DIR" ]; then
+    command echo "worktree-new: WARNING: could not derive the repo key for $root —" \
+        "neither CARGO_TARGET_DIR nor a uv venv was seeded" >&2
+fi
 
 # Seed a per-worktree Python virtualenv OFF the repo mount (#1091) — the same
 # prevention, for a second wedge shape. A uv `.venv` holds `lib/` plus the
@@ -485,20 +506,12 @@ seed_cache_env "$GOLEM_CARGO_CACHE_DIR" CARGO_TARGET_DIR
 #
 # Gated on the repo being a uv/pyproject project — a repo with neither file
 # gets no key and no output line, so non-Python worktrees are byte-identical.
-# worktree-rm.sh removes the venv on teardown; a venv, unlike a cargo target, is
-# not worth keeping across an issue's lifetime — which is also why it is
-# namespaced by REPO (golem_repo_key): a deleted path must never be one another
-# repo's issue of the same number is using.
-#
-# The key is computed FIRST and a failed or empty one skips the seed (#1091
-# pr-review c2): passed inline, a failure substitutes "" and seed_cache_env
-# treats that as "no subdir" — seeding the un-namespaced <cache>/issue-N that
-# teardown never removes and that another repo's issue N would share.
-if [ -f "$wt/pyproject.toml" ] || [ -f "$wt/uv.lock" ]; then
-    uv_key="$(golem_repo_key "$root")" || uv_key=""
-    if [ -n "$uv_key" ]; then
-        seed_cache_env "$GOLEM_UV_CACHE_DIR" UV_PROJECT_ENVIRONMENT "$uv_key"
-    fi
+# worktree-rm.sh removes the venv on teardown, so it is namespaced by REPO
+# exactly as the cargo target dir above is, and through the same already-checked
+# key: a deleted path must never be one another repo's issue of the same number
+# is using.
+if [ -n "$repo_key" ] && { [ -f "$wt/pyproject.toml" ] || [ -f "$wt/uv.lock" ]; }; then
+    seed_cache_env "$GOLEM_UV_CACHE_DIR" UV_PROJECT_ENVIRONMENT "$repo_key"
 fi
 
 # Seed a workspace-trust entry for the new worktree path so the copied

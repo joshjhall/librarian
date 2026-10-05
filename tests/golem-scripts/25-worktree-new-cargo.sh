@@ -24,13 +24,14 @@
 # _cargo_run <sandbox> <cache-dir> <issue-N> [extra-env...]
 # Invoke worktree-new.sh from the sandbox with GOLEM_CARGO_CACHE_DIR set to the
 # caller's value and the local-file copy ENABLED (the seed writes the copied
-# settings file). Captures combined output in RUN_OUT / exit code in RUN_RC.
+# settings file). BASH_ENV is unset so an image profile cannot rewrite a PATH a
+# caller passes as extra env. Captures combined output in RUN_OUT / RUN_RC.
 _cargo_run() {
     local dir="$1" cache="$2" n="$3"
     shift 3
     RUN_RC=0
     RUN_OUT="$(cd "$dir" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" -uBASH_ENV \
             HOME="$dir" \
             GOLEM_PLUGIN_PROBE="$dir/no-plugin-probe" \
             TMUX= TMUX_TMPDIR="${SANDBOX_TMUX_DIR:-$dir/.tmux}" \
@@ -69,6 +70,19 @@ _cargo_target_of() {
         "$1/.worktrees/issue-$2/.claude/settings.local.json" 2>/dev/null
 }
 
+# _cargo_entry <sandbox> <cache> <issue-N> — the target dir the scripts derive:
+# <cache>/<golem_repo_key>/issue-N (#1117). Computed by CALLING config.sh's
+# function, not re-spelling it, for the reason 26's _uv_venv gives.
+_cargo_entry() {
+    local key
+    key="$(
+        # shellcheck source=/dev/null
+        . "$SCRIPTS/config.sh"
+        golem_repo_key "$1"
+    )"
+    command printf '%s/%s/issue-%s\n' "$2" "$key" "$3"
+}
+
 # --- tests ------------------------------------------------------------------
 
 # Happy path: a suitable cache dir seeds a per-worktree CARGO_TARGET_DIR into
@@ -92,10 +106,12 @@ test_worktree_new_cargo_seeds_target_dir() {
 
     _cargo_run "$sb" "$cache" 41
     assert_exit 0 "$RUN_RC" "worktree-new exits 0 when seeding the cargo target dir"
-    assert_equals "$cache/issue-41" "$(_cargo_target_of "$sb" 41)" \
+    local entry
+    entry="$(_cargo_entry "$sb" "$cache" 41)"
+    assert_equals "$entry" "$(_cargo_target_of "$sb" 41)" \
         "CARGO_TARGET_DIR is seeded per-worktree into settings.local.json"
     assert_contains "$RUN_OUT" "seeded CARGO_TARGET_DIR" "reports the seed"
-    assert_true "[ -d \"$cache/issue-41\" ]" "The per-worktree target dir is created"
+    assert_true "[ -d \"$entry\" ]" "The per-worktree target dir is created"
 
     # The merge must not clobber what the operator's copied settings carried.
     local kept
@@ -123,8 +139,8 @@ test_worktree_new_cargo_target_is_per_worktree() {
     local a b
     a="$(_cargo_target_of "$sb" 42)"
     b="$(_cargo_target_of "$sb" 43)"
-    assert_equals "$cache/issue-42" "$a" "issue 42 gets its own target dir"
-    assert_equals "$cache/issue-43" "$b" "issue 43 gets its own target dir"
+    assert_equals "$(_cargo_entry "$sb" "$cache" 42)" "$a" "issue 42 gets its own target dir"
+    assert_equals "$(_cargo_entry "$sb" "$cache" 43)" "$b" "issue 43 gets its own target dir"
     assert_true "[ \"$a\" != \"$b\" ]" \
         "Parallel worktrees get distinct target dirs (a shared one serialises cargo's lock)"
 }
@@ -290,7 +306,7 @@ test_worktree_new_cargo_probes_through_a_symlinked_cache_dir() {
     assert_contains "$RUN_OUT" "seeded CARGO_TARGET_DIR" \
         "a symlinked cache dir on a suitable fs still seeds (probe followed the link)"
     # The real directory is where the artifacts land, so it must exist.
-    assert_true "[ -d \"$real/issue-49\" ]" \
+    assert_true "[ -d \"$(_cargo_entry "$sb" "$real" 49)\" ]" \
         "The per-worktree target dir is created behind the symlink"
     # Pin the caller-side canonicalization directly: the fstype reported for the
     # link must equal the one for its resolved target. Before the fix these
@@ -329,7 +345,7 @@ test_worktree_new_cargo_seed_leaves_worktree_clean() {
     command mkdir -p "$cache"
 
     _cargo_run "$sb" "$cache" 46
-    assert_equals "$cache/issue-46" "$(_cargo_target_of "$sb" 46)" \
+    assert_equals "$(_cargo_entry "$sb" "$cache" 46)" "$(_cargo_target_of "$sb" 46)" \
         "the seed landed (guards against a vacuous clean/teardown pass below)"
 
     local st
@@ -423,7 +439,7 @@ test_worktree_new_cargo_unignored_settings_is_noop() {
     local cache2="$sb2/cache"
     command mkdir -p "$cache2"
     _cargo_run "$sb2" "$cache2" 48
-    assert_equals "$cache2/issue-48" "$(_cargo_target_of "$sb2" 48)" \
+    assert_equals "$(_cargo_entry "$sb2" "$cache2" 48)" "$(_cargo_target_of "$sb2" 48)" \
         "control: the identical setup DOES seed when the path is gitignored"
     local st
     st="$(cd "$sb/.worktrees/issue-48" &&
@@ -512,6 +528,37 @@ test_worktree_new_cargo_relative_cache_root_is_noop() {
     assert_equals "" "$(command ls -A "$sb/reltarget")" "nothing is provisioned under it"
 
     _cargo_run "$sb" "$sb/reltarget" 52
-    assert_equals "$sb/reltarget/issue-52" "$(_cargo_target_of "$sb" 52)" \
+    assert_equals "$(_cargo_entry "$sb" "$sb/reltarget" 52)" "$(_cargo_target_of "$sb" 52)" \
         "control: the same dir spelled absolutely DOES seed"
+}
+
+# The repo key is computed FIRST and a failed one skips the cargo seed, out loud
+# (#1117, mirroring #1091 pr-review c2 and the teardown's c4 warning): passed inline, an empty key would seed the
+# un-namespaced <cache>/issue-N that teardown never removes and another repo's
+# issue N would share. A PATH stub fails only cksum (the key's one external);
+# _cargo_run unsets BASH_ENV so this image's /etc/bash_env cannot restore the
+# real PATH. The stub leaves a marker so the skip is attributed to the key failure.
+# Positive control: test_worktree_new_cargo_seeds_target_dir.
+test_worktree_new_cargo_failed_repo_key_skips_seed() {
+    local sb
+    new_sandbox sb
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq unavailable — the seed is jq-gated by design"
+        return
+    fi
+    _commit_gitignore "$sb"
+    local cache="$sb/cache"
+    command mkdir -p "$cache" "$sb/stubbin"
+    command printf '#!/usr/bin/env bash\n: >"%s/cksum-ran"\nexit 1\n' "$sb" \
+        >"$sb/stubbin/cksum"
+    command chmod +x "$sb/stubbin/cksum"
+
+    _cargo_run "$sb" "$cache" 53 PATH="$sb/stubbin:$PATH"
+    assert_exit 0 "$RUN_RC" "worktree-new exits 0 when the repo key cannot be computed"
+    assert_file_exists "$sb/cksum-ran" "the failing cksum stub was actually invoked"
+    assert_not_contains "$RUN_OUT" "seeded CARGO_TARGET_DIR" "no cargo seed without a repo key"
+    assert_contains "$RUN_OUT" "could not derive the repo key" \
+        "the skip is announced — silence would read as 'cache unsuitable'"
+    assert_equals "" "$(command ls -A "$cache")" \
+        "nothing is provisioned — in particular no un-namespaced issue-N"
 }
