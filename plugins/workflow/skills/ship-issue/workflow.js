@@ -1197,6 +1197,13 @@ const reusedReviewerPrompt = (dim, manifest, diff = scopeDiff) =>
 // repeated the same all-`diff-only` answer. This names the reason, keyed off the
 // rejected result, and is appended at the tail of the RETRY prompt only, so the
 // first pass and the shared prefix are untouched.
+//
+// It reads only the SHAPE of `checked` (empty vs not) and emits fixed strings —
+// never a target, finding, or any other model-written text. Keep it that way:
+// echoing the prior answer into the prompt would need dataBlock/sanitize like
+// every other untrusted block (pinned in tests, area 5). The diff-only wording
+// is reachable only for CODE_READING_DIMENSIONS, the only ones a diff-only
+// answer gets retried for.
 const retryNotice = (prevResult) => {
   const checked = prevResult && Array.isArray(prevResult.checked) ? prevResult.checked : []
   const reason =
