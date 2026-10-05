@@ -983,6 +983,10 @@ fi
 # with the seeded CARGO_TARGET_DIR, and a still-live `cargo build` (or a
 # rust-analyzer flycheck) writing into the target dir would race the delete —
 # failing it, or recreating the dir behind it, which leaks the entry for good.
+# This NARROWS that window, it does not close it: kill-session sends SIGHUP and
+# returns without waiting for the pane's processes to exit, and a cargo started
+# outside the session is not touched at all. A delete that loses the race still
+# warns ("could not remove") rather than passing as clean.
 # Issue mode only — a name-mode worktree never had one. Best-effort: each `if`
 # keeps a refusal or failed removal (which warn on stderr) from tripping
 # `set -e`, for the same reason the tmux arm does — teardown is past its

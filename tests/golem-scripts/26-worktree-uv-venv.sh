@@ -501,6 +501,8 @@ test_worktree_new_uv_failed_repo_key_skips_seed() {
     assert_exit 0 "$RUN_RC" "worktree-new exits 0 when the repo key cannot be computed"
     assert_file_exists "$sb/cksum-ran" "the failing cksum stub was actually invoked"
     assert_not_contains "$RUN_OUT" "UV_PROJECT_ENVIRONMENT" "no uv seed without a repo key"
+    assert_contains "$RUN_OUT" "could not derive the repo key" \
+        "announced even with NO cargo cache root — the uv root alone triggers it (#1117)"
     assert_equals "" "$(command ls -A "$cache")" \
         "nothing is provisioned — in particular no un-namespaced issue-N"
 }

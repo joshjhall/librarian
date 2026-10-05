@@ -479,17 +479,18 @@ seed_cache_env() {
 # a failure would substitute "" and seed the un-namespaced <cache>/issue-N that
 # teardown never removes and that another repo's issue N would share.
 #
-# That skip is SAID when a seed could otherwise have happened (the cargo cache
+# That skip is SAID when a seed could otherwise have happened (either cache
 # root is present), mirroring worktree-rm.sh's warning for the same failure: the
 # cargo seed did not depend on the key before #1117, so a host where cksum fails
 # would otherwise lose the #944 wedge prevention with output identical to
-# "cache unsuitable". An absent cache root stays silent, as it always has.
+# "cache unsuitable" — and the uv venv seed the same way. With both roots
+# absent it stays silent, as it always has.
 repo_key="$(golem_repo_key "$root")" || repo_key=""
 if [ -n "$repo_key" ]; then
     seed_cache_env "$GOLEM_CARGO_CACHE_DIR" CARGO_TARGET_DIR "$repo_key"
-elif [ -d "$GOLEM_CARGO_CACHE_DIR" ]; then
+elif [ -d "$GOLEM_CARGO_CACHE_DIR" ] || [ -d "$GOLEM_UV_CACHE_DIR" ]; then
     command echo "worktree-new: WARNING: could not derive the repo key for $root —" \
-        "CARGO_TARGET_DIR (and any uv venv) not seeded" >&2
+        "neither CARGO_TARGET_DIR nor a uv venv was seeded" >&2
 fi
 
 # Seed a per-worktree Python virtualenv OFF the repo mount (#1091) — the same
