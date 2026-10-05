@@ -181,6 +181,7 @@ run_fragment_test test_launch_auth_launcher_base_url_not_overridden "golem-launc
 run_fragment_test test_launch_sh_quote_round_trips_edge_shapes "golem-launch: _sh_quote round-trips quote/empty edge shapes and uses no patsub replacement (#1153)"
 run_fragment_test test_launch_auth_token_quoting_round_trips "golem-launch: a metachar token round-trips through the token file (#1153)"
 run_fragment_test test_launch_auth_inherited_token_not_in_tmux_env "golem-launch: an inherited token never reaches tmux's env or argv (#1153)"
+run_fragment_test test_launch_auth_relative_tmpdir_path_is_absolute "golem-launch: a relative TMPDIR still yields an absolute token-file path (#1153)"
 run_fragment_test test_launch_auth_unwritable_tmpdir_never_falls_back_to_argv "golem-launch: no token file -> warn, never an argv fallback (#1153)"
 run_fragment_test test_launch_auth_tmux_failure_removes_token_file "golem-launch: a failed tmux new-session removes the token file, exits 1 (#1153)"
 run_fragment_test test_launch_auth_no_source_no_injection "golem-launch: no token source → no injection, no warning (#244)"

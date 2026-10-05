@@ -145,6 +145,32 @@ test_launch_auth_inherited_token_not_in_tmux_env() {
         "the golem still receives the inherited token via the file"
 }
 
+# A RELATIVE TMPDIR: the session sources the token file after tmux -c has moved
+# it into the worktree, so the path must already be absolute. run_launch_auth
+# cds into $sb, so TMPDIR=. lands the file there; the session command runs from
+# the worktree (cd below) exactly as tmux -c would.
+test_launch_auth_relative_tmpdir_path_is_absolute() {
+    local sb
+    new_sandbox sb
+    run_launch_auth "$sb" OP_SECRETS_CACHE="$sb/no-such-cache" TMUX_STUB_CMD_LOG="$sb/session-cmd" \
+        TMPDIR=. ANTHROPIC_AUTH_TOKEN=sk-relative-1153 # gitleaks:allow (fake fixture token)
+    assert_exit 0 "$RUN_RC" "launch with a relative TMPDIR dispatches (exit 0)"
+    # TMPDIR=. anchors as "$sb/./golem-auth.*" — absolute, under the sandbox.
+    assert_contains "$(command cat "$sb/session-cmd" 2>/dev/null)" ". '$sb/" \
+        "the session sources an ABSOLUTE token-file path"
+    command mkdir -p "$sb/fakebin"
+    command printf '%s\n' '#!/usr/bin/env sh' \
+        'printf "%s|%s\n" "${ANTHROPIC_AUTH_TOKEN:-}" "${ANTHROPIC_BASE_URL:-}" >>"$CLAUDE_ENV_LOG"' \
+        >"$sb/fakebin/claude"
+    command chmod +x "$sb/fakebin/claude"
+    (cd "$sb/.worktrees/issue-7" &&
+        /usr/bin/env -uANTHROPIC_AUTH_TOKEN -uANTHROPIC_BASE_URL -uBASH_ENV -uENV \
+            PATH="$sb/fakebin:$PATH" CLAUDE_ENV_LOG="$sb/claude-env.log" \
+            sh -c "$(command cat "$sb/session-cmd")" >/dev/null 2>&1)
+    assert_equals "sk-relative-1153|" "$(command head -n 1 "$sb/claude-env.log" 2>/dev/null)" \
+        "the golem receives the token when its shell starts in the worktree"
+}
+
 # The token file cannot be created → warn, dispatch tokenless, and NEVER fall
 # back to putting the token in argv.
 test_launch_auth_unwritable_tmpdir_never_falls_back_to_argv() {

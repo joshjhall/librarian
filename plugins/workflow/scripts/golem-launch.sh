@@ -253,6 +253,13 @@ write_auth_file() {
     local f
     f="$(umask 077 && command mktemp "${TMPDIR:-/tmp}/golem-auth.XXXXXX" 2>/dev/null)" || return 1
     [ -n "$f" ] || return 1
+    # The session `.`-sources this path AFTER tmux -c has moved it into the
+    # worktree, so a relative TMPDIR would resolve against the wrong directory
+    # and the golem would start tokenless. Anchor it to the launcher's cwd.
+    case "$f" in
+        /*) ;;
+        *) f="$(command pwd)/$f" ;;
+    esac
     command chmod 600 "$f" 2>/dev/null || {
         command rm -f "$f"
         return 1
