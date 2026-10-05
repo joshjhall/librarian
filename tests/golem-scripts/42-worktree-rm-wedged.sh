@@ -129,6 +129,12 @@ test_worktree_rm_partial_leftover_removal_is_tolerated() {
     assert_contains "$RUN_OUT" "5 entries could not be removed" \
         "reports every entry still on disk, including the .git it kept"
     assert_contains "$RUN_OUT" "virtiofs" "names the expected cause so it reads as benign"
+    # #1017/#1131: the attribution is widened past macOS in the MESSAGE itself,
+    # asserted here against what the operator actually sees rather than grepped
+    # out of the source — a re-narrowing of the echo back to macOS-only would
+    # still pass the `virtiofs` substring check above.
+    assert_contains "$RUN_OUT" "reproduced on a Linux" \
+        "the runtime message names the Linux overlay too (#1017)"
     local branches
     branches="$(/usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$sb" branch --list "feature/issue-90")"
@@ -624,30 +630,34 @@ test_worktree_rm_never_quarantines_a_symlink() {
 
 # #936 item 3: the root-cause attribution in the code itself.
 #
-# The comment said the EBADF came from "the documented macOS/VirtioFS `bindfs`
-# overlay", which points the next reader at the wrong layer — and #936 measured
-# that unmounting bindfs in a private mount namespace leaves the entries failing
-# identically on the bare virtiofs beneath, as does a freshly established
-# virtiofs mount. The host virtiofsd has lost the inode mapping; no bindfs
-# reconfiguration can fix it. Asserted against the SOURCE because the wrong
-# attribution costs a future reader a refactor of a layer with nothing to fix,
-# and nothing in the runtime output would ever reveal it.
+# DOCUMENTATION GUARD (#1131) — every assertion here pins COMMENT PROSE in
+# worktree-rm-leftover.sh, on purpose, and none of them says anything about
+# runtime behavior. A failure means the prose moved or was reworded, NOT that
+# teardown regressed; the runtime message is asserted in
+# test_worktree_rm_partial_leftover_removal_is_tolerated instead.
+#
+# Why guard prose at all: the comment said the EBADF came from "the documented
+# macOS/VirtioFS `bindfs` overlay", which points the next reader at the wrong
+# layer — and #936 measured that unmounting bindfs in a private mount namespace
+# leaves the entries failing identically on the bare virtiofs beneath, as does a
+# freshly established virtiofs mount. The host virtiofsd has lost the inode
+# mapping; no bindfs reconfiguration can fix it. The wrong attribution costs a
+# future reader a refactor of a layer with nothing to fix, and nothing in the
+# runtime output would ever reveal it. If the prose moves to another file,
+# retarget these greps (as #1096 did) rather than deleting them.
 test_worktree_rm_attributes_ebadf_to_virtiofs() {
     assert_file_contains "$WT_RM_LEFTOVER" "THE FAULT IS VIRTIOFS, NOT BINDFS" \
-        "names the correct layer, and flags the correction for a reader who knows the old text"
+        "doc guard: names the correct layer, and flags the correction for a reader who knows the old text"
     assert_file_contains "$WT_RM_LEFTOVER" "unmounting the bindfs overlay" \
-        "records the measurement, so the next reader does not re-run it"
+        "doc guard: records the measurement, so the next reader does not re-run it"
     # #1017 widened this: the same EBADF shape reproduced on a LINUX
     # devcontainer overlay, so the virtiofs paragraph above is the measured
-    # macOS mechanism rather than the full set of platforms. Pinned because the
-    # pre-existing assertions here — and the runtime `virtiofs` substring check
-    # in test_worktree_rm_partial_leftover_removal_is_tolerated — all still
-    # match the OLD narrower text, so a regression that quietly narrowed the
-    # attribution back to macOS-only would leave the suite green.
+    # macOS mechanism rather than the full set of platforms. The two greps above
+    # still match the OLD narrower comment, so this is the guard that keeps the
+    # comment's attribution widened; the echoed message's widening is pinned at
+    # runtime in test_worktree_rm_partial_leftover_removal_is_tolerated.
     assert_file_contains "$WT_RM_LEFTOVER" "NOT MACOS-ONLY" \
-        "keeps the attribution widened past macOS (#1017)"
-    assert_file_contains "$WT_RM_LEFTOVER" "reproduced on a Linux" \
-        "the runtime message names the Linux overlay too, not just the comment"
+        "doc guard: keeps the comment's attribution widened past macOS (#1017)"
 }
 
 # --- #1017: a REGISTERED worktree's force failure must reach the quarantine ---
