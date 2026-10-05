@@ -205,3 +205,53 @@ test_null_cycle_result_is_accepted() {
     assert_exit "0" "$rc" "a null cycle stamp is not a mismatch"
     assert_equals "C4-zero" "$(val rule "$out")" "a null cycle stamp reaches the rule list"
 }
+
+test_unreadable_prev_result_is_refused_without_issue() {
+    # Prev validation is unconditional, not gated on --issue: a missing prior
+    # file on a zero cycle used to be silently never opened (#1150 review).
+    local cur
+    cur="$(stamped cur-zero-noissue 2 1150 "")"
+    refused "a missing --prev-result with no --issue" --cycle 2 --max-cycles 5 \
+        --result "$cur" --prev-result "$FIXTURES/prov-absent-noissue.json" --delta-lines 40
+    assert_contains "$REFUSED_ERR" "cannot read result file" "the read failure is named without --issue too"
+}
+
+# recipe_check_invocations — print each `review-convergence.sh check` command
+# found inside a fenced block of a plugins/**/*.md file, joined across its `\`
+# continuation lines, one invocation per output line prefixed `path:line:`.
+# Prose mentions (outside a fence) are not commands and are skipped.
+recipe_check_invocations() {
+    local f
+    command find "$REPO_ROOT/plugins" -name '*.md' -type f | command sort | while IFS= read -r f; do
+        command awk -v path="${f#"$REPO_ROOT"/}" '
+            /^[[:space:]]*```/ { fence = !fence; next }
+            fence {
+                if (cmd == "" && $0 ~ /review-convergence\.sh check/) { cmd = $0; start = NR }
+                else if (cmd != "") { cmd = cmd " " $0 }
+                # The invocation ends at the first line with no trailing `\`.
+                if (cmd != "" && $0 !~ /\\[[:space:]]*$/) { print path ":" start ":" cmd; cmd = "" }
+            }
+        ' "$f"
+    done
+}
+
+test_every_shipped_recipe_passes_issue() {
+    # The --issue check is opt-in, so a recipe edit that drops the flag would
+    # leave it silently inert while every test above stays green. Pin it at the
+    # call sites themselves.
+    local inv n=0 missing=""
+    while IFS= read -r inv; do
+        [ -n "$inv" ] || continue
+        n=$((n + 1))
+        case "$inv" in
+            *" --issue "*) ;;
+            *) missing="$missing ${inv%%:<*}" ;; # path:line only
+        esac
+    done <<EOF
+$(recipe_check_invocations)
+EOF
+    # Vacuity floor: the two shipped review loops. Zero would mean the parser,
+    # not the recipes, is broken — and would pass every per-call check.
+    assert_true "[ $n -ge 2 ]" "found every recipe invocation of check (got $n, want >= 2)"
+    assert_equals "" "$missing" "every recipe invocation of check passes --issue"
+}

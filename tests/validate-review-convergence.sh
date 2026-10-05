@@ -198,6 +198,8 @@ run_fragment_test test_unusable_prev_result_is_refused_on_a_zero_cycle "a missin
 run_fragment_test test_unstamped_prev_result_is_refused_under_issue "an unstamped --prev-result under --issue -> exit 2 (#1150)"
 run_fragment_test test_non_object_result_is_refused_under_issue "an array --result under --issue -> exit 2, not a jq crash (#1150)"
 run_fragment_test test_null_cycle_result_is_accepted "an explicit null cycle stamp is accepted (#1150)"
+run_fragment_test test_unreadable_prev_result_is_refused_without_issue "a missing --prev-result is refused without --issue too (#1150)"
+run_fragment_test test_every_shipped_recipe_passes_issue "every recipe invocation of check passes --issue (#1150)"
 
 # Every `test_*` function defined in a fragment must actually be dispatched by a
 # `run_fragment_test` line above. A test that is written but never registered passes silently by
