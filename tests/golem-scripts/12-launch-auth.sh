@@ -68,15 +68,19 @@ sk-secret-tok-244|https://bifrost.example" "$(command cat "$sb/claude-env.log" 2
 # The launcher's own ANTHROPIC_BASE_URL wins: the file carries the cache's
 # token but NOT the cache's base URL, so the golem keeps the launcher's.
 test_launch_auth_launcher_base_url_not_overridden() {
-    local sb
+    local sb authf
     new_sandbox sb
     command printf 'export ANTHROPIC_AUTH_TOKEN=sk-secret-tok-244\nexport ANTHROPIC_BASE_URL=https://cache.example\n' >"$sb/op-cache"
     run_launch_auth "$sb" OP_SECRETS_CACHE="$sb/op-cache" TMUX_STUB_CMD_LOG="$sb/session-cmd" \
         ANTHROPIC_BASE_URL=https://launcher.example
     assert_exit 0 "$RUN_RC" "launch with a launcher base URL dispatches (exit 0)"
+    authf="$(command ls "$sb"/golem-auth.* 2>/dev/null | command head -n 1)"
+    # Positive control: the absence below cannot pass on a missing file.
+    assert_not_empty "$authf" "the token file was written"
     # lint-allow-unanchored: per-run sandbox token file, no committed prose
-    assert_file_not_contains "$(command ls "$sb"/golem-auth.* 2>/dev/null | command head -n 1)" \
-        "ANTHROPIC_BASE_URL" "the token file does not carry the cache base URL"
+    assert_file_contains "$authf" "ANTHROPIC_AUTH_TOKEN" "control: the token file carries the token"
+    # lint-allow-unanchored: per-run sandbox token file, no committed prose
+    assert_file_not_contains "$authf" "ANTHROPIC_BASE_URL" "the token file does not carry the cache base URL"
     _run_session_cmd "$sb"
     assert_equals "sk-secret-tok-244|" "$(command head -n 1 "$sb/claude-env.log" 2>/dev/null)" \
         "the file delivers the token and leaves the base URL to the launcher env"
