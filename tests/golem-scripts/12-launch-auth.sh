@@ -88,13 +88,17 @@ test_launch_auth_launcher_base_url_not_overridden() {
 
 # _sh_quote itself, sliced out and driven directly over the shapes that break a
 # naive quoter: leading/trailing/adjacent quotes, and an empty value. Each must
-# round-trip through `sh` byte-for-byte. The quoter splits on `'` rather than
-# using a ${v//…/…} replacement string, whose backslash/quote handling differs
-# across bash 3.2 / 4.3 / 5.2 (#1153 review).
+# round-trip through `sh` byte-for-byte — on the bash running this suite only.
+# The quoter splits on `'` rather than using a ${v//…/…} replacement string,
+# whose backslash/quote handling differs across bash 3.2 / 4.3 / 5.2 (#1153
+# review); since CI runs bash 5 alone, the round-trips cannot prove that, so a
+# structural assertion pins the replacement-free shape instead.
 test_launch_sh_quote_round_trips_edge_shapes() {
     local fn v q back
     fn="$(command sed -n '/^_sh_quote() {/,/^}/p' "$LAUNCH")"
     assert_not_empty "$fn" "_sh_quote could be sliced out of golem-launch.sh (guards a vacuous pass)"
+    # Comment lines precede the function, so the slice holds only its body.
+    assert_not_contains "$fn" '//' "_sh_quote uses no \${v//…/…} replacement (bash-version-sensitive)"
     eval "$fn"
     for v in "plain" "a'b" "''" "'lead" "trail'" "a'b'c'' d" 'x$HOME y"z\w' ""; do
         q="$(_sh_quote "$v")"
