@@ -11,20 +11,23 @@
 # whose refusals are announced under the cargo label.
 #
 # Sourced by tests/validate-golem-scripts.sh, which defines the path consts and
-# sources tests/lib/golem-sandbox.sh BEFORE this file. That library pins
+# sources tests/lib/golem-sandbox.sh BEFORE this file — and AFTER
+# 27-cache-entry.sh, whose _make_foreign the ownership case reuses. That library pins
 # GOLEM_CARGO_CACHE_DIR at a nonexistent sandbox path; these tests pass their own.
 
 # --- helpers (used only by this area, so they stay here) --------------------
 
-# _crg_run <script> <sandbox> <cargo-cache> <issue-N>
+# _crg_run <script> <sandbox> <cargo-cache> <issue-N> [extra-env...]
 # Run worktree-new.sh or worktree-rm.sh from the sandbox with the cargo cache
 # set by the caller and the uv cache pointed at a nonexistent path, so only the
-# cargo arm can act. Captures combined output in RUN_OUT / exit code in RUN_RC.
+# cargo arm can act. BASH_ENV is unset so an image profile cannot rewrite a PATH
+# a caller passes as extra env. Captures combined output in RUN_OUT / RUN_RC.
 _crg_run() {
     local script="$1" dir="$2" cache="$3" n="$4"
+    shift 4
     RUN_RC=0
     RUN_OUT="$(cd "$dir" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" -uBASH_ENV \
             HOME="$dir" \
             GOLEM_PLUGIN_PROBE="$dir/no-plugin-probe" \
             TMUX= TMUX_TMPDIR="${SANDBOX_TMUX_DIR:-$dir/.tmux}" \
@@ -34,6 +37,7 @@ _crg_run() {
             GOLEM_WORKTREE_LOCAL_FILES=".claude/settings.local.json" \
             GOLEM_CARGO_CACHE_DIR="$cache" \
             GOLEM_UV_CACHE_DIR="$dir/no-uv-cache" \
+            "$@" \
             "$REAL_BASH" "$script" "$n" 2>&1)" || RUN_RC=$?
 }
 
@@ -272,4 +276,52 @@ test_worktree_rm_name_mode_leaves_cargo_cache_alone() {
         "the named worktree was removed (guards a vacuous pass)"
     assert_true "[ -d \"$key_dir/issue-scratch\" ] && [ -d \"$key_dir/scratch\" ]" \
         "name mode touches nothing under the cargo cache"
+}
+
+# With no repo key there is no path to verify, so teardown neither guesses one
+# (an empty key would aim the delete at <cache>//issue-N, or at the legacy
+# un-namespaced dir) nor skips in silence: the warning names the cargo label.
+# A PATH stub fails only cksum; its marker attributes the skip to the key.
+test_worktree_rm_failed_repo_key_warns_and_keeps_cargo_target() {
+    local sb
+    new_sandbox sb
+    local cache="$sb/targets" entry
+    entry="$(_crg_entry "$sb" "$cache" 69)"
+    _crg_run "$WT_NEW" "$sb" "$cache" 69
+    _crg_populate "$entry"
+    _crg_populate "$cache/issue-69"
+    command mkdir -p "$sb/stubbin"
+    command printf '#!/usr/bin/env bash\n: >"%s/cksum-ran"\nexit 1\n' "$sb" \
+        >"$sb/stubbin/cksum"
+    command chmod +x "$sb/stubbin/cksum"
+
+    _crg_run "$WT_RM" "$sb" "$cache" 69 PATH="$sb/stubbin:$PATH"
+    assert_exit 0 "$RUN_RC" "teardown exits 0 when the repo key cannot be computed"
+    assert_file_exists "$sb/cksum-ran" "the failing cksum stub was actually invoked"
+    assert_contains "$RUN_OUT" "any cargo target dir for issue 69 under $cache was left in place" \
+        "the skip is announced under the cargo label"
+    assert_true "[ -d \"$entry/debug\" ]" "The keyed target dir survives"
+    assert_true "[ -d \"$cache/issue-69/debug\" ]" \
+        "The un-namespaced <cache>/issue-N is NOT deleted"
+}
+
+# The ownership refusal (cache_entry_remove rc 3) through the cargo call site:
+# our issue-N under a foreign-owned <repo-key> dir is kept and the refusal names
+# ownership. Needs root or passwordless sudo to build; skips otherwise.
+test_worktree_rm_refuses_foreign_owned_cargo_repo_key_dir() {
+    local sb
+    new_sandbox sb
+    local cache="$sb/targets" entry
+    entry="$(_crg_entry "$sb" "$cache" 70)"
+    _crg_run "$WT_NEW" "$sb" "$cache" 70
+    _crg_populate "$entry"
+    _make_foreign "${entry%/*}" || return 0
+
+    _crg_run "$WT_RM" "$sb" "$cache" 70
+    assert_exit 0 "$RUN_RC" "teardown exits 0 under a foreign-owned repo-key dir"
+    assert_contains "$RUN_OUT" "refusing to remove cargo target dir $entry" \
+        "the refusal is announced under the cargo label"
+    assert_contains "$RUN_OUT" "not owned by you" "...and names ownership as the reason"
+    assert_true "[ -f \"$entry/debug/incremental/crate-abc/x.o\" ]" \
+        "the target dir under the foreign parent survives"
 }
