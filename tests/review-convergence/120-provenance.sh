@@ -226,10 +226,13 @@ recipe_check_invocations() {
         command awk -v path="${f#"$REPO_ROOT"/}" '
             /^[[:space:]]*```/ { fence = !fence; next }
             fence {
-                if (cmd == "" && $0 ~ /review-convergence\.sh check/) { cmd = $0; start = NR }
-                else if (cmd != "") { cmd = cmd " " $0 }
-                # The invocation ends at the first line with no trailing `\`.
-                if (cmd != "" && $0 !~ /\\[[:space:]]*$/) { print path ":" start ":" cmd; cmd = "" }
+                # A line ending in `\` continues. Strip the marker before
+                # joining, or a valueless `--issue \` reads the `\` as its value.
+                line = $0
+                more = sub(/[[:space:]]*\\[[:space:]]*$/, "", line)
+                if (cmd == "" && line ~ /review-convergence\.sh check/) { cmd = line; start = NR }
+                else if (cmd != "") { cmd = cmd " " line }
+                if (cmd != "" && !more) { print path ":" start ":" cmd " "; cmd = "" }
             }
         ' "$f"
     done
@@ -243,10 +246,11 @@ test_every_shipped_recipe_passes_issue() {
     while IFS= read -r inv; do
         [ -n "$inv" ] || continue
         n=$((n + 1))
-        case "$inv" in
-            *" --issue "*) ;;
-            *) missing="$missing ${inv%%:<*}" ;; # path:line only
-        esac
+        # `--issue` must carry a value: a bare trailing `--issue` would pass a
+        # substring match yet die at runtime ("needs a value").
+        if ! command printf '%s\n' "$inv" | command grep -E ' --issue [^[:space:]-]' >/dev/null; then
+            missing="$missing ${inv%%:<*}" # path:line only
+        fi
     done <<EOF
 $(recipe_check_invocations)
 EOF
