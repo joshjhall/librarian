@@ -1206,13 +1206,20 @@ const reusedReviewerPrompt = (dim, manifest, diff = scopeDiff) =>
 // answer gets retried for.
 const retryNotice = (prevResult) => {
   const checked = prevResult && Array.isArray(prevResult.checked) ? prevResult.checked : []
+  // Each wording is asserted only when its shape is TRUE of the rejected answer;
+  // anything else (a shape classifyEngagement may retry in future) gets the
+  // generic reason rather than a claim about the answer that is false.
+  const allDiffOnly = checked.length > 0 && checked.every((c) => c && c.how === 'diff-only')
   const reason =
     checked.length === 0
       ? 'your previous answer returned no findings and listed nothing in `checked`, ' +
         'so there was no evidence you reviewed anything'
-      : 'your previous answer returned no findings and every `checked` entry was ' +
-        'how="diff-only", which this dimension may not do — its job is about code ' +
-        'the diff hunks only partly show'
+      : allDiffOnly
+        ? 'your previous answer returned no findings and every `checked` entry was ' +
+          'how="diff-only", which this dimension may not do — its job is about code ' +
+          'the diff hunks only partly show'
+        : 'your previous answer returned no findings without enough evidence of ' +
+          'having read the code this dimension is about'
   return (
     '\n\nRETRY: this dimension is being re-dispatched because ' +
     reason +
