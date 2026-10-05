@@ -451,5 +451,25 @@ export async function run() {
     ok(String(secCalls[1]?.prompt).startsWith(String(secCalls[0]?.prompt)), "prompts: the retry is the first prompt plus a tail");
     const corCalls = (driven?.calls || []).filter((c) => c.label === "review:correctness");
     eq(corCalls.length, 1, "prompts: an engaged dimension is not retried");
+
+    // The other ternary arm: `tests` is a NEW dimension (newReviewerPrompt) and a
+    // code reader, so an empty answer is retried too — and its notice must name
+    // the EMPTY shape, not the diff-only one.
+    const stubTests = (_prompt, opts) => {
+      if (opts.label === "manifest") return { ...manifest, needs: { database: false, devops: false } };
+      if (opts.label === "review:tests") return { findings: [], checked: [] };
+      return { findings: [], checked: read };
+    };
+    let drivenTests = null;
+    try {
+      drivenTests = await runHarness(stubTests, harnessArgs);
+    } catch (err) {
+      ok(false, `prompts: the driven harness (tests arm) ran to completion — threw ${err?.message || err}`);
+    }
+    const testCalls = (drivenTests?.calls || []).filter((c) => c.label === "review:tests");
+    eq(testCalls.length, 2, "prompts: an empty new-dimension answer was retried (non-vacuity)");
+    ok(!String(testCalls[0]?.prompt).includes("RETRY:"), "prompts: the new-dimension first pass carries no retry notice");
+    ok(String(testCalls[1]?.prompt).startsWith(String(testCalls[0]?.prompt)), "prompts: the new-dimension retry is the first prompt plus a tail");
+    ok(String(testCalls[1]?.prompt).includes("listed nothing in `checked`"), "prompts: the new-dimension retry names the empty shape it was rejected for");
   }
 }
