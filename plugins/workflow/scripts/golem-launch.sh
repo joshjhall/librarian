@@ -222,8 +222,24 @@ resolve_auth_token() {
 
 # _sh_quote <value> — print <value> as ONE single-quoted POSIX sh word, so a
 # token or path carrying `'`, `$`, or spaces survives `sh -c` / `.` verbatim.
+# Splits on `'` with ${v%%…}/${v#…} rather than a ${v//…/…} replacement string:
+# how a replacement treats backslashes and quotes changed across bash 3.2, 4.3
+# and 5.2 (patsub_replacement), and macOS ships 3.2. Each `'` becomes `'\''`.
 _sh_quote() {
-    command printf "'%s'" "${1//\'/\'\\\'\'}"
+    local rest="$1" out=""
+    while :; do
+        case "$rest" in
+            *"'"*)
+                out="$out${rest%%"'"*}'\\''"
+                rest="${rest#*"'"}"
+                ;;
+            *)
+                out="$out$rest"
+                break
+                ;;
+        esac
+    done
+    command printf "'%s'" "$out"
 }
 
 # write_auth_file — write the resolved token (and base URL when it rides along)

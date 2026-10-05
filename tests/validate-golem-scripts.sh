@@ -178,6 +178,7 @@ run_fragment_test test_launch_unset_home_does_not_crash "golem-launch: unset HOM
 run_fragment_test test_launch_version_undeterminable_skips "golem-launch: undeterminable version skips the guard"
 run_fragment_test test_launch_auth_cache_injects_token "golem-launch: cache token reaches the golem via a 0600 file, never argv (#244, #1153)"
 run_fragment_test test_launch_auth_launcher_base_url_not_overridden "golem-launch: a launcher ANTHROPIC_BASE_URL is not overridden by the cache (#244, #1153)"
+run_fragment_test test_launch_sh_quote_round_trips_edge_shapes "golem-launch: _sh_quote round-trips quote/empty edge shapes, version-stable (#1153)"
 run_fragment_test test_launch_auth_token_quoting_round_trips "golem-launch: a metachar token round-trips through the token file (#1153)"
 run_fragment_test test_launch_auth_inherited_token_not_in_tmux_env "golem-launch: an inherited token never reaches tmux's env or argv (#1153)"
 run_fragment_test test_launch_auth_unwritable_tmpdir_never_falls_back_to_argv "golem-launch: no token file -> warn, never an argv fallback (#1153)"

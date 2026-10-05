@@ -86,6 +86,23 @@ test_launch_auth_launcher_base_url_not_overridden() {
         "the file delivers the token and leaves the base URL to the launcher env"
 }
 
+# _sh_quote itself, sliced out and driven directly over the shapes that break a
+# naive quoter: leading/trailing/adjacent quotes, and an empty value. Each must
+# round-trip through `sh` byte-for-byte. The quoter splits on `'` rather than
+# using a ${v//…/…} replacement string, whose backslash/quote handling differs
+# across bash 3.2 / 4.3 / 5.2 (#1153 review).
+test_launch_sh_quote_round_trips_edge_shapes() {
+    local fn v q back
+    fn="$(command sed -n '/^_sh_quote() {/,/^}/p' "$LAUNCH")"
+    assert_not_empty "$fn" "_sh_quote could be sliced out of golem-launch.sh (guards a vacuous pass)"
+    eval "$fn"
+    for v in "plain" "a'b" "''" "'lead" "trail'" "a'b'c'' d" 'x$HOME y"z\w' ""; do
+        q="$(_sh_quote "$v")"
+        back="$(sh -c "printf '%s' $q")"
+        assert_equals "$v" "$back" "_sh_quote round-trips [$v] through sh"
+    done
+}
+
 # A token carrying shell metacharacters round-trips byte-for-byte: the file is
 # sourced by sh, so an unquoted `'` would break it and a `$` would expand.
 test_launch_auth_token_quoting_round_trips() {
