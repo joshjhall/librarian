@@ -58,6 +58,10 @@ test_result_without_issue_is_refused_when_issue_is_asserted() {
         --result "$f" --delta-lines 40
     err="$REFUSED_ERR"
     assert_contains "$err" "has issue null" "a missing issue is a mismatch, not a pass"
+    # Re-extracting cannot fix a null stamp, so the message must not send the
+    # operator round that loop: it names the harness args instead.
+    assert_contains "$err" "re-run the harness with issue: { number: 1150 }" \
+        "a null stamp points at the harness args, not at re-extraction"
 }
 
 test_string_issue_does_not_match_the_number() {
@@ -141,4 +145,31 @@ test_bad_issue_value_fails_loud() {
         err="$REFUSED_ERR"
         assert_contains "$err" "--issue must be an integer >= 1" "--issue '$v' names the flag"
     done
+}
+
+test_string_cycle_does_not_match_the_number() {
+    # The cycle twin of the string-issue case: "1" is not the integer 1.
+    local f
+    f="$(stamped string-cycle '"1"' 1150 "")"
+    refused "a string-typed cycle" --cycle 1 --max-cycles 5 --issue 1150 \
+        --result "$f" --delta-lines 40
+}
+
+test_unusable_prev_result_is_refused_on_a_zero_cycle() {
+    # check_provenance validates its own input because it runs BEFORE
+    # read_findings, and on a zero-finding cycle read_findings never opens a
+    # --prev-result at all. Each shape must exit 2 with no verdict.
+    local cur
+    cur="$(stamped cur-zero-unusable 2 1150 "")"
+    command printf 'not json\n' >"$FIXTURES/prov-invalid.json"
+    command printf '[1,2]\n' >"$FIXTURES/prov-array.json"
+    refused "a missing --prev-result" --cycle 2 --max-cycles 5 --issue 1150 \
+        --result "$cur" --prev-result "$FIXTURES/prov-does-not-exist.json" --delta-lines 40
+    assert_contains "$REFUSED_ERR" "cannot read result file" "a missing --prev-result names the read failure"
+    refused "an invalid-JSON --prev-result" --cycle 2 --max-cycles 5 --issue 1150 \
+        --result "$cur" --prev-result "$FIXTURES/prov-invalid.json" --delta-lines 40
+    assert_contains "$REFUSED_ERR" "is not valid JSON" "an invalid --prev-result names the parse failure"
+    refused "an array --prev-result" --cycle 2 --max-cycles 5 --issue 1150 \
+        --result "$cur" --prev-result "$FIXTURES/prov-array.json" --delta-lines 40
+    assert_contains "$REFUSED_ERR" "has issue null" "a non-object --prev-result reads as unstamped, not a jq crash"
 }

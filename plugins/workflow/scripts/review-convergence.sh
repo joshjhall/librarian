@@ -433,6 +433,12 @@ check_provenance() {
         else
             _prov_what="prior-cycle result"
         fi
+        # A null stamp is not a stale file: the harness that wrote it had no
+        # usable args.issue, so re-extracting returns the same null. Say so,
+        # or the operator re-extracts forever.
+        if [ "$_prov_issue" = "null" ]; then
+            die "review-convergence: $_prov_what '$1' has issue null, not --issue $issue — it carries no issue stamp: either a pre-#1150 or foreign file, or the harness ran without args.issue.number; re-run the harness with issue: { number: $issue } (#1150)"
+        fi
         die "review-convergence: $_prov_what '$1' has issue $_prov_issue, not --issue $issue — a stale or foreign result file; re-extract it from this run's harness output (#1150)"
     fi
 }

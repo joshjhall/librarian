@@ -134,6 +134,10 @@ export function run() {
     eq(str({}).issue, 77, "buildResult: a quoted issue number is normalized to an integer (#1150)");
     const junk = extractHelpers(SHIP, ["buildResult"], { issue: { number: "abc" } }).buildResult;
     eq(junk({}).issue, null, "buildResult: a non-integer issue number is null, not a guess (#1150)");
+    for (const bad of [0, -1, 1.5]) {
+      const b = extractHelpers(SHIP, ["buildResult"], { issue: { number: bad } }).buildResult;
+      eq(b({}).issue, null, `buildResult: issue number ${bad} is null — positive integers only (#1150)`);
+    }
   }
   eq(
     buildResult({}).summary.files_scanned,
