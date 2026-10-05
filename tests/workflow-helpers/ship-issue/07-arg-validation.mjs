@@ -194,6 +194,8 @@ export async function run() {
     [{ phase: undefined }, "an undefined phase"],
     [null, "null args"],
     [undefined, "undefined args"],
+    [["post-pr"], "array args"],
+    ["post-pr", "non-object args"],
   ]) {
     eq(unknownPhase(val), false, `unknownPhase: ${label} is accepted`);
   }
@@ -262,5 +264,14 @@ export async function run() {
     }
     eq(threw, false, `ship-issue: the phase guard does not throw on ${JSON.stringify(a)}`);
   }
+
+  // --- The cycle banner names the RAW invalid value -------------------------
+  // It logs before the guard throws, and PHASE collapses 'post-pr' to 'pre-pr',
+  // so a banner on PHASE alone would contradict the error that follows it.
+  const banner = src.match(/^log\(`review cycle .*$/m);
+  ok(
+    banner && banner[0].includes("unknownPhase(args) ? JSON.stringify(args.phase) : PHASE"),
+    "ship-issue: the cycle banner logs the raw phase when it is invalid, not the collapsed PHASE",
+  );
 }
 }
