@@ -163,6 +163,15 @@ them as `${CLAUDE_PLUGIN_ROOT}/scripts/<name>.sh`.
 | `CONTEXT_BUDGET_THRESHOLD` | `175000` | Context size, in tokens, at which a golem hands off to a fresh session rather than starting new work (#784). DERIVED, not picked: pure token accounting is monotonic, so the sweep only yields a threshold once a handoff's re-derivation cost is priced in — and across that cost's whole plausible range 175k minimizes worst-case regret (4.1%, vs 14.5% at 250k). Re-derived on a 1M-era corpus (#1056) and **unchanged** — the window was never an input to a cost optimum. See `docs/verification/context-threshold-rederivation-1056.md` |
 | `CONTEXT_BUDGET_FLOOR` | `104000` | The measured cost of a session's first request — what a fresh session re-pays before doing anything, and therefore what a handoff costs (#784). Re-measured in #1056 and moved from `91000`: the floor is **bimodal by session shape** (~84.4k main checkout vs ~104.4k worktree/golem, a ~24% gap from the skill preamble a golem loads), and 91k sat between the clusters. Tuned to the golem figure because that is this script's caller; override if your sessions floor elsewhere |
 
+An override set in the launcher's environment still reaches golems.
+`golem-launch.sh` stops only the **defaults** `config.sh` fills in from
+reaching tmux (#1125). Before that fix, the launch that started a tmux server
+froze those defaults into the server's global env, where they outlived every
+plugin update. A long-lived server can still hold such stale values, for
+example the pre-#1056 `CONTEXT_BUDGET_FLOOR=91000`. Check with
+`tmux show-environment -g`, and clear a stale one with
+`tmux set-environment -g -u <VAR>` or restart the server.
+
 The `GOLEM_*` vars above are sourced by the bundled shell scripts. The vars
 below are **skill-level tunables** for the `ship-issue` skill, following the same
 opt-in/override convention. They are documented in that skill's "Environment

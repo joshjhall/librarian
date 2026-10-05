@@ -131,8 +131,19 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(command dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Snapshot the exported names BEFORE config.sh, so `launch` can tell the knobs
+# config.sh merely DEFAULTED apart from ones the operator exported (#1125).
+_pre_config_exports=" $(compgen -e | command tr '\n' ' ') "
 # shellcheck source=./config.sh
 . "$SCRIPT_DIR/config.sh"
+CONFIG_DEFAULT_EXPORTS=""
+for _name in $(compgen -e); do
+    case "$_pre_config_exports" in
+        *" $_name "*) ;;
+        *) CONFIG_DEFAULT_EXPORTS="$CONFIG_DEFAULT_EXPORTS $_name" ;;
+    esac
+done
+unset _pre_config_exports _name
 # shellcheck source=./bounded-run.sh
 . "$SCRIPT_DIR/bounded-run.sh"
 
@@ -682,6 +693,15 @@ case "$cmd" in
         # `claude` when GOLEM_MODEL is set, and expands to nothing (byte-identical
         # launch line) when unset.
         MODEL_FLAG="$(golem_model_flag)"
+        # Un-export config.sh's DEFAULTS before tmux sees them (#1125). The
+        # `new-session` that starts the server copies this env into the server's
+        # GLOBAL env, which every later session inherits and no plugin update can
+        # reach — that froze the pre-#1056 CONTEXT_BUDGET_FLOOR=91000 into golems
+        # and the orchestrator alike, winning over the scripts' own `:=` defaults.
+        # Operator-EXPORTED values were snapshotted above and still propagate; an
+        # unexported shell var config.sh then exports is treated as a default.
+        # shellcheck disable=SC2086,SC2163 # a word-split list of NAMES, deliberately
+        [ -n "$CONFIG_DEFAULT_EXPORTS" ] && export -n $CONFIG_DEFAULT_EXPORTS
         tmux new-session -d -s "golem-$N" -c "$wt" "${env_args[@]}" \
             "claude$MODEL_FLAG --permission-mode auto '/workflow:next-issue $N --level $LEVEL' ; claude$MODEL_FLAG --permission-mode auto '/workflow:ship-issue'"
         command echo "golem-launch: started golem-$N in $wt"

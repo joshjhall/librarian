@@ -563,6 +563,56 @@ test_launch_auth_cache_marker_no_token_warns() {
     assert_not_contains "$log" "ANTHROPIC_AUTH_TOKEN" "no empty token is injected"
 }
 
+# --- golem-launch.sh config-default env leak (#1125) -----------------------
+#
+# The `tmux new-session` that STARTS a server copies the client env into the
+# server's global env, inherited by every later session. config.sh exports every
+# knob it defaults, so a launch froze those defaults (the pre-#1056
+# CONTEXT_BUDGET_FLOOR=91000) server-wide. The tmux stub dumps its own env to
+# TMUX_STUB_ENV_LOG — the env a real tmux would have frozen. Run in a subshell
+# with the knobs unset, because the suite's caller may itself carry the leak.
+
+# Defaults config.sh merely filled in must NOT reach tmux.
+test_launch_does_not_leak_config_defaults() {
+    local sb envlog rc leaked
+    new_sandbox sb
+    envlog="$sb/tmux-env.log"
+    (
+        unset CONTEXT_BUDGET_FLOOR CONTEXT_BUDGET_THRESHOLD GOLEM_LEVEL
+        run_launch_auth "$sb" OP_SECRETS_CACHE="$sb/no-such-cache" TMUX_STUB_ENV_LOG="$envlog"
+        command printf '%s' "$RUN_RC" >"$sb/rc"
+    )
+    rc="$(command cat "$sb/rc" 2>/dev/null || true)"
+    assert_exit 0 "$rc" "launch dispatches (exit 0)"
+    assert_file_exists "$envlog" "the tmux stub recorded its env"
+    # Control: the dump carries this launch's own env, so the absences below
+    # cannot pass on an empty or unrelated log. Only the knob lines are ever
+    # read back — the dump is a whole env, and a failure must not echo it.
+    # lint-allow-unanchored: $envlog is a per-run env dump, no committed prose
+    assert_file_contains "$envlog" "TMUX_STUB_LOG=$sb/tmux-args.log" \
+        "control: the env log is this launch's tmux env"
+    leaked="$(command grep -E '^(CONTEXT_BUDGET_FLOOR|CONTEXT_BUDGET_THRESHOLD|GOLEM_LEVEL)=' "$envlog" || true)"
+    assert_equals "" "$leaked" "config.sh's defaulted knobs are not handed to tmux"
+}
+
+# An operator override exported in the launcher's own env still propagates.
+test_launch_keeps_operator_exported_override() {
+    local sb envlog rc
+    new_sandbox sb
+    envlog="$sb/tmux-env.log"
+    (
+        unset CONTEXT_BUDGET_THRESHOLD
+        run_launch_auth "$sb" OP_SECRETS_CACHE="$sb/no-such-cache" TMUX_STUB_ENV_LOG="$envlog" \
+            CONTEXT_BUDGET_FLOOR=12345
+        command printf '%s' "$RUN_RC" >"$sb/rc"
+    )
+    rc="$(command cat "$sb/rc" 2>/dev/null || true)"
+    assert_exit 0 "$rc" "launch dispatches (exit 0)"
+    # lint-allow-unanchored: $envlog is a per-run env dump, no committed prose
+    assert_file_contains "$envlog" "CONTEXT_BUDGET_FLOOR=12345" \
+        "an operator-exported CONTEXT_BUDGET_FLOOR still reaches tmux"
+}
+
 # --- golem-launch.sh plugin-resolvability guard (#946) ----------------------
 #
 # The skew guard above catches a STALE plugin; this guard catches an ABSENT one.
