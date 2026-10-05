@@ -216,7 +216,9 @@ export async function run() {
   const boundary = src.match(
     /^(log\(|phase\(|await |const\s+\w+\s*=\s*await\b|let\s+\w+\s*=\s*await\b|if \(|for \(|while \(|return )/m,
   );
-  ok(src.indexOf("const unknownPhase") < boundary.index, "ship-issue: unknownPhase is defined in the pure prefix");
+  // `!== -1` matters: a missing definition yields -1, which is "< boundary" too.
+  const defIdx = src.indexOf("const unknownPhase");
+  ok(defIdx !== -1 && defIdx < boundary.index, "ship-issue: unknownPhase is defined in the pure prefix");
   const guardIdx = src.indexOf("if (unknownPhase(args)) {");
   ok(guardIdx > boundary.index, "ship-issue: the unknownPhase guard sits in the orchestration body (#1145 wiring)");
   // Every review dispatch must come AFTER the guard, or the typo'd cycle has
