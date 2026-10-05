@@ -435,7 +435,10 @@ export async function run() {
     for (const d of REUSED_DIMENSIONS) {
       ok(typeof d.instructions === "string" && d.instructions.trim().length > 0, `prompts: reused dimension "${d.name}" carries inline instructions (#1146 AC2)`);
     }
-    ok(!sec.includes("Sub-Reviewer Definition in"), "prompts: the dangling 'Definition in your instructions' reference is gone");
+    for (const d of REUSED_DIMENSIONS) {
+      const p = reusedReviewerPrompt(d, manifest, "+x");
+      ok(!p.includes("Sub-Reviewer Definition"), `prompts: ${d.name} references no Sub-Reviewer Definition the agent does not receive (#1146 AC2)`);
+    }
     // Cache stability (#256): the clause rides the TAIL, so both prompts share
     // every byte up to the per-dimension `Mode:` selector.
     const cut = (p) => p.slice(0, p.indexOf("Mode: reviewer:"));
