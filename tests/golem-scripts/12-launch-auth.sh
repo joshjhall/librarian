@@ -65,6 +65,23 @@ sk-secret-tok-244|https://bifrost.example" "$(command cat "$sb/claude-env.log" 2
         "the session deletes the token file once sourced"
 }
 
+# The launcher's own ANTHROPIC_BASE_URL wins: the file carries the cache's
+# token but NOT the cache's base URL, so the golem keeps the launcher's.
+test_launch_auth_launcher_base_url_not_overridden() {
+    local sb
+    new_sandbox sb
+    command printf 'export ANTHROPIC_AUTH_TOKEN=sk-secret-tok-244\nexport ANTHROPIC_BASE_URL=https://cache.example\n' >"$sb/op-cache"
+    run_launch_auth "$sb" OP_SECRETS_CACHE="$sb/op-cache" TMUX_STUB_CMD_LOG="$sb/session-cmd" \
+        ANTHROPIC_BASE_URL=https://launcher.example
+    assert_exit 0 "$RUN_RC" "launch with a launcher base URL dispatches (exit 0)"
+    # lint-allow-unanchored: per-run sandbox token file, no committed prose
+    assert_file_not_contains "$(command ls "$sb"/golem-auth.* 2>/dev/null | command head -n 1)" \
+        "ANTHROPIC_BASE_URL" "the token file does not carry the cache base URL"
+    _run_session_cmd "$sb"
+    assert_equals "sk-secret-tok-244|" "$(command head -n 1 "$sb/claude-env.log" 2>/dev/null)" \
+        "the file delivers the token and leaves the base URL to the launcher env"
+}
+
 # A token carrying shell metacharacters round-trips byte-for-byte: the file is
 # sourced by sh, so an unquoted `'` would break it and a `$` would expand.
 test_launch_auth_token_quoting_round_trips() {
@@ -143,7 +160,7 @@ test_launch_auth_no_source_no_injection() {
     run_launch_auth "$sb" OP_SECRETS_CACHE="$sb/no-such-cache"
     assert_exit 0 "$RUN_RC" "launch with no token source dispatches (exit 0)"
     log="$(command cat "$sb/tmux-args.log" 2>/dev/null || true)"
-    assert_not_contains "$log" "ANTHROPIC_AUTH_TOKEN" "no token is injected when none resolves"
+    assert_contains "$log" "new-session -d -s golem-7" "control: the tmux argv was logged"
     assert_not_contains "$log" "golem-auth." "no token file is handed to tmux when none resolves"
     assert_not_contains "$RUN_OUT" "WARNING" "no warning when there is no cache marker"
 }
@@ -175,7 +192,8 @@ EOF
         OP_ANTHROPIC_AUTH_TOKEN_REF="op://vault/anthropic/token"
     assert_exit 0 "$RUN_RC" "a hanging op read is bounded — dispatch still completes (exit 0)"
     log="$(command cat "$sb/tmux-args.log" 2>/dev/null || true)"
-    assert_not_contains "$log" "ANTHROPIC_AUTH_TOKEN" "a timed-out op read injects no token"
+    assert_contains "$log" "new-session -d -s golem-7" "control: the tmux argv was logged"
+    assert_not_contains "$log" "golem-auth." "a timed-out op read hands tmux no token file"
 }
 
 # A cache marker exists but yields no token → warn (don't fail), still dispatch,
@@ -189,7 +207,8 @@ test_launch_auth_cache_marker_no_token_warns() {
     assert_exit 0 "$RUN_RC" "an empty cache still dispatches (exit 0)"
     assert_contains "$RUN_OUT" "WARNING" "warns when a cache marker is present but no token resolves"
     log="$(command cat "$sb/tmux-args.log" 2>/dev/null || true)"
-    assert_not_contains "$log" "ANTHROPIC_AUTH_TOKEN" "no empty token is injected"
+    assert_contains "$log" "new-session -d -s golem-7" "control: the tmux argv was logged"
+    assert_not_contains "$log" "golem-auth." "no token file for an empty token"
 }
 
 # --- golem-launch.sh config-default env leak (#1125) -----------------------
