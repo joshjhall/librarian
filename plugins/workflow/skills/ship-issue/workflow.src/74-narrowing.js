@@ -222,12 +222,16 @@ const selectReviewDimensions = ({
 }
 
 // issueNumberOf — `args.issue.number` as a positive integer, else null (#1150).
-// A string number ("1150") is accepted because a caller templating the args
-// may quote it; anything that is not a positive integer is null rather than a
-// guess, so the convergence helper refuses it instead of matching on garbage.
+// A canonical digit string ("1150") is accepted because a caller templating the
+// args may quote it; anything else is null rather than a guess, so the
+// convergence helper refuses it instead of matching on garbage. The type gate
+// comes BEFORE Number(): bare coercion maps `true` to 1 and `[5]` to 5, which
+// would stamp a real-looking issue onto a malformed input.
 function issueNumberOf(iss) {
-  const n = iss && typeof iss === 'object' ? Number(iss.number) : NaN
-  return Number.isInteger(n) && n > 0 ? n : null
+  const raw = iss && typeof iss === 'object' && !Array.isArray(iss) ? iss.number : undefined
+  if (typeof raw === 'number') return Number.isInteger(raw) && raw > 0 ? raw : null
+  if (typeof raw === 'string' && /^[1-9][0-9]*$/.test(raw)) return Number(raw)
+  return null
 }
 
 // buildResult — the SINGLE constructor for a cycle result object (#636).

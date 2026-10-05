@@ -173,3 +173,15 @@ test_unusable_prev_result_is_refused_on_a_zero_cycle() {
         --result "$cur" --prev-result "$FIXTURES/prov-array.json" --delta-lines 40
     assert_contains "$REFUSED_ERR" "has issue null" "a non-object --prev-result reads as unstamped, not a jq crash"
 }
+
+test_unstamped_prev_result_is_refused_under_issue() {
+    # The prev role's null-stamp branch: a prior file with `issue: null` must be
+    # refused with the prior-cycle wording, not accepted as "no stamp, no check".
+    local cur prev
+    cur="$(stamped cur-zero-nullprev 2 1150 "")"
+    prev="$(stamped prev-null 1 null "")"
+    refused "an unstamped --prev-result under --issue" --cycle 2 --max-cycles 5 --issue 1150 \
+        --result "$cur" --prev-result "$prev" --delta-lines 40
+    assert_contains "$REFUSED_ERR" "prior-cycle result" "the null prev names its role"
+    assert_contains "$REFUSED_ERR" "has issue null" "the null prev names the missing stamp"
+}

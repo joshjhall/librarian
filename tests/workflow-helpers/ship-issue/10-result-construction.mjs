@@ -134,10 +134,14 @@ export function run() {
     eq(str({}).issue, 77, "buildResult: a quoted issue number is normalized to an integer (#1150)");
     const junk = extractHelpers(SHIP, ["buildResult"], { issue: { number: "abc" } }).buildResult;
     eq(junk({}).issue, null, "buildResult: a non-integer issue number is null, not a guess (#1150)");
-    for (const bad of [0, -1, 1.5]) {
+    // true/[5]/" 7" coerce to 1/5/7 under bare Number(); "07" is non-canonical.
+    // Each must be null, so a malformed stamp can never look like a real issue.
+    for (const bad of [0, -1, 1.5, true, [5], " 7", "07", "1e3"]) {
       const b = extractHelpers(SHIP, ["buildResult"], { issue: { number: bad } }).buildResult;
-      eq(b({}).issue, null, `buildResult: issue number ${bad} is null — positive integers only (#1150)`);
+      eq(b({}).issue, null, `buildResult: issue number ${JSON.stringify(bad)} is null — positive integers only (#1150)`);
     }
+    const scalar = extractHelpers(SHIP, ["buildResult"], { issue: 1150 }).buildResult;
+    eq(scalar({}).issue, null, "buildResult: a bare-number args.issue (not { number }) is null (#1150)");
   }
   eq(
     buildResult({}).summary.files_scanned,
