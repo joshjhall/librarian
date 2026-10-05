@@ -221,6 +221,19 @@ const selectReviewDimensions = ({
   return { entries, budgetExhausted, dimensionsSkipped, narrowed, cheap }
 }
 
+// issueNumberOf — `args.issue.number` as a positive integer, else null (#1150).
+// A canonical digit string ("1150") is accepted because a caller templating the
+// args may quote it; anything else is null rather than a guess, so the
+// convergence helper refuses it instead of matching on garbage. The type gate
+// comes BEFORE Number(): bare coercion maps `true` to 1 and `[5]` to 5, which
+// would stamp a real-looking issue onto a malformed input.
+function issueNumberOf(iss) {
+  const raw = iss && typeof iss === 'object' && !Array.isArray(iss) ? iss.number : undefined
+  if (typeof raw === 'number') return Number.isInteger(raw) && raw > 0 ? raw : null
+  if (typeof raw === 'string' && /^[1-9][0-9]*$/.test(raw)) return Number(raw)
+  return null
+}
+
 // buildResult — the SINGLE constructor for a cycle result object (#636).
 //
 // WHY THIS IS A HELPER AND NOT AN OBJECT LITERAL AT THE RETURN. Everything past
@@ -271,6 +284,12 @@ function buildResult(parts) {
   return {
     cycle: CYCLE,
     phase: PHASE,
+    // Provenance (#1150): which issue this result belongs to, so
+    // review-convergence.sh can refuse a stale or foreign result file instead
+    // of computing a stop verdict from another run's data. Always present —
+    // `null` when no `args.issue` was passed — so an absent key never reads as
+    // a deliberate value.
+    issue: issueNumberOf(issue),
     scanner: 'next-issue-review',
     blocking,
     deferrable,

@@ -43,7 +43,12 @@ export function run() {
     SHIP,
     ["buildResult", "emptyResult", "applyJudgeVerdicts", "NATURE_VALUES", "DISPOSITION_RULES"],
     // `files` seeds scopeFiles, which buildResult reports as files_scanned.
-    { cycle: 2, phase: "pr-cycle", files: ["a.js", "b.js", "c.js"] },
+    {
+      cycle: 2,
+      phase: "pr-cycle",
+      files: ["a.js", "b.js", "c.js"],
+      issue: { number: 1150, title: "provenance" },
+    },
   );
 
   // A finding shaped like the harness's own: `ref` is what applyJudgeVerdicts
@@ -68,6 +73,7 @@ export function run() {
   const TOP_LEVEL_KEYS = [
     "cycle",
     "phase",
+    "issue",
     "scanner",
     "blocking",
     "deferrable",
@@ -113,6 +119,30 @@ export function run() {
   eq(buildResult({}).scanner, "next-issue-review", "buildResult: scanner is fixed (#636)");
   eq(buildResult({}).cycle, 2, "buildResult: cycle comes from the harness config, not the caller (#636)");
   eq(buildResult({}).phase, "pr-cycle", "buildResult: phase comes from the harness config (#636)");
+
+  // --- (1a') Provenance: the result names its issue (#1150) ----------------
+  //
+  // review-convergence.sh --issue refuses a result whose `issue` disagrees, so
+  // this field is what lets it tell this run's file from a stale/foreign one.
+  // Asserted as the exact integer (not merely truthy) so a mutant stamping
+  // the whole `issue` object, or a constant, fails here.
+  eq(buildResult({}).issue, 1150, "buildResult: issue is args.issue.number (#1150)");
+  {
+    const bare = extractHelpers(SHIP, ["buildResult"], { cycle: 1 }).buildResult;
+    eq(bare({}).issue, null, "buildResult: issue is null, not omitted, with no args.issue (#1150)");
+    const str = extractHelpers(SHIP, ["buildResult"], { issue: { number: "77" } }).buildResult;
+    eq(str({}).issue, 77, "buildResult: a quoted issue number is normalized to an integer (#1150)");
+    const junk = extractHelpers(SHIP, ["buildResult"], { issue: { number: "abc" } }).buildResult;
+    eq(junk({}).issue, null, "buildResult: a non-integer issue number is null, not a guess (#1150)");
+    // true/[5]/" 7" coerce to 1/5/7 under bare Number(); "07" is non-canonical.
+    // Each must be null, so a malformed stamp can never look like a real issue.
+    for (const bad of [0, -1, 1.5, true, [5], " 7", "07", "1e3"]) {
+      const b = extractHelpers(SHIP, ["buildResult"], { issue: { number: bad } }).buildResult;
+      eq(b({}).issue, null, `buildResult: issue number ${JSON.stringify(bad)} is null — positive integers only (#1150)`);
+    }
+    const scalar = extractHelpers(SHIP, ["buildResult"], { issue: 1150 }).buildResult;
+    eq(scalar({}).issue, null, "buildResult: a bare-number args.issue (not { number }) is null (#1150)");
+  }
   eq(
     buildResult({}).summary.files_scanned,
     3,

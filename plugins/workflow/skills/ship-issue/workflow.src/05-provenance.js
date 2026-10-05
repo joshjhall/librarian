@@ -125,8 +125,10 @@
 // IS the complete set for that cycle, so `clean` can still be reached.
 //
 // Returns (one cycle):
-//   { cycle, phase, scanner, blocking[], deferrable[], comments_addressed[],
+//   { cycle, phase, issue, scanner, blocking[], deferrable[], comments_addressed[],
 //     summary{...}, budget_exhausted, dimensions_skipped[], clean }
+//   `issue` is `args.issue.number` (or null) — provenance review-convergence.sh
+//   checks with `--issue` so a stale/foreign result file fails loud (#1150).
 //   `clean` is the per-cycle termination signal the skill reads (combined by the
 //   skill with CI-green + comments-resolved). It is true ONLY when nothing
 //   blocks, every PR comment is resolved-or-deferred, AND the cycle was complete

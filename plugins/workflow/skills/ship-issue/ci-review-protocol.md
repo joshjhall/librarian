@@ -327,7 +327,7 @@ result printed; full contract in `review-engagement.md`:
 ```bash
 # substitute <skill-base-dir>: next-issue/worktree-safe-recipes.md (#815)
 <skill-base-dir>/../../scripts/review-convergence.sh check \
-  --cycle "$cycle" --max-cycles "$cap" \
+  --issue {N} --cycle "$cycle" --max-cycles "$cap" \
   --attempt "$attempt" --max-attempts "$attempt_cap" \
   --result "$cycle_result_json" \
   --delta-lines "$delta_lines" \
@@ -406,6 +406,10 @@ missing `workflow-wall-timeout.sh`. Keep both comparisons: without the attempts
 bound, a fallback that also stops charging crashed cycles would be unbounded. The
 loop stays bounded either way; it only loses the early-stop, the narrow-zero
 protection, and the `capped_over` disambiguation.
+
+**Exception (#1150):** exit 2 with `a stale or foreign result file` means a
+result file is another issue's or cycle's — re-extract it and re-run the check;
+never fall back or drop `--issue` (`adversarial-review-step.md`).
 
 Write each trip's harness result to `{dir}/attempt<attempt>.json` (step a's
 scratch dir, #1094) so the next cycle can pass it as
