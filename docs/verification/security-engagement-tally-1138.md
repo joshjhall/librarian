@@ -71,6 +71,11 @@ and solo/pr-cycle1. In every one of them, all 4–6 `checked` entries were
 
 | Date | Run / cycle | Security retried? | Security unengaged after retry? | First-pass `how` mix |
 | ---- | ----------- | ----------------- | ------------------------------- | -------------------- |
+| 2026-10-04 | solo-1138/c1 (this PR, pre-pr) | no | no | 4 read, 2 diff-only |
+| 2026-10-04 | solo-1138/c2 (this PR, pre-pr) | no | no | 2 read, 4 diff-only |
+
+Neither cycle's conventions digest told security to Read anything. Before #1138, a hand-written
+digest instruction like that was the only thing that recovered security (#1138's issue body).
 
 **Verdict criterion:** the fix holds if security's unengaged-after-retry count is
 0 over at least 10 cycles on the fixed harness, and if its first-pass retry rate
