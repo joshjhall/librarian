@@ -212,8 +212,11 @@ const reviewerData = (manifest, diff = scopeDiff) =>
   preScanSection() +
   diffSection(diff)
 
-// Reused dimensions (security, correctness): defer to the agent's own
-// Sub-Reviewer Definition, only overriding the surfaced category name.
+// Reused dimensions (security, correctness): the agent's own sub-reviewer mode,
+// overriding the surfaced category name. A dimension that carries inline
+// `instructions` (security, #1138) gets them at the TAIL, after the shared
+// reviewerData block, so the siblings' cacheable prefix stays byte-identical
+// (#256) and only the trailing selector diverges.
 const reusedReviewerPrompt = (dim, manifest, diff = scopeDiff) =>
   READONLY +
   '\n' +
@@ -223,9 +226,35 @@ const reusedReviewerPrompt = (dim, manifest, diff = scopeDiff) =>
   '\n\n' +
   reviewerData(manifest, diff) +
   `Mode: reviewer:${dim.mode}. Analyze the changed files and diff above as the ` +
-  `${dim.mode} sub-reviewer using the corresponding Sub-Reviewer Definition in ` +
-  `your instructions. Set category=${dim.category} on every finding and return ` +
+  `${dim.mode} sub-reviewer.\n` +
+  (dim.instructions ? `${dim.instructions}\n` : '') +
+  `Set category=${dim.category} on every finding and return ` +
   `the typed findings array (empty if none) and the \`checked\` list.`
+
+// Retry notice (#1138). The opus re-dispatch (#1111) used to send a
+// byte-identical prompt on a bigger model, so the retried agent had no signal
+// that its first answer was rejected — and the measured security retries
+// repeated the same all-`diff-only` answer. This names the reason, keyed off the
+// rejected result, and is appended at the tail of the RETRY prompt only, so the
+// first pass and the shared prefix are untouched.
+const retryNotice = (prevResult) => {
+  const checked = prevResult && Array.isArray(prevResult.checked) ? prevResult.checked : []
+  const reason =
+    checked.length === 0
+      ? 'your previous answer returned no findings and listed nothing in `checked`, ' +
+        'so there was no evidence you reviewed anything'
+      : 'your previous answer returned no findings and every `checked` entry was ' +
+        'how="diff-only", which this dimension may not do — its job is about code ' +
+        'the diff hunks only partly show'
+  return (
+    '\n\nRETRY: this dimension is being re-dispatched because ' +
+    reason +
+    '. That answer was rejected as UNENGAGED. This time, Read the changed files ' +
+    'your dimension is about before concluding, and record each in `checked` with ' +
+    'how="read". Another diff-only or empty answer will be reported as a missed ' +
+    'review.'
+  )
+}
 
 // New dimensions (tests, decomposition, scope-drift): instructions supplied inline.
 const newReviewerPrompt = (dim, manifest, diff = scopeDiff) =>

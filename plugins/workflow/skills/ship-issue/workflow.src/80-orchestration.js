@@ -244,10 +244,12 @@ if (retryIdx.length > 0) {
       // Declining to spend returns null, which mergeRetried treats exactly like
       // a failed retry: the original unengaged result stays in place.
       if (reviewBudget.total && reviewBudget.remaining() < BUDGET_FLOOR) return null
+      // The retry says WHY it is a retry (#1138): the rejected answer's shape is
+      // appended at the tail, so opus does not just repeat it.
       const prompt =
-        entry.kind === 'new'
+        (entry.kind === 'new'
           ? newReviewerPrompt(entry.dim, manifest, entry.diff)
-          : reusedReviewerPrompt(entry.dim, manifest, entry.diff)
+          : reusedReviewerPrompt(entry.dim, manifest, entry.diff)) + retryNotice(reviewResults[i])
       return agent(prompt, {
         label: `review:${entry.dim.name}`,
         phase: 'Review',

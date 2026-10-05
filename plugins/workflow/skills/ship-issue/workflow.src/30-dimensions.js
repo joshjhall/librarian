@@ -2,8 +2,38 @@
 // Dimensions that reuse the code-reviewer agent's own Sub-Reviewer Definitions.
 // `security` keeps its category; `bug` is the agent's correctness reviewer but
 // we surface it under category=correctness to match the issue's dimension name.
+//
+// `security` also carries inline `instructions` (#1138). The Sub-Reviewer
+// Definitions moved out of the agent body into the code-review harness's
+// SUBREVIEWERS map (#494/#524), and only THAT harness pastes them — so this
+// harness's security reviewer was told to follow a definition it never received.
+// With no checklist it skimmed the diff: across the post-#1111 cycle results it
+// was the ONLY dimension still unengaged (every `checked` entry `diff-only`)
+// after the opus retry, 4 of the 8 cycles that retried it. correctness has the
+// same dangling reference but engages unprompted, so it is left unchanged.
+const SECURITY_INSTRUCTIONS =
+  'You MUST open (Read) every changed code file before answering, and record ' +
+  'each in `checked` with how="read". A diff-only answer is NOT a security ' +
+  'review and is rejected as unengaged: a diff hunk hides the guard above it, ' +
+  'the caller that feeds it, and the sink it reaches, which is exactly where ' +
+  'security defects live. Answer these from the code, not the hunk:\n' +
+  '- Fail-closed: does every new error path, early return, `|| true`, empty ' +
+  'catch, or default value fail CLOSED (refuse) rather than open (proceed as ' +
+  'if checked)?\n' +
+  '- Interpolation: does untrusted input or MODEL OUTPUT newly reach a prompt, ' +
+  'shell command, file path, regex, URL, or query without fencing, quoting, or ' +
+  'validation?\n' +
+  '- Sinks: is there a new shell exec, file write/delete, or network call — and ' +
+  'is its path canonicalized and contained, and its input bounded?\n' +
+  '- Secrets: are credentials, tokens, or env values newly logged, echoed, ' +
+  'committed, or passed to a subprocess that does not need them?\n' +
+  '- The rest of the OWASP set where the changed code can reach it: injection, ' +
+  'authn/authz bypass, path traversal, SSRF, insecure deserialization, weak ' +
+  'crypto.\n' +
+  'Empty `findings` is a valid answer only after you have read the files.'
+
 const REUSED_DIMENSIONS = [
-  { name: 'security', mode: 'security', category: 'security' },
+  { name: 'security', mode: 'security', category: 'security', instructions: SECURITY_INSTRUCTIONS },
   { name: 'correctness', mode: 'bug', category: 'correctness' },
 ]
 

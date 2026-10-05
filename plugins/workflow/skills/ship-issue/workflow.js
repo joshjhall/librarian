@@ -498,8 +498,38 @@ async function attempt(fn, label) {
 // Dimensions that reuse the code-reviewer agent's own Sub-Reviewer Definitions.
 // `security` keeps its category; `bug` is the agent's correctness reviewer but
 // we surface it under category=correctness to match the issue's dimension name.
+//
+// `security` also carries inline `instructions` (#1138). The Sub-Reviewer
+// Definitions moved out of the agent body into the code-review harness's
+// SUBREVIEWERS map (#494/#524), and only THAT harness pastes them — so this
+// harness's security reviewer was told to follow a definition it never received.
+// With no checklist it skimmed the diff: across the post-#1111 cycle results it
+// was the ONLY dimension still unengaged (every `checked` entry `diff-only`)
+// after the opus retry, 4 of the 8 cycles that retried it. correctness has the
+// same dangling reference but engages unprompted, so it is left unchanged.
+const SECURITY_INSTRUCTIONS =
+  'You MUST open (Read) every changed code file before answering, and record ' +
+  'each in `checked` with how="read". A diff-only answer is NOT a security ' +
+  'review and is rejected as unengaged: a diff hunk hides the guard above it, ' +
+  'the caller that feeds it, and the sink it reaches, which is exactly where ' +
+  'security defects live. Answer these from the code, not the hunk:\n' +
+  '- Fail-closed: does every new error path, early return, `|| true`, empty ' +
+  'catch, or default value fail CLOSED (refuse) rather than open (proceed as ' +
+  'if checked)?\n' +
+  '- Interpolation: does untrusted input or MODEL OUTPUT newly reach a prompt, ' +
+  'shell command, file path, regex, URL, or query without fencing, quoting, or ' +
+  'validation?\n' +
+  '- Sinks: is there a new shell exec, file write/delete, or network call — and ' +
+  'is its path canonicalized and contained, and its input bounded?\n' +
+  '- Secrets: are credentials, tokens, or env values newly logged, echoed, ' +
+  'committed, or passed to a subprocess that does not need them?\n' +
+  '- The rest of the OWASP set where the changed code can reach it: injection, ' +
+  'authn/authz bypass, path traversal, SSRF, insecure deserialization, weak ' +
+  'crypto.\n' +
+  'Empty `findings` is a valid answer only after you have read the files.'
+
 const REUSED_DIMENSIONS = [
-  { name: 'security', mode: 'security', category: 'security' },
+  { name: 'security', mode: 'security', category: 'security', instructions: SECURITY_INSTRUCTIONS },
   { name: 'correctness', mode: 'bug', category: 'correctness' },
 ]
 
@@ -1142,8 +1172,11 @@ const reviewerData = (manifest, diff = scopeDiff) =>
   preScanSection() +
   diffSection(diff)
 
-// Reused dimensions (security, correctness): defer to the agent's own
-// Sub-Reviewer Definition, only overriding the surfaced category name.
+// Reused dimensions (security, correctness): the agent's own sub-reviewer mode,
+// overriding the surfaced category name. A dimension that carries inline
+// `instructions` (security, #1138) gets them at the TAIL, after the shared
+// reviewerData block, so the siblings' cacheable prefix stays byte-identical
+// (#256) and only the trailing selector diverges.
 const reusedReviewerPrompt = (dim, manifest, diff = scopeDiff) =>
   READONLY +
   '\n' +
@@ -1153,9 +1186,35 @@ const reusedReviewerPrompt = (dim, manifest, diff = scopeDiff) =>
   '\n\n' +
   reviewerData(manifest, diff) +
   `Mode: reviewer:${dim.mode}. Analyze the changed files and diff above as the ` +
-  `${dim.mode} sub-reviewer using the corresponding Sub-Reviewer Definition in ` +
-  `your instructions. Set category=${dim.category} on every finding and return ` +
+  `${dim.mode} sub-reviewer.\n` +
+  (dim.instructions ? `${dim.instructions}\n` : '') +
+  `Set category=${dim.category} on every finding and return ` +
   `the typed findings array (empty if none) and the \`checked\` list.`
+
+// Retry notice (#1138). The opus re-dispatch (#1111) used to send a
+// byte-identical prompt on a bigger model, so the retried agent had no signal
+// that its first answer was rejected — and the measured security retries
+// repeated the same all-`diff-only` answer. This names the reason, keyed off the
+// rejected result, and is appended at the tail of the RETRY prompt only, so the
+// first pass and the shared prefix are untouched.
+const retryNotice = (prevResult) => {
+  const checked = prevResult && Array.isArray(prevResult.checked) ? prevResult.checked : []
+  const reason =
+    checked.length === 0
+      ? 'your previous answer returned no findings and listed nothing in `checked`, ' +
+        'so there was no evidence you reviewed anything'
+      : 'your previous answer returned no findings and every `checked` entry was ' +
+        'how="diff-only", which this dimension may not do — its job is about code ' +
+        'the diff hunks only partly show'
+  return (
+    '\n\nRETRY: this dimension is being re-dispatched because ' +
+    reason +
+    '. That answer was rejected as UNENGAGED. This time, Read the changed files ' +
+    'your dimension is about before concluding, and record each in `checked` with ' +
+    'how="read". Another diff-only or empty answer will be reported as a missed ' +
+    'review.'
+  )
+}
 
 // New dimensions (tests, decomposition, scope-drift): instructions supplied inline.
 const newReviewerPrompt = (dim, manifest, diff = scopeDiff) =>
@@ -2213,10 +2272,12 @@ if (retryIdx.length > 0) {
       // Declining to spend returns null, which mergeRetried treats exactly like
       // a failed retry: the original unengaged result stays in place.
       if (reviewBudget.total && reviewBudget.remaining() < BUDGET_FLOOR) return null
+      // The retry says WHY it is a retry (#1138): the rejected answer's shape is
+      // appended at the tail, so opus does not just repeat it.
       const prompt =
-        entry.kind === 'new'
+        (entry.kind === 'new'
           ? newReviewerPrompt(entry.dim, manifest, entry.diff)
-          : reusedReviewerPrompt(entry.dim, manifest, entry.diff)
+          : reusedReviewerPrompt(entry.dim, manifest, entry.diff)) + retryNotice(reviewResults[i])
       return agent(prompt, {
         label: `review:${entry.dim.name}`,
         phase: 'Review',

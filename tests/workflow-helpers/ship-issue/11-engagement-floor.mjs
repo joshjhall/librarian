@@ -24,6 +24,9 @@
 //   (4) WIRING past ORCH_BOUNDARY — the null-preserving `.then`, the opus
 //       re-dispatch, one call to each helper, and both returns passing the new
 //       fields, pinned against the raw source as call-site checks.
+//   (5) PROMPTS (#1138) — the security dimension's inline must-read
+//       instructions reach its prompt (and only its prompt, at the tail), and
+//       the opus retry states WHY it is a retry; the first pass does not.
 //
 // Assertions are collect-all (they record, never throw) — see tests/lib/mjs-assert.mjs.
 
@@ -43,7 +46,7 @@ async function runHarness(agentStub, args) {
   const calls = [];
   const logs = [];
   const agent = async (prompt, opts) => {
-    calls.push(opts);
+    calls.push({ ...opts, prompt });
     return agentStub(prompt, opts);
   };
   const parallel = (thunks) =>
@@ -72,6 +75,9 @@ export async function run() {
     selectRetries,
     mergeRetried,
     stampEngagement,
+    retryNotice,
+    reusedReviewerPrompt,
+    REUSED_DIMENSIONS,
   } = extractHelpers(
     SHIP,
     [
@@ -83,6 +89,9 @@ export async function run() {
       "selectRetries",
       "mergeRetried",
       "stampEngagement",
+      "retryNotice",
+      "reusedReviewerPrompt",
+      "REUSED_DIMENSIONS",
     ],
     { cycle: 1, phase: "pre-pr", files: ["a.js"] },
   );
@@ -384,5 +393,63 @@ export async function run() {
       ok(termCall.includes(key), `wiring: the terminal buildResult call passes ${key.slice(0, -1)}`);
       ok(emptyCall.includes(key), `wiring: the zero-findings emptyResult call passes ${key.slice(0, -1)}`);
     }
+  }
+
+  // --- (5) PROMPTS: security must read; the retry says why (#1138) ----------
+  //
+  // Security had NO checklist in this harness (the Sub-Reviewer Definitions moved
+  // to the code-review harness, #494) and was the only dimension still unengaged
+  // after the opus retry. Pinned as behaviour: the prompt builders are called,
+  // and the retry prompt is captured from the REAL orchestration body.
+  {
+    const manifest = { files: ["a.js"], classifications: [{ file: "a.js", types: ["code"] }] };
+    const dimOf = (name) => REUSED_DIMENSIONS.find((d) => d.name === name);
+    const sec = reusedReviewerPrompt(dimOf("security"), manifest, "+x");
+    const cor = reusedReviewerPrompt(dimOf("correctness"), manifest, "+x");
+    ok(sec.includes("You MUST open (Read) every changed code file"), "prompts: security requires reading the changed files (#1138 AC1)");
+    ok(sec.includes("A diff-only answer is NOT a security"), "prompts: ...and says a diff-only answer is rejected");
+    for (const q of ["Fail-closed:", "Interpolation:", "MODEL OUTPUT", "Sinks:", "Secrets:"]) {
+      ok(sec.includes(q), `prompts: security asks the concrete question "${q}"`);
+    }
+    ok(!cor.includes("You MUST open (Read)"), "prompts: correctness does NOT get the security clause");
+    ok(!sec.includes("Sub-Reviewer Definition in"), "prompts: the dangling 'Definition in your instructions' reference is gone");
+    // Cache stability (#256): the clause rides the TAIL, so both prompts share
+    // every byte up to the per-dimension `Mode:` selector.
+    const cut = (p) => p.slice(0, p.indexOf("Mode: reviewer:"));
+    ok(cut(sec).length > 0 && cut(sec) === cut(cor), "prompts: security and correctness share a byte-identical prefix up to Mode:");
+    ok(sec.indexOf("You MUST open") > sec.indexOf("Mode: reviewer:security"), "prompts: the security clause is after the Mode: selector");
+
+    // retryNotice names the rejected answer's shape.
+    const empty = retryNotice({ findings: [], checked: [] });
+    const absent = retryNotice({ findings: [] });
+    const dOnly = retryNotice({ findings: [], checked: diffOnly });
+    ok(empty.includes("listed nothing in `checked`"), "retryNotice: an empty checked is named as such");
+    eq(absent, empty, "retryNotice: an absent checked reads as empty");
+    ok(dOnly.includes('every `checked` entry was how="diff-only"'), "retryNotice: an all-diff-only checked is named as such");
+    ok(!dOnly.includes("listed nothing"), "retryNotice: ...and not misreported as empty");
+    for (const n of [empty, dOnly]) ok(n.includes("rejected as UNENGAGED") && n.includes('how="read"'), "retryNotice: states the rejection and the remedy");
+
+    // Driven: security answers all-diff-only; the opus retry must carry the
+    // notice, the first pass must not, and an engaged dimension is never retried.
+    const harnessArgs = { cycle: 1, phase: "pre-pr", files: ["a.js"], diff: "diff --git a/a.js b/a.js\n+x" };
+    const stub = (_prompt, opts) => {
+      if (opts.label === "manifest") return { ...manifest, needs: { database: false, devops: false } };
+      if (opts.label === "review:security") return { findings: [], checked: diffOnly };
+      return { findings: [], checked: read };
+    };
+    let driven = null;
+    try {
+      driven = await runHarness(stub, harnessArgs);
+    } catch (err) {
+      ok(false, `prompts: the driven harness ran to completion — threw ${err?.message || err}`);
+    }
+    const secCalls = (driven?.calls || []).filter((c) => c.label === "review:security");
+    eq(secCalls.length, 2, "prompts: the diff-only security answer was retried (non-vacuity)");
+    ok(!String(secCalls[0]?.prompt).includes("RETRY:"), "prompts: the first-pass prompt carries no retry notice");
+    ok(String(secCalls[1]?.prompt).includes("RETRY:"), "prompts: the opus retry prompt states why it is a retry (#1138 AC2)");
+    ok(String(secCalls[1]?.prompt).includes('how="diff-only"'), "prompts: ...naming the diff-only shape it was rejected for");
+    ok(String(secCalls[1]?.prompt).startsWith(String(secCalls[0]?.prompt)), "prompts: the retry is the first prompt plus a tail");
+    const corCalls = (driven?.calls || []).filter((c) => c.label === "review:correctness");
+    eq(corCalls.length, 1, "prompts: an engaged dimension is not retried");
   }
 }
