@@ -21,6 +21,18 @@ if (unknownKeys.length > 0) {
   )
 }
 
+// Reject an unrecognized `phase` VALUE (#1145) — the key check above passes
+// `phase: 'post-pr'`, which would otherwise run as a pre-PR review that skips
+// the PR's comments. JSON-stringified so '' and null are visible in the message.
+if (unknownPhase(args)) {
+  throw new Error(
+    `review harness: unknown phase ${JSON.stringify(args.phase)} — ` +
+      `accepted values are: ${KNOWN_PHASES.join(', ')} (omit the key for the 'pre-pr' default). ` +
+      'An unrecognized phase would silently run a pre-PR review that never reads the ' +
+      "PR's comments. Fix the value and re-dispatch."
+  )
+}
+
 // A cycle with neither a full diff nor a fix delta reviews nothing of its own
 // accord (#597, AC#3). This is NOT an error: omitting `diff` is a documented
 // supported mode — each reviewer then derives it in-agent via `git diff

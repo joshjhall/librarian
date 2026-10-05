@@ -75,7 +75,7 @@
 // ---------------------------------------------------------------------------
 // Input (passed verbatim as the global `args`):
 //   {
-//     phase:      'pre-pr' | 'pr-cycle',   // default 'pre-pr'
+//     phase:      'pre-pr' | 'pr-cycle',   // default 'pre-pr' (absent key); any other value throws
 //     cycle:      number,                  // 1-based; the skill increments. default 1
 //     maxCycles:  number,                  // default 5 — informational; the SKILL enforces the cap
 //     files?:     string[],                // FULL changed-file scope (skill: git diff --name-only origin/main...HEAD)
