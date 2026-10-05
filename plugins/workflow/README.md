@@ -172,6 +172,19 @@ example the pre-#1056 `CONTEXT_BUDGET_FLOOR=91000`. Check with
 `tmux show-environment -g`, and clear a stale one with
 `tmux set-environment -g -u <VAR>` or restart the server.
 
+`golem-launch.sh` hands a resolved `ANTHROPIC_AUTH_TOKEN` to a golem through an
+owner-only (0600) file. The golem's session sources the file and deletes it
+before `claude` starts, so the token never appears in a process's argv (#1153).
+Earlier versions passed it as `tmux new-session -e ANTHROPIC_AUTH_TOKEN=…`
+instead. When that launch started the tmux server, the token stayed in the
+server's argv for the server's whole lifetime, and any local user could read it
+with `ps`. A launcher that had inherited the token also froze it into the
+server's global env. Upgrading the plugin does not fix a server that is already
+running. **After upgrading, restart the tmux server once no golem is running**
+(`tmux kill-server`). To check a live server, run
+`ps -o args= -p "$(pgrep -x tmux | head -n 1)"` and
+`tmux show-environment -g ANTHROPIC_AUTH_TOKEN`.
+
 The `GOLEM_*` vars above are sourced by the bundled shell scripts. The vars
 below are **skill-level tunables** for the `ship-issue` skill, following the same
 opt-in/override convention. They are documented in that skill's "Environment

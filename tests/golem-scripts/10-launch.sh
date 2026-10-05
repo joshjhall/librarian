@@ -1,7 +1,7 @@
 # shellcheck shell=bash
 # golem-launch.sh — golem helper-script tests (issue #564 split).
 #
-# Covers argument validation, print/dispatch, autonomy-level threading (#301), the version-skew guard (#230), and auth-token injection (#244).
+# Covers argument validation, print/dispatch, autonomy-level threading (#301), and the version-skew guard (#230). Auth-token delivery lives in 12-launch-auth.sh.
 #
 # Sourced by tests/validate-golem-scripts.sh, which defines the path consts
 # (LAUNCH / WT_NEW / STATUS / ...) and sources tests/lib/golem-sandbox.sh for the
@@ -481,136 +481,6 @@ test_launch_version_undeterminable_skips() {
     assert_exit 0 "$RUN_RC" "undeterminable version skips the guard, print exits 0"
     assert_contains "$RUN_OUT" "tmux new-session" "print still emits its line"
     assert_not_contains "$RUN_OUT" "version skew" "no skew warning when undeterminable"
-}
-
-# --- golem-launch.sh auth-token injection (#244) ----------------------------
-# `launch` resolves ANTHROPIC_AUTH_TOKEN and passes it via `tmux -e`. To exercise
-# the real dispatch (past the missing-worktree guard) without a real tmux server,
-# each case prepends a `$sb/bin` stub `tmux` that logs its argv to
-# $sb/tmux-args.log and exits 0, and creates the .worktrees/issue-N dir so the
-# `[ -d ]` guard passes. Settings carry all rules so preflight is a silent no-op.
-# ANTHROPIC_AUTH_TOKEN / ANTHROPIC_BASE_URL are explicitly --unset so the suite's
-# own environment can never taint the resolution under test.
-
-# A readable op-secrets cache with a token + base URL → both are injected into
-# the tmux `-e` args, and the token is NEVER echoed to stdout/stderr.
-test_launch_auth_cache_injects_token() {
-    local sb log
-    new_sandbox sb
-    command printf 'export ANTHROPIC_AUTH_TOKEN=sk-secret-tok-244\nexport ANTHROPIC_BASE_URL=https://bifrost.example\n' >"$sb/op-cache"
-    run_launch_auth "$sb" OP_SECRETS_CACHE="$sb/op-cache"
-    assert_exit 0 "$RUN_RC" "launch with a cache token dispatches (exit 0)"
-    log="$(command cat "$sb/tmux-args.log" 2>/dev/null || true)"
-    assert_contains "$log" "ANTHROPIC_AUTH_TOKEN=sk-secret-tok-244" "the resolved token is injected via tmux -e"
-    assert_contains "$log" "ANTHROPIC_BASE_URL=https://bifrost.example" "the cache base URL rides along"
-    assert_not_contains "$RUN_OUT" "sk-secret-tok-244" "the token is NEVER echoed to stdout/stderr"
-}
-
-# No cache, no op, no ref → no injection, no warning, exit 0. The dispatch is
-# byte-identical to pre-#244 (only GOLEM_ID in the env args).
-test_launch_auth_no_source_no_injection() {
-    local sb log
-    new_sandbox sb
-    # Point the cache default at a nonexistent path so /dev/shm is never read.
-    run_launch_auth "$sb" OP_SECRETS_CACHE="$sb/no-such-cache"
-    assert_exit 0 "$RUN_RC" "launch with no token source dispatches (exit 0)"
-    log="$(command cat "$sb/tmux-args.log" 2>/dev/null || true)"
-    assert_not_contains "$log" "ANTHROPIC_AUTH_TOKEN" "no token is injected when none resolves"
-    assert_not_contains "$RUN_OUT" "WARNING" "no warning when there is no cache marker"
-}
-
-# `op read` hangs → the time-bounded wrapper kills it and dispatch still
-# completes. A fake `op` that sleeps 60s stands in; OP_ANTHROPIC_AUTH_TOKEN_REF is
-# set with no cache/env token, so resolution reaches the bounded op arm.
-#
-# NOT skipped on a coreutils-free host (#960). The guard here used to check for
-# `timeout` or `gtimeout` and skip, on the stated grounds that "the arm no-ops
-# there by design" — which stopped being true when #543 rewrote
-# _bounded_op_read to use bounded_run specifically so the op probe would both
-# run AND stay bounded on base macOS. The guard was therefore skipping the one
-# host whose behaviour it was rewritten to fix, and its rationale asserted the
-# opposite of what golem-launch.sh does.
-test_launch_auth_op_hang_is_bounded() {
-    local sb log
-    new_sandbox sb
-    command cat >"$sb/bin-op" <<'EOF'
-#!/usr/bin/env bash
-sleep 60
-EOF
-    # op must be on the same PATH dir as the tmux stub; plant it there after
-    # run_launch_auth creates bin/ — so pre-create bin/ and the op stub, then run.
-    command mkdir -p "$sb/bin"
-    command cp "$sb/bin-op" "$sb/bin/op"
-    command chmod +x "$sb/bin/op"
-    run_launch_auth "$sb" OP_SECRETS_CACHE="$sb/no-such-cache" \
-        OP_ANTHROPIC_AUTH_TOKEN_REF="op://vault/anthropic/token"
-    assert_exit 0 "$RUN_RC" "a hanging op read is bounded — dispatch still completes (exit 0)"
-    log="$(command cat "$sb/tmux-args.log" 2>/dev/null || true)"
-    assert_not_contains "$log" "ANTHROPIC_AUTH_TOKEN" "a timed-out op read injects no token"
-}
-
-# A cache marker exists but yields no token → warn (don't fail), still dispatch,
-# inject nothing. Exercises the elif warning arm.
-test_launch_auth_cache_marker_no_token_warns() {
-    local sb log
-    new_sandbox sb
-    # Cache is readable but exports something OTHER than the token.
-    command printf 'export SOME_OTHER_SECRET=1\n' >"$sb/op-cache"
-    run_launch_auth "$sb" OP_SECRETS_CACHE="$sb/op-cache"
-    assert_exit 0 "$RUN_RC" "an empty cache still dispatches (exit 0)"
-    assert_contains "$RUN_OUT" "WARNING" "warns when a cache marker is present but no token resolves"
-    log="$(command cat "$sb/tmux-args.log" 2>/dev/null || true)"
-    assert_not_contains "$log" "ANTHROPIC_AUTH_TOKEN" "no empty token is injected"
-}
-
-# --- golem-launch.sh config-default env leak (#1125) -----------------------
-#
-# The `tmux new-session` that STARTS a server copies the client env into the
-# server's global env, inherited by every later session. config.sh exports every
-# knob it defaults, so a launch froze those defaults (the pre-#1056
-# CONTEXT_BUDGET_FLOOR=91000) server-wide. The tmux stub dumps its own env to
-# TMUX_STUB_ENV_LOG — the env a real tmux would have frozen. Run in a subshell
-# with the knobs unset, because the suite's caller may itself carry the leak.
-
-# Defaults config.sh merely filled in must NOT reach tmux.
-test_launch_does_not_leak_config_defaults() {
-    local sb envlog rc leaked
-    new_sandbox sb
-    envlog="$sb/tmux-env.log"
-    (
-        unset CONTEXT_BUDGET_FLOOR CONTEXT_BUDGET_THRESHOLD GOLEM_LEVEL
-        run_launch_auth "$sb" OP_SECRETS_CACHE="$sb/no-such-cache" TMUX_STUB_ENV_LOG="$envlog"
-        command printf '%s' "$RUN_RC" >"$sb/rc"
-    )
-    rc="$(command cat "$sb/rc" 2>/dev/null || true)"
-    assert_exit 0 "$rc" "launch dispatches (exit 0)"
-    assert_file_exists "$envlog" "the tmux stub recorded its env"
-    # Control: the dump carries this launch's own env, so the absences below
-    # cannot pass on an empty or unrelated log. Only the knob lines are ever
-    # read back — the dump is a whole env, and a failure must not echo it.
-    # lint-allow-unanchored: $envlog is a per-run env dump, no committed prose
-    assert_file_contains "$envlog" "TMUX_STUB_LOG=$sb/tmux-args.log" \
-        "control: the env log is this launch's tmux env"
-    leaked="$(command grep -E '^(CONTEXT_BUDGET_FLOOR|CONTEXT_BUDGET_THRESHOLD|GOLEM_LEVEL)=' "$envlog" || true)"
-    assert_equals "" "$leaked" "config.sh's defaulted knobs are not handed to tmux"
-}
-
-# An operator override exported in the launcher's own env still propagates.
-test_launch_keeps_operator_exported_override() {
-    local sb envlog rc
-    new_sandbox sb
-    envlog="$sb/tmux-env.log"
-    (
-        unset CONTEXT_BUDGET_THRESHOLD
-        run_launch_auth "$sb" OP_SECRETS_CACHE="$sb/no-such-cache" TMUX_STUB_ENV_LOG="$envlog" \
-            CONTEXT_BUDGET_FLOOR=12345
-        command printf '%s' "$RUN_RC" >"$sb/rc"
-    )
-    rc="$(command cat "$sb/rc" 2>/dev/null || true)"
-    assert_exit 0 "$rc" "launch dispatches (exit 0)"
-    # lint-allow-unanchored: $envlog is a per-run env dump, no committed prose
-    assert_file_contains "$envlog" "CONTEXT_BUDGET_FLOOR=12345" \
-        "an operator-exported CONTEXT_BUDGET_FLOOR still reaches tmux"
 }
 
 # --- golem-launch.sh plugin-resolvability guard (#946) ----------------------

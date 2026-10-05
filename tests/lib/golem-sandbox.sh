@@ -163,6 +163,9 @@ inbox_in() {
 # plant_tmux_stub <sandbox> — write $sb/bin/tmux that appends its args to
 # $sb/tmux-args.log then exits 0 (never spawns a session). Returns the dir to
 # prepend to PATH via stdout is unnecessary; callers use "$sb/bin".
+# Optional knobs: TMUX_STUB_ENV_LOG (dump env, #1125), TMUX_STUB_CMD_LOG (save
+# new-session's LAST arg — the session command — verbatim, so a test can run it,
+# #1153), TMUX_STUB_RC (exit with this status instead of 0).
 plant_tmux_stub() {
     local sb="$1"
     command mkdir -p "$sb/bin"
@@ -173,7 +176,11 @@ printf '%s\n' "$*" >>"$TMUX_STUB_LOG"
 # The env a real tmux would copy into its server's global env (#1125).
 # Only new-session: a later tmux call must not overwrite the env under test.
 [ "${1:-}" = new-session ] && [ -n "${TMUX_STUB_ENV_LOG:-}" ] && env >"$TMUX_STUB_ENV_LOG"
-exit 0
+if [ "${1:-}" = new-session ] && [ -n "${TMUX_STUB_CMD_LOG:-}" ]; then
+    for last in "$@"; do :; done
+    printf '%s' "$last" >"$TMUX_STUB_CMD_LOG"
+fi
+exit "${TMUX_STUB_RC:-0}"
 EOF
     command chmod +x "$sb/bin/tmux"
 }
@@ -182,6 +189,8 @@ EOF
 # tmux stub on PATH, rules-present settings, a real worktree dir, and both
 # ANTHROPIC_* vars scrubbed. Extra positional args are prepended as env
 # assignments. Captures RUN_RC / RUN_OUT; the tmux argv lands in $sb/tmux-args.log.
+# TMPDIR is the sandbox, so the 0600 token file (#1153) lands at $sb/golem-auth.*
+# — the stub never runs the session command that would delete it.
 run_launch_auth() {
     local sb="$1"
     shift
@@ -207,6 +216,7 @@ run_launch_auth() {
             PATH="$sb/bin:$PATH" \
             TMUX= TMUX_TMPDIR="${SANDBOX_TMUX_DIR:-$sb/.tmux}" \
             TMUX_STUB_LOG="$sb/tmux-args.log" \
+            TMPDIR="$sb" \
             GOLEM_WORKTREE_DIR=.worktrees \
             GOLEM_STATUS_DIR=.worktrees/.status \
             CLAUDE_PROJECT_SETTINGS=proj-settings.json \
