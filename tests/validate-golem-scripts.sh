@@ -103,6 +103,7 @@ source "$SCRIPT_DIR/lib/golem-sandbox.sh"
 # than silently contributing nothing.
 source_fragments "$SCRIPT_DIR/golem-scripts" \
     10-launch.sh \
+    12-launch-auth.sh \
     20-worktree-new.sh \
     25-worktree-new-cargo.sh \
     26-worktree-uv-venv.sh \
@@ -175,7 +176,15 @@ run_fragment_test test_launch_version_skew_escape_hatch "golem-launch: GOLEM_SKI
 run_fragment_test test_launch_version_unknown_sentinel_skips "golem-launch: 'unknown' sentinel version skips the guard (no false positive)"
 run_fragment_test test_launch_unset_home_does_not_crash "golem-launch: unset HOME does not crash the version guard"
 run_fragment_test test_launch_version_undeterminable_skips "golem-launch: undeterminable version skips the guard"
-run_fragment_test test_launch_auth_cache_injects_token "golem-launch: cache token is injected via tmux -e, never echoed (#244)"
+run_fragment_test test_launch_auth_cache_injects_token "golem-launch: cache token reaches the golem via a 0600 file, never argv (#244, #1153)"
+run_fragment_test test_launch_auth_launcher_base_url_not_overridden "golem-launch: a launcher ANTHROPIC_BASE_URL is not overridden by the cache (#244, #1153)"
+run_fragment_test test_launch_sh_quote_round_trips_edge_shapes "golem-launch: _sh_quote round-trips quote/empty edge shapes and uses no patsub replacement (#1153)"
+run_fragment_test test_launch_auth_missing_token_file_still_starts_claude "golem-launch: a vanished token file degrades to a tokenless start, never a dead session (#1153)"
+run_fragment_test test_launch_auth_token_quoting_round_trips "golem-launch: a metachar token round-trips through the token file (#1153)"
+run_fragment_test test_launch_auth_inherited_token_not_in_tmux_env "golem-launch: an inherited token never reaches tmux's env or argv (#1153)"
+run_fragment_test test_launch_auth_relative_tmpdir_path_is_absolute "golem-launch: a relative TMPDIR still yields an absolute token-file path (#1153)"
+run_fragment_test test_launch_auth_unwritable_tmpdir_never_falls_back_to_argv "golem-launch: no token file -> warn, never an argv fallback (#1153)"
+run_fragment_test test_launch_auth_tmux_failure_removes_token_file "golem-launch: a failed tmux new-session removes the token file, exits 1 (#1153)"
 run_fragment_test test_launch_auth_no_source_no_injection "golem-launch: no token source → no injection, no warning (#244)"
 run_fragment_test test_launch_auth_op_hang_is_bounded "golem-launch: a hanging op read is time-bounded, dispatch completes (#244)"
 run_fragment_test test_launch_auth_cache_marker_no_token_warns "golem-launch: cache marker but no token warns, still dispatches (#244)"

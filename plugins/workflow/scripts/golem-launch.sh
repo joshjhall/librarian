@@ -32,8 +32,10 @@
 #                    once per issue — never loop inside one Bash invocation.
 #
 #   3. auth inject — before dispatch, resolve ANTHROPIC_AUTH_TOKEN (and, when it
-#                    comes from the cache, ANTHROPIC_BASE_URL) and pass it to the
-#                    golem via `tmux -e` so its session env carries it (#244). A
+#                    comes from the cache, ANTHROPIC_BASE_URL) and hand it to the
+#                    golem through a 0600 file its session command sources and
+#                    then deletes (#244, #1153) — never `tmux -e`, which puts the
+#                    token in the tmux server's argv for its lifetime. A
 #                    `tmux`-spawned login shell does NOT re-source the container
 #                    startup cache /dev/shm/op-secrets-cache, so without this the
 #                    golem starts tokenless and dies at its first network call
@@ -124,6 +126,7 @@
 #
 # Exit codes:
 #   0  success (preflight: rules present in at least one scope; launch: started)
+#   1  launch: `tmux new-session` itself failed (any token file is removed)
 #   2  usage error
 #   3  preflight: launch rules MISSING in both scopes (actionable, not opaque);
 #      launch: plugin version skew detected (running helper != active install),
@@ -215,6 +218,62 @@ resolve_auth_token() {
         RESOLVED_AUTH_TOKEN="$(_bounded_op_read "$OP_ANTHROPIC_AUTH_TOKEN_REF")"
     fi
     return 0
+}
+
+# _sh_quote <value> — print <value> as ONE single-quoted POSIX sh word, so a
+# token or path carrying `'`, `$`, or spaces survives `sh -c` / `.` verbatim.
+# Splits on `'` with ${v%%…}/${v#…} rather than a ${v//…/…} replacement string:
+# how a replacement treats backslashes and quotes changed across bash 3.2, 4.3
+# and 5.2 (patsub_replacement), and macOS ships 3.2. Each `'` becomes `'\''`.
+_sh_quote() {
+    local rest="$1" out=""
+    while :; do
+        case "$rest" in
+            *"'"*)
+                out="$out${rest%%"'"*}'\\''"
+                rest="${rest#*"'"}"
+                ;;
+            *)
+                out="$out$rest"
+                break
+                ;;
+        esac
+    done
+    command printf "'%s'" "$out"
+}
+
+# write_auth_file — write the resolved token (and base URL when it rides along)
+# as `export` lines into a fresh owner-only (0600) file under ${TMPDIR:-/tmp},
+# and print its path. The golem's session command sources then deletes it
+# (#1153), so the token never appears in any argv. Fails (non-zero, no path)
+# when the file cannot be created or written; a partial file is removed. A
+# session killed before its first command runs leaves the file behind — still
+# 0600, readable only by this uid.
+write_auth_file() {
+    local f
+    f="$(umask 077 && command mktemp "${TMPDIR:-/tmp}/golem-auth.XXXXXX" 2>/dev/null)" || return 1
+    [ -n "$f" ] || return 1
+    # The session `.`-sources this path AFTER tmux -c has moved it into the
+    # worktree, so a relative TMPDIR would resolve against the wrong directory
+    # and the golem would start tokenless. Anchor it to the launcher's cwd.
+    case "$f" in
+        /*) ;;
+        *) f="$(command pwd)/$f" ;;
+    esac
+    command chmod 600 "$f" 2>/dev/null || {
+        command rm -f "$f"
+        return 1
+    }
+    {
+        command printf 'export ANTHROPIC_AUTH_TOKEN=%s\n' "$(_sh_quote "$RESOLVED_AUTH_TOKEN")"
+        if [ -n "$RESOLVED_BASE_URL" ] && [ -z "${ANTHROPIC_BASE_URL:-}" ]; then
+            command printf 'export ANTHROPIC_BASE_URL=%s\n' "$(_sh_quote "$RESOLVED_BASE_URL")"
+        fi
+    } >"$f" 2>/dev/null || {
+        command rm -f "$f"
+        return 1
+    }
+    command printf '%s' "$f"
 }
 
 # settings_has_rules <file> — return 0 if the settings JSON's
@@ -668,17 +727,33 @@ case "$cmd" in
             command echo "golem-launch: worktree $wt missing — run worktree-new.sh $N first" >&2
             exit 2
         fi
-        # Resolve the auth token (#244) and build the tmux `-e` env args. Only
-        # inject ANTHROPIC_AUTH_TOKEN when it actually resolved — an empty value
-        # is NEVER passed (it could override a token the golem's own shell init
-        # would otherwise supply on a host). ANTHROPIC_BASE_URL rides along only
-        # when it came from the cache AND the launcher's own env lacks it.
+        # Resolve the auth token (#244) and write it to a private file the
+        # session sources (#1153). Only deliver ANTHROPIC_AUTH_TOKEN when it
+        # actually resolved — an empty value is NEVER passed (it could override a
+        # token the golem's own shell init would otherwise supply on a host).
+        # ANTHROPIC_BASE_URL rides along only when it came from the cache AND the
+        # launcher's own env lacks it.
+        #
+        # Never argv: `tmux -e VAR=…` lands in the server's argv for its whole
+        # lifetime, readable by every local user via ps. Never inherited env
+        # either: the new-session that starts the server freezes the client env
+        # into its GLOBAL env (#1125), and an already-running server ignores the
+        # client env anyway. Only the file's PATH reaches argv; the session's
+        # shell sources it and deletes it before `claude` starts.
         resolve_auth_token
         env_args=(-e "GOLEM_ID=golem-$N")
+        auth_file=""
+        auth_prefix=""
         if [ -n "$RESOLVED_AUTH_TOKEN" ]; then
-            env_args+=(-e "ANTHROPIC_AUTH_TOKEN=$RESOLVED_AUTH_TOKEN")
-            if [ -n "$RESOLVED_BASE_URL" ] && [ -z "${ANTHROPIC_BASE_URL:-}" ]; then
-                env_args+=(-e "ANTHROPIC_BASE_URL=$RESOLVED_BASE_URL")
+            if auth_file="$(write_auth_file)"; then
+                # Guard the `.`: a POSIX sh (dash, bash --posix) EXITS the whole
+                # command when `.` cannot read its file, so a token file gone
+                # before the session starts would skip both `claude` calls.
+                # Guarded, a missing file degrades to a tokenless start.
+                auth_prefix="[ -r $(_sh_quote "$auth_file") ] && . $(_sh_quote "$auth_file"); rm -f $(_sh_quote "$auth_file"); "
+            else
+                auth_file=""
+                command echo "golem-launch: WARNING could not write a private token file under ${TMPDIR:-/tmp}; golem-$N starts without the resolved ANTHROPIC_AUTH_TOKEN. Dispatching anyway." >&2
             fi
         elif [ -e "${OP_SECRETS_CACHE:-/dev/shm/op-secrets-cache}" ]; then
             # A cache marker exists but nothing resolved — this env looks like it
@@ -688,8 +763,8 @@ case "$cmd" in
             command echo "golem-launch: WARNING no ANTHROPIC_AUTH_TOKEN resolvable though an op-secrets cache is present; golem-$N may start unauthenticated. Dispatching anyway." >&2
         fi
         # Bare, standalone new-session — matches Bash(tmux new-session:*). The
-        # token lives only inside env_args (never echoed) so it can't leak to a
-        # pane or log. $(golem_model_flag) splices ` --model "…"` after each
+        # token lives only inside the 0600 file (never echoed, never in argv) so
+        # it can't leak to a pane, log, or ps. $(golem_model_flag) splices ` --model "…"` after each
         # `claude` when GOLEM_MODEL is set, and expands to nothing (byte-identical
         # launch line) when unset.
         MODEL_FLAG="$(golem_model_flag)"
@@ -702,8 +777,17 @@ case "$cmd" in
         # unexported shell var config.sh then exports is treated as a default.
         # shellcheck disable=SC2086,SC2163 # a word-split list of NAMES, deliberately
         [ -n "$CONFIG_DEFAULT_EXPORTS" ] && export -n $CONFIG_DEFAULT_EXPORTS
-        tmux new-session -d -s "golem-$N" -c "$wt" "${env_args[@]}" \
-            "claude$MODEL_FLAG --permission-mode auto '/workflow:next-issue $N --level $LEVEL' ; claude$MODEL_FLAG --permission-mode auto '/workflow:ship-issue'"
+        # The same freeze applies to a token the launcher INHERITED (resolution
+        # arm 1): un-export it so it never reaches the server's global env
+        # (#1153). The golem gets it from the file above instead.
+        export -n ANTHROPIC_AUTH_TOKEN 2>/dev/null || true
+        if ! tmux new-session -d -s "golem-$N" -c "$wt" "${env_args[@]}" \
+            "${auth_prefix}claude$MODEL_FLAG --permission-mode auto '/workflow:next-issue $N --level $LEVEL' ; claude$MODEL_FLAG --permission-mode auto '/workflow:ship-issue'"; then
+            # The session never ran, so nothing will source-and-delete the file.
+            [ -n "$auth_file" ] && command rm -f "$auth_file"
+            command echo "golem-launch: tmux new-session failed for golem-$N" >&2
+            exit 1
+        fi
         command echo "golem-launch: started golem-$N in $wt"
         ;;
     *)
