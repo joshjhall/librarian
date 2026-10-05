@@ -42,7 +42,7 @@
 #   check --cycle N --max-cycles N --result FILE --delta-lines N
 #         [--attempt N] [--max-attempts N]
 #         [--prev-result FILE ...] [--prev-delta-lines N] [--delta-files FILE]
-#         [--partial true|false]
+#         [--partial true|false] [--issue N]
 #         -> verdict   continue | stop
 #            rule      the deciding rule (C0-attempt-cap … C8-novel)
 #            capped_over  the rule that WOULD have decided had C1 not fired
@@ -174,6 +174,26 @@
 #      So the caller decides to raise the cap or park BEFORE the fix, not after
 #      it. Advisory like next_scope: it changes no verdict and no rule.
 #
+# Provenance — refuse a result file that is not this run's (#1150).
+#   Nothing used to tie a result JSON to the issue or cycle reading it, so a
+#   stale or foreign file fed the stop decision silently. Observed shipping
+#   #1145: extracting cycle 1's result failed, so a 96-byte file another session
+#   had left at the same path was read instead, and the helper returned
+#   `verdict=stop rule=C4-zero` for a cycle whose real result had one finding
+#   (`C8-novel`). A quieter write failure would have ended the pre-PR loop on
+#   another issue's data at exit 0 — the silence-reads-as-a-pass shape again.
+#
+#   The harness stamps every result with `cycle` and `issue`. So:
+#     - `--result`'s `.cycle`, when present, must equal `--cycle`. No new flag
+#       is needed, so an un-migrated caller is protected too; a file with no
+#       `.cycle` (pre-stamp, hand-built) is still accepted.
+#     - with `--issue N`, `--result` AND every `--prev-result` must carry
+#       `.issue == N`. Absent counts as a mismatch: a caller that asserts
+#       provenance has said a file without it is not provably this run's.
+#   A mismatch exits 2 with no verdict, never a verdict on foreign input. The
+#   check runs before any signal is counted, so it covers `--prev-result` on a
+#   zero-finding cycle too, where those files are otherwise never read.
+#
 # C2 sits directly under it and is the safety rule: a budget-exhausted or
 # wall-timed-out cycle can never be a convergence stop. It is partial, not
 # converged — its zero/duplicate/refuted counts describe the dimensions that ran,
@@ -203,6 +223,7 @@ USAGE="Usage: review-convergence check --cycle N --max-cycles N --result FILE --
                                   [--attempt N] [--max-attempts N]
                                   [--prev-result FILE ...] [--prev-delta-lines N]
                                   [--delta-files FILE] [--partial true|false]
+                                  [--issue N]
   --cycle N             1-based number of cycles that PRODUCED A REVIEW (positive
                         integer). A no-signal cycle does not advance it.
   --max-cycles N        ceiling on reviewed cycles (positive integer;
@@ -219,6 +240,9 @@ USAGE="Usage: review-convergence check --cycle N --max-cycles N --result FILE --
   --delta-files FILE    newline-delimited paths in this cycle's delta
                         (git diff --name-only), for the recursive check
   --partial true|false  whether the cycle was budget-exhausted or timed out
+  --issue N             the issue under review (positive integer). Every result
+                        file must then carry \"issue\": N or the check is
+                        refused (#1150)
 env: REVIEW_CONVERGENCE_SURFACE_RATIO (percent, default 50)
      REVIEW_MAX_ATTEMPTS (positive integer, default 2 x --max-cycles)"
 
@@ -376,6 +400,41 @@ read_findings() {
         die "review-convergence: result file '$1' has a finding whose line_start is not an integer (findings must satisfy FINDING_SCHEMA)"
     fi
     command jq -c '[(.blocking // [])[], (.deferrable // [])[]]' "$1"
+}
+
+# check_provenance <file> <role> — die unless <file> belongs to this run (#1150,
+# header). <role> is `result` (this cycle's file: `.cycle` must equal $cycle
+# when present) or `prev` (an earlier cycle's: no cycle check — its number is
+# by definition a different one). Either role must carry `.issue == $issue`
+# when --issue was given.
+#
+# Validates readability and JSON itself rather than relying on read_findings
+# having run first, because it runs BEFORE read_findings (and for a
+# `--prev-result` that read_findings would never reach on a zero-finding
+# cycle). The `type == "object"` guard turns a non-object into a refusal
+# message instead of a bare jq crash, as in no_review_signal.
+check_provenance() {
+    if [ ! -r "$1" ]; then
+        die "review-convergence: cannot read result file '$1'"
+    fi
+    if ! command jq empty "$1" >/dev/null 2>&1; then
+        die "review-convergence: result file '$1' is not valid JSON"
+    fi
+    # `tojson` renders a missing field as `null` and a string as `"7"`, so
+    # neither can masquerade as the number 7 in the string comparisons below.
+    _prov_cycle="$(command jq -r 'if type == "object" then (.cycle | tojson) else "null" end' "$1")"
+    _prov_issue="$(command jq -r 'if type == "object" then (.issue | tojson) else "null" end' "$1")"
+    if [ "$2" = "result" ] && [ "$_prov_cycle" != "null" ] && [ "$_prov_cycle" != "$cycle" ]; then
+        die "review-convergence: result file '$1' is for cycle $_prov_cycle, not --cycle $cycle — a stale or foreign result file; re-extract this cycle's harness result (#1150)"
+    fi
+    if [ -n "$issue" ] && [ "$_prov_issue" != "$issue" ]; then
+        if [ "$2" = "result" ]; then
+            _prov_what="result file"
+        else
+            _prov_what="prior-cycle result"
+        fi
+        die "review-convergence: $_prov_what '$1' has issue $_prov_issue, not --issue $issue — a stale or foreign result file; re-extract it from this run's harness output (#1150)"
+    fi
 }
 
 # blocking_count <file> — how many findings this cycle put in the BLOCKING
@@ -655,6 +714,7 @@ cmd_check() {
         attempt_explicit="true"
     fi
     max_attempts="$(opt --max-attempts -- "$@" || true)"
+    issue="$(opt --issue -- "$@" || true)"
 
     if [ -z "$partial" ]; then
         partial="false"
@@ -688,6 +748,9 @@ cmd_check() {
     fi
     if [ -n "$prev_delta_lines" ] && ! is_nonneg_int "$prev_delta_lines"; then
         die "review-convergence: --prev-delta-lines must be a non-negative integer, got '$prev_delta_lines'"
+    fi
+    if [ -n "$issue" ] && { ! is_nonneg_int "$issue" || [ "$issue" -lt 1 ]; }; then
+        die "review-convergence: --issue must be an integer >= 1, got '$issue'"
     fi
     case "$partial" in
         true | false) ;;
@@ -740,6 +803,18 @@ cmd_check() {
     # would carry on to emit a verdict anyway, the same swallowed-exit bug as
     # read_findings' below. Same reason it is not `$(...)` in the loop header.
     prev_results="$(opt_all --prev-result -- "$@")" || exit 2
+
+    # Provenance BEFORE any signal is read (#1150, header): a verdict must never
+    # be computed from a file that is not this run's. Every --prev-result is
+    # checked here, unconditionally — the duplicate loop below only reads them
+    # when this cycle has findings.
+    check_provenance "$result" result
+    while IFS= read -r prev; do
+        [ -n "$prev" ] || continue
+        check_provenance "$prev" prev
+    done <<EOF
+$prev_results
+EOF
 
     findings="$(read_findings "$result")"
     total="$(command printf '%s' "$findings" | command jq -r 'length')"

@@ -67,7 +67,8 @@ FRAGMENTS="10-next-scope.sh
     80-no-signal.sh
     90-charged-warn.sh
     100-integration.sh
-    110-fail-loud.sh"
+    110-fail-loud.sh
+    120-provenance.sh"
 # shellcheck disable=SC2086  # word-split on purpose: one argument per fragment
 source_fragments "$FRAGMENTS_DIR" $FRAGMENTS
 
@@ -181,6 +182,17 @@ run_fragment_test test_narrow_zero_is_uncharged_only_with_an_explicit_attempt "C
 run_fragment_test test_every_other_rule_is_charged "every other rule is charged"
 run_fragment_test test_observed_sequence_reviews_the_final_fix "#1057 replay: cap lands on a narrow re-check"
 run_fragment_test test_uncharged_narrow_zero_loop_is_bounded_by_attempts "uncharged C3 loop is bounded by attempts"
+
+run_fragment_test test_foreign_issue_result_is_refused_not_stopped "a foreign-issue zero is refused, not a C4 stop (#1150 replay)"
+run_fragment_test test_result_without_issue_is_refused_when_issue_is_asserted "an unstamped result under --issue is refused (#1150)"
+run_fragment_test test_string_issue_does_not_match_the_number "a string issue does not match the integer (#1150)"
+run_fragment_test test_foreign_cycle_result_is_refused_without_issue "a wrong-cycle result is refused with no --issue (#1150)"
+run_fragment_test test_foreign_cycle_result_is_refused_with_matching_issue "a right-issue wrong-cycle result is refused (#1150)"
+run_fragment_test test_foreign_prev_result_is_refused_on_a_zero_cycle "a foreign --prev-result is refused on a zero cycle (#1150)"
+run_fragment_test test_foreign_prev_result_is_refused_among_valid_ones "every --prev-result is checked, not only the first (#1150)"
+run_fragment_test test_matching_provenance_yields_a_verdict "matching provenance reaches the rule list (#1150 control)"
+run_fragment_test test_unstamped_result_without_issue_is_unchanged "an unstamped result without --issue is unchanged (#1150)"
+run_fragment_test test_bad_issue_value_fails_loud "a bad --issue value -> exit 2 (#1150)"
 
 # Every `test_*` function defined in a fragment must actually be dispatched by a
 # `run_fragment_test` line above. A test that is written but never registered passes silently by

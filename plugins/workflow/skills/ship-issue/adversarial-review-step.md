@@ -363,7 +363,7 @@ result printed; full contract in `review-engagement.md`:
 
 ```bash
 <skill-base-dir>/../../scripts/review-convergence.sh check \
-  --cycle "$cycle" --max-cycles "$cap" \
+  --issue {N} --cycle "$cycle" --max-cycles "$cap" \
   --attempt "$attempt" --max-attempts "$attempt_cap" \
   --result "$cycle_result_json" \
   --delta-lines "$delta_lines" \
@@ -404,6 +404,13 @@ vs `attempt_cap`) with a one-line note, advancing `cycle` every trip — the sam
 posture as a missing `workflow-wall-timeout.sh`. The loop
 stays bounded either way; it just loses the early-stop and the narrow-zero
 protection.
+
+**Exception — a provenance refusal is not a fallback case (#1150).** Exit 2 with
+`a stale or foreign result file` on stderr means the `--result` or a
+`--prev-result` belongs to another issue or cycle. That is usually a failed
+extraction that left an older file at the path. Re-extract this cycle's harness
+result into the scratch dir and re-run the check. Do not fall back and do not
+delete `--issue` to silence it.
 
 > **Standing rule — `blocking: []` is not a merge signal** (#580). Read every
 > finding on merit, including the deferrables, and fix anything that is a live
