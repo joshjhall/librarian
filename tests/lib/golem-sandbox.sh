@@ -171,7 +171,8 @@ plant_tmux_stub() {
 # Test stub: log argv, never start a real session.
 printf '%s\n' "$*" >>"$TMUX_STUB_LOG"
 # The env a real tmux would copy into its server's global env (#1125).
-[ -n "${TMUX_STUB_ENV_LOG:-}" ] && env >"$TMUX_STUB_ENV_LOG"
+# Only new-session: a later tmux call must not overwrite the env under test.
+[ "${1:-}" = new-session ] && [ -n "${TMUX_STUB_ENV_LOG:-}" ] && env >"$TMUX_STUB_ENV_LOG"
 exit 0
 EOF
     command chmod +x "$sb/bin/tmux"

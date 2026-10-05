@@ -698,7 +698,8 @@ case "$cmd" in
         # GLOBAL env, which every later session inherits and no plugin update can
         # reach — that froze the pre-#1056 CONTEXT_BUDGET_FLOOR=91000 into golems
         # and the orchestrator alike, winning over the scripts' own `:=` defaults.
-        # Operator-exported values were snapshotted above and still propagate.
+        # Operator-EXPORTED values were snapshotted above and still propagate; an
+        # unexported shell var config.sh then exports is treated as a default.
         # shellcheck disable=SC2086,SC2163 # a word-split list of NAMES, deliberately
         [ -n "$CONFIG_DEFAULT_EXPORTS" ] && export -n $CONFIG_DEFAULT_EXPORTS
         tmux new-session -d -s "golem-$N" -c "$wt" "${env_args[@]}" \
