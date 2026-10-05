@@ -291,6 +291,7 @@ run_fragment_test test_worktree_rm_absent_cargo_cache_is_noop "worktree-rm: an a
 run_fragment_test test_worktree_rm_name_mode_leaves_cargo_cache_alone "worktree-rm: name mode never touches the cargo cache (#1117)"
 run_fragment_test test_worktree_rm_failed_repo_key_warns_and_keeps_cargo_target "worktree-rm: a failed repo key warns under the cargo label and deletes nothing (#1117)"
 run_fragment_test test_worktree_rm_refuses_foreign_owned_cargo_repo_key_dir "worktree-rm: a foreign-owned cargo repo-key dir keeps the target, refusal names ownership (#1117)"
+run_fragment_test test_worktree_rm_removes_cache_entries_after_tmux_kill "worktree-rm: cache entries are removed AFTER the tmux kill — no live cargo races the delete (#1117)"
 run_fragment_test test_config_repo_root_no_hardcoded_usr_bin "config.sh: repo_root has no hardcoded /usr/bin/* tool paths (#278)"
 run_fragment_test test_config_repo_root_honors_path "config.sh: repo_root resolves via PATH, not command git (#278)"
 run_fragment_test test_config_repo_root_dirname_root_edge "config.sh: repo_root returns '/' for a /.git common dir (#278)"

@@ -532,8 +532,8 @@ test_worktree_new_cargo_relative_cache_root_is_noop() {
         "control: the same dir spelled absolutely DOES seed"
 }
 
-# The repo key is computed FIRST and a failed one skips the cargo seed (#1117,
-# mirroring #1091 pr-review c2): passed inline, an empty key would seed the
+# The repo key is computed FIRST and a failed one skips the cargo seed, out loud
+# (#1117, mirroring #1091 pr-review c2 and the teardown's c4 warning): passed inline, an empty key would seed the
 # un-namespaced <cache>/issue-N that teardown never removes and another repo's
 # issue N would share. A PATH stub fails only cksum (the key's one external);
 # _cargo_run unsets BASH_ENV so this image's /etc/bash_env cannot restore the
@@ -557,6 +557,8 @@ test_worktree_new_cargo_failed_repo_key_skips_seed() {
     assert_exit 0 "$RUN_RC" "worktree-new exits 0 when the repo key cannot be computed"
     assert_file_exists "$sb/cksum-ran" "the failing cksum stub was actually invoked"
     assert_not_contains "$RUN_OUT" "seeded CARGO_TARGET_DIR" "no cargo seed without a repo key"
+    assert_contains "$RUN_OUT" "could not derive the repo key" \
+        "the skip is announced — silence would read as 'cache unsuitable'"
     assert_equals "" "$(command ls -A "$cache")" \
         "nothing is provisioned — in particular no un-namespaced issue-N"
 }

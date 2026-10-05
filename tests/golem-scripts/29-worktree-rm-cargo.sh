@@ -325,3 +325,21 @@ test_worktree_rm_refuses_foreign_owned_cargo_repo_key_dir() {
     assert_true "[ -f \"$entry/debug/incremental/crate-abc/x.o\" ]" \
         "the target dir under the foreign parent survives"
 }
+
+# ORDERING: the cache entries are removed AFTER the golem's tmux session is
+# killed (#1117 review c2). The session runs with the seeded CARGO_TARGET_DIR,
+# so a cargo build still alive in it would race the delete and could recreate
+# the dir behind it — leaking the entry for good. A live session cannot be
+# driven from this suite, so the order is pinned on the source: the first
+# remove_cache_entry call must follow the kill-session line. Read as line
+# numbers from grep -n, both asserted non-empty so a renamed anchor fails loud
+# rather than comparing two blanks.
+test_worktree_rm_removes_cache_entries_after_tmux_kill() {
+    local kill_ln rm_ln
+    kill_ln="$(command grep -n 'tmux kill-session -t' "$WT_RM" | command sed -n '1s/:.*//p')"
+    rm_ln="$(command grep -n '^    if remove_cache_entry "' "$WT_RM" | command sed -n '1s/:.*//p')"
+    assert_not_empty "$kill_ln" "found the tmux kill-session call (guards a vacuous pass)"
+    assert_not_empty "$rm_ln" "found the first remove_cache_entry call (guards a vacuous pass)"
+    assert_true "[ \"${rm_ln:-0}\" -gt \"${kill_ln:-0}\" ]" \
+        "cache entries are removed after the tmux session is killed"
+}
