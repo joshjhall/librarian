@@ -26,12 +26,14 @@
 //       fields, pinned against the raw source as call-site checks.
 //   (5) PROMPTS (#1138) — the security dimension's inline must-read
 //       instructions reach its prompt (and only its prompt, at the tail), and
-//       the opus retry states WHY it is a retry; the first pass does not.
+//       the opus retry states WHY it is a retry; the first pass does not. Plus
+//       (#1146) correctness carries the bug checklist, byte-equal to the REAL
+//       code-review SUBREVIEWERS.bug, and every reused dimension carries one.
 //
 // Assertions are collect-all (they record, never throw) — see tests/lib/mjs-assert.mjs.
 
 import { ok, eq } from "../../lib/mjs-assert.mjs";
-import { extractHelpers, harnessSource, SHIP } from "../../lib/extract-helpers.mjs";
+import { extractHelpers, harnessSource, REVIEW, SHIP } from "../../lib/extract-helpers.mjs";
 
 // Run the WHOLE ship-issue harness — pure prefix AND orchestration body — with
 // stubbed engine globals, and return the cycle JSON it produces. extractHelpers
@@ -78,6 +80,7 @@ export async function run() {
     retryNotice,
     reusedReviewerPrompt,
     REUSED_DIMENSIONS,
+    BUG_CHECKLIST,
   } = extractHelpers(
     SHIP,
     [
@@ -92,6 +95,7 @@ export async function run() {
       "retryNotice",
       "reusedReviewerPrompt",
       "REUSED_DIMENSIONS",
+      "BUG_CHECKLIST",
     ],
     { cycle: 1, phase: "pre-pr", files: ["a.js"] },
   );
@@ -412,7 +416,29 @@ export async function run() {
       ok(sec.includes(q), `prompts: security asks the concrete question "${q}"`);
     }
     ok(!cor.includes("You MUST open (Read)"), "prompts: correctness does NOT get the security clause");
-    ok(!sec.includes("Sub-Reviewer Definition in"), "prompts: the dangling 'Definition in your instructions' reference is gone");
+
+    // #1146: correctness had the same dangling reference. It now carries the bug
+    // checklist, a COPY of the code-review harness's SUBREVIEWERS.bug — read
+    // here from the REAL map, so editing either side alone goes red.
+    const { SUBREVIEWERS } = extractHelpers(REVIEW, ["SUBREVIEWERS"]);
+    ok(typeof SUBREVIEWERS?.bug === "string" && SUBREVIEWERS.bug.length > 0, "prompts: code-review SUBREVIEWERS.bug was extracted (non-vacuity)");
+    eq(BUG_CHECKLIST, SUBREVIEWERS?.bug, "prompts: ship-issue BUG_CHECKLIST is byte-equal to code-review SUBREVIEWERS.bug (#1146 AC3)");
+    eq(dimOf("correctness").instructions, BUG_CHECKLIST, "prompts: correctness carries BUG_CHECKLIST as its instructions");
+    for (const q of ["Error Handling Red Flags", "Swallowed exceptions", "Retrying permanent failures", "Concurrency Red Flags", "Async operations without timeout limits", "not cleaned up on error paths"]) {
+      ok(cor.includes(q), `prompts: correctness carries the bug checklist item "${q}" (#1146 AC1)`);
+    }
+    ok(cor.indexOf("Error Handling Red Flags") > cor.indexOf("Mode: reviewer:bug"), "prompts: the bug checklist rides the tail, after Mode:");
+    ok(!sec.includes("Error Handling Red Flags"), "prompts: security does NOT get the bug checklist");
+    // AC2, structurally: no reused dimension may lean on a Sub-Reviewer
+    // Definition the agent body no longer carries — each brings its own.
+    ok(REUSED_DIMENSIONS.length >= 2, "prompts: REUSED_DIMENSIONS is non-empty (non-vacuity)");
+    for (const d of REUSED_DIMENSIONS) {
+      ok(typeof d.instructions === "string" && d.instructions.trim().length > 0, `prompts: reused dimension "${d.name}" carries inline instructions (#1146 AC2)`);
+    }
+    for (const d of REUSED_DIMENSIONS) {
+      const p = reusedReviewerPrompt(d, manifest, "+x");
+      ok(!p.includes("Sub-Reviewer Definition"), `prompts: ${d.name} references no Sub-Reviewer Definition the agent does not receive (#1146 AC2)`);
+    }
     // Cache stability (#256): the clause rides the TAIL, so both prompts share
     // every byte up to the per-dimension `Mode:` selector.
     const cut = (p) => p.slice(0, p.indexOf("Mode: reviewer:"));

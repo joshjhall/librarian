@@ -213,8 +213,8 @@ const reviewerData = (manifest, diff = scopeDiff) =>
   diffSection(diff)
 
 // Reused dimensions (security, correctness): the agent's own sub-reviewer mode,
-// overriding the surfaced category name. A dimension that carries inline
-// `instructions` (security, #1138) gets them at the TAIL, after the shared
+// overriding the surfaced category name. Each carries inline `instructions`
+// (security #1138, correctness #1146) that ride the TAIL, after the shared
 // reviewerData block, so the siblings' cacheable prefix stays byte-identical
 // (#256) and only the trailing selector diverges.
 const reusedReviewerPrompt = (dim, manifest, diff = scopeDiff) =>
