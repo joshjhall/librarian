@@ -330,16 +330,22 @@ test_worktree_rm_refuses_foreign_owned_cargo_repo_key_dir() {
 # killed (#1117 review c2). The session runs with the seeded CARGO_TARGET_DIR,
 # so a cargo build still alive in it would race the delete and could recreate
 # the dir behind it — leaking the entry for good. A live session cannot be
-# driven from this suite, so the order is pinned on the source: the first
-# remove_cache_entry call must follow the kill-session line. Read as line
-# numbers from grep -n, both asserted non-empty so a renamed anchor fails loud
-# rather than comparing two blanks.
+# driven from this suite, so the order is pinned on the source: EVERY
+# remove_cache_entry call (any indentation, comment lines excluded) must follow
+# the kill-session line. The earliest call is the one compared — it bounds them
+# all — and the call count is pinned at 2 (uv + cargo), so a call that stops
+# matching the pattern, or a third added above the kill, fails loud rather than
+# slipping out of the comparison. Both anchors are asserted non-empty.
 test_worktree_rm_removes_cache_entries_after_tmux_kill() {
-    local kill_ln rm_ln
+    local kill_ln calls rm_ln n
     kill_ln="$(command grep -n 'tmux kill-session -t' "$WT_RM" | command sed -n '1s/:.*//p')"
-    rm_ln="$(command grep -n '^    if remove_cache_entry "' "$WT_RM" | command sed -n '1s/:.*//p')"
+    calls="$(command grep -n 'remove_cache_entry "' "$WT_RM" |
+        command grep -v '^[0-9]*:[[:space:]]*#')"
+    rm_ln="$(command printf '%s\n' "$calls" | command sed -n '1s/:.*//p')"
+    n="$(command printf '%s\n' "$calls" | command grep -c 'remove_cache_entry')"
     assert_not_empty "$kill_ln" "found the tmux kill-session call (guards a vacuous pass)"
-    assert_not_empty "$rm_ln" "found the first remove_cache_entry call (guards a vacuous pass)"
+    assert_not_empty "$rm_ln" "found the remove_cache_entry calls (guards a vacuous pass)"
+    assert_equals "2" "$n" "exactly two cache-entry teardown calls: uv venv and cargo target dir"
     assert_true "[ \"${rm_ln:-0}\" -gt \"${kill_ln:-0}\" ]" \
-        "cache entries are removed after the tmux session is killed"
+        "every cache entry is removed after the tmux session is killed"
 }
