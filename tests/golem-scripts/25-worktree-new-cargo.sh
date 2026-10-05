@@ -326,6 +326,32 @@ test_worktree_new_cargo_probes_through_a_symlinked_cache_dir() {
         "the canonicalized path classifies as the mount that really backs the target"
 }
 
+# The shared body's LEAF-link refusal, through the cargo key (#1114) — 26 pins
+# it for uv only. A planted `<cache>/<key>/issue-N -> elsewhere` would otherwise
+# be "created" by mkdir -p (a no-op on an existing link) and seeded, sending
+# every build artifact to elsewhere. Positive control:
+# test_worktree_new_cargo_seeds_target_dir, the same fixture without the link.
+test_worktree_new_cargo_refuses_symlinked_target_leaf() {
+    local sb
+    new_sandbox sb
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq unavailable — the seed is jq-gated by design"
+        return
+    fi
+    _commit_gitignore "$sb"
+    local cache="$sb/cache" entry
+    entry="$(_cargo_entry "$sb" "$cache" 47)"
+    command mkdir -p "${entry%/*}" "$sb/elsewhere"
+    command ln -s "$sb/elsewhere" "$entry"
+
+    _cargo_run "$sb" "$cache" 47
+    assert_exit 0 "$RUN_RC" "worktree-new exits 0 with a planted target-dir leaf link"
+    assert_not_contains "$RUN_OUT" "CARGO_TARGET_DIR" "does not seed through a leaf link"
+    assert_equals "" "$(_cargo_target_of "$sb" 47)" "writes no CARGO_TARGET_DIR"
+    assert_equals "" "$(command ls -A "$sb/elsewhere")" \
+        "nothing is created in the link target"
+}
+
 # AC5 — the trap that sinks the naive `.cargo/config.toml` version: whatever the
 # seed writes must NOT make the worktree read dirty, so teardown still succeeds.
 # Measured on git 2.55: a per-worktree `.git/worktrees/<wt>/info/exclude` is NOT

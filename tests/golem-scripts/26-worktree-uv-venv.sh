@@ -14,7 +14,10 @@
 # malformed / no-jq) are covered once, through the cargo key, in
 # 25-worktree-new-cargo.sh — they are one shared function, so repeating each per
 # key would test the same lines twice. This area pins what is NEW: the uv
-# project gate, the second key's coexistence with the first, and teardown.
+# project gate, the second key's coexistence with the first, and teardown. Two
+# arms ARE driven through uv too, because a key-specific regression would slip
+# past the cargo-only reading: the leaf-link refusal, and the fs-type refusal
+# end-to-end (#1114).
 #
 # Its own area file: 40-worktree-rm.sh is already over its LOC budget.
 #
@@ -446,6 +449,50 @@ test_worktree_new_uv_refuses_symlinked_venv_leaf() {
     assert_exit 0 "$RUN_RC" "worktree-new exits 0 with a planted leaf link"
     assert_not_contains "$RUN_OUT" "UV_PROJECT_ENVIRONMENT" "does not seed through a leaf link"
     assert_equals "" "$(_uv_key_of "$sb" 77)" "writes no UV_PROJECT_ENVIRONMENT"
+}
+
+# The fs-type refusal reaches the uv key END-TO-END (#1114). 25's arm test reads
+# the case statement's text, which a regression gating the check on the key
+# (cargo-only) would leave intact. So run the WHOLE worktree-new.sh — from a
+# scripts copy whose /proc/mounts is rewritten to a fixture that mounts the cache
+# root as the type under test — and assert uv seeds nothing and creates no
+# <cache>/<key> dir (the probe precedes that mkdir). Positive control in-test:
+# the same harness with a benign type DOES seed, so the refusals are the
+# fstype's doing, not the harness's.
+test_worktree_new_uv_refuses_wedging_filesystems() {
+    local sb
+    new_sandbox sb
+    _uv_need_jq || return 0
+    _uv_project "$sb"
+    local cache="$sb/venvs" copy="$sb/scripts-copy" real n=60 fs venv
+    command mkdir -p "$cache"
+    command cp -R "$SCRIPTS" "$copy"
+    command sed "s#/proc/mounts#$sb/mounts#g" "$WT_NEW" >"$copy/worktree-new.sh"
+    # Vacuity guards: a copy still reading the real /proc/mounts (an upstream
+    # rename the substitution missed) would refuse or seed for the wrong reason.
+    assert_equals "0" "$(command grep -c '/proc/mounts' "$copy/worktree-new.sh")" \
+        "the scripts copy no longer reads the real /proc/mounts"
+    assert_true "command grep -q '$sb/mounts' '$copy/worktree-new.sh'" \
+        "The scripts copy reads the fixture mounts file"
+    real="$(command readlink -f "$cache")"
+    # Refused types first, so "no <cache>/<key> dir" holds absolutely; the
+    # benign control runs last and is the pass that creates it.
+    for fs in virtiofs fuse.bindfs 9p ext4; do
+        n=$((n + 1))
+        command printf '/dev/root / overlay rw 0 0\nhost %s %s rw 0 0\n' \
+            "$real" "$fs" >"$sb/mounts"
+        venv="$(_uv_venv "$sb" "$cache" "$n")"
+        _uv_run "$copy/worktree-new.sh" "$sb" "$cache" "$n"
+        assert_exit 0 "$RUN_RC" "worktree-new exits 0 with the uv cache on $fs"
+        if [ "$fs" = ext4 ]; then
+            assert_equals "$venv" "$(_uv_key_of "$sb" "$n")" \
+                "positive control: a benign fstype through the same fixture seeds"
+            continue
+        fi
+        assert_not_contains "$RUN_OUT" "UV_PROJECT_ENVIRONMENT" "does not seed onto $fs"
+        assert_equals "" "$(_uv_key_of "$sb" "$n")" "writes no UV_PROJECT_ENVIRONMENT on $fs"
+        assert_true "[ ! -e \"${venv%/*}\" ]" "No <cache>/<key> dir is created on $fs"
+    done
 }
 
 # The gitignore refusal reaches the uv call site too: in a uv project whose
