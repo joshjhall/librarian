@@ -1,5 +1,7 @@
 
-log(`review cycle ${CYCLE}/${MAX_CYCLES} (phase: ${PHASE})`)
+// The raw value when it is invalid: PHASE collapses it to 'pre-pr', and this
+// banner prints before the unknownPhase throw below (#1145).
+log(`review cycle ${CYCLE}/${MAX_CYCLES} (phase: ${unknownPhase(args) ? JSON.stringify(args.phase) : PHASE})`)
 
 // Reject an unrecognized input key before anything is dispatched (#597). This
 // is deliberately the FIRST thing after the cycle banner: the failure costs no
@@ -18,6 +20,18 @@ if (unknownKeys.length > 0) {
       `accepted keys are: ${KNOWN_ARG_KEYS.join(', ')}. ` +
       'An unrecognized key is silently ignored, so the input it carried would be ' +
       'missing and this cycle could report a falsely clean review. Fix the key and re-dispatch.'
+  )
+}
+
+// Reject an unrecognized `phase` VALUE (#1145) — the key check above passes
+// `phase: 'post-pr'`, which would otherwise run as a pre-PR review that skips
+// the PR's comments. JSON-stringified so '' and null are visible in the message.
+if (unknownPhase(args)) {
+  throw new Error(
+    `review harness: unknown phase ${JSON.stringify(args.phase)} — ` +
+      `accepted values are: ${KNOWN_PHASES.join(', ')} (omit the key for the 'pre-pr' default). ` +
+      'An unrecognized phase would silently run a pre-PR review that never reads the ' +
+      "PR's comments. Fix the value and re-dispatch."
   )
 }
 

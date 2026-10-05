@@ -87,7 +87,7 @@ export const meta = {
 // ---------------------------------------------------------------------------
 // Input (passed verbatim as the global `args`):
 //   {
-//     phase:      'pre-pr' | 'pr-cycle',   // default 'pre-pr'
+//     phase:      'pre-pr' | 'pr-cycle',   // default 'pre-pr' (absent key); any other value throws
 //     cycle:      number,                  // 1-based; the skill increments. default 1
 //     maxCycles:  number,                  // default 5 — informational; the SKILL enforces the cap
 //     files?:     string[],                // FULL changed-file scope (skill: git diff --name-only origin/main...HEAD)
@@ -216,6 +216,28 @@ const unknownArgKeys = (a) =>
     ? Object.keys(a).filter((k) => !KNOWN_ARG_KEYS.includes(k))
     : []
 
+// The closed set of `phase` VALUES (#1145). `unknownArgKeys` guards the key
+// NAMES, but the `PHASE` derivation below maps every value that is not exactly
+// 'pr-cycle' to 'pre-pr' — so a typo ('post-pr', observed shipping #1123 on
+// PR #1143) silently ran a pre-PR review that never read `prComments`, yet
+// still returned a cycle verdict counting toward the clean-review merge
+// invariant. Same silence-reads-as-a-pass shape as #567/#1111, one level down.
+const KNOWN_PHASES = ['pre-pr', 'pr-cycle']
+
+// True when `args.phase` is present but not a member of KNOWN_PHASES. A boolean
+// rather than the offending value, because `null` is itself an invalid value
+// and could not double as the "valid" sentinel.
+//
+// Only an ABSENT (or `undefined`) phase takes the documented 'pre-pr' default;
+// '', null and wrong-case spellings are caller bugs exactly like a typo. Total
+// on the no-input paths for the same reason as `unknownArgKeys`.
+const unknownPhase = (a) =>
+  !!a &&
+  typeof a === 'object' &&
+  !Array.isArray(a) &&
+  a.phase !== undefined &&
+  !KNOWN_PHASES.includes(a.phase)
+
 // Whether this cycle has nothing of its own to review (#597, AC#3). A pure
 // predicate rather than an inline condition in the orchestration body so it can
 // be unit-tested directly: the `log()` call it guards sits past ORCH_BOUNDARY
@@ -227,6 +249,8 @@ const unknownArgKeys = (a) =>
 // that has plenty to read.
 const noDiffSupplied = (fullDiff, delta) => !fullDiff && !delta
 
+// Only reached with a valid phase: the orchestration body throws first on
+// `unknownPhase(args)` (#1145), so the fallback below is the absent-key default.
 const PHASE = args && args.phase === 'pr-cycle' ? 'pr-cycle' : 'pre-pr'
 const CYCLE = args && Number.isInteger(args.cycle) ? args.cycle : 1
 // Mirrors REVIEW_MAX_CYCLES' default (#596 raised it 3 -> 5). Informational
@@ -1968,7 +1992,9 @@ function emptyResult(parts) {
   })
 }
 
-log(`review cycle ${CYCLE}/${MAX_CYCLES} (phase: ${PHASE})`)
+// The raw value when it is invalid: PHASE collapses it to 'pre-pr', and this
+// banner prints before the unknownPhase throw below (#1145).
+log(`review cycle ${CYCLE}/${MAX_CYCLES} (phase: ${unknownPhase(args) ? JSON.stringify(args.phase) : PHASE})`)
 
 // Reject an unrecognized input key before anything is dispatched (#597). This
 // is deliberately the FIRST thing after the cycle banner: the failure costs no
@@ -1987,6 +2013,18 @@ if (unknownKeys.length > 0) {
       `accepted keys are: ${KNOWN_ARG_KEYS.join(', ')}. ` +
       'An unrecognized key is silently ignored, so the input it carried would be ' +
       'missing and this cycle could report a falsely clean review. Fix the key and re-dispatch.'
+  )
+}
+
+// Reject an unrecognized `phase` VALUE (#1145) — the key check above passes
+// `phase: 'post-pr'`, which would otherwise run as a pre-PR review that skips
+// the PR's comments. JSON-stringified so '' and null are visible in the message.
+if (unknownPhase(args)) {
+  throw new Error(
+    `review harness: unknown phase ${JSON.stringify(args.phase)} — ` +
+      `accepted values are: ${KNOWN_PHASES.join(', ')} (omit the key for the 'pre-pr' default). ` +
+      'An unrecognized phase would silently run a pre-PR review that never reads the ' +
+      "PR's comments. Fix the value and re-dispatch."
   )
 }
 

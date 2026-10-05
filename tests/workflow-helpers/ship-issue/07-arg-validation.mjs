@@ -173,4 +173,105 @@ export async function run() {
     "ship-issue: the no-diff cycle is surfaced as a WARNING, not silently reviewed",
   );
 }
+
+// ===========================================================================
+// phase-value validation (#1145)
+//
+// `unknownArgKeys` guards key NAMES; this guards the one enumerated VALUE.
+// Before the fix `phase: "post-pr"` (observed shipping #1123, PR #1143) fell
+// through to 'pre-pr' in silence and ran a review that never read prComments.
+// ===========================================================================
+{
+  const { KNOWN_PHASES, unknownPhase } = extractHelpers(SHIP, ["KNOWN_PHASES", "unknownPhase"]);
+
+  eq(KNOWN_PHASES.join(","), "pre-pr,pr-cycle", "KNOWN_PHASES: exactly pre-pr and pr-cycle");
+
+  // --- Valid inputs behave unchanged (AC#2) --------------------------------
+  for (const [val, label] of [
+    [{ phase: "pre-pr" }, "pre-pr"],
+    [{ phase: "pr-cycle" }, "pr-cycle"],
+    [{}, "an absent phase key"],
+    [{ phase: undefined }, "an undefined phase"],
+    [null, "null args"],
+    [undefined, "undefined args"],
+    [["post-pr"], "array args"],
+    ["post-pr", "non-object args"],
+  ]) {
+    eq(unknownPhase(val), false, `unknownPhase: ${label} is accepted`);
+  }
+
+  // --- Anything else is rejected (AC#1) ------------------------------------
+  // `null` and '' are explicit values, not absence — a caller that wrote them
+  // meant something, and the harness cannot know what.
+  for (const [val, label] of [
+    ["post-pr", "the observed #1143 typo 'post-pr'"],
+    ["PR-CYCLE", "a wrong-case spelling"],
+    ["", "an empty string"],
+    [null, "an explicit null"],
+    [2, "a number"],
+  ]) {
+    eq(unknownPhase({ phase: val }), true, `unknownPhase: ${label} is rejected`);
+  }
+
+  // --- Structural: wired, in the body, and it throws ------------------------
+  const src = harnessSource(SHIP);
+  const boundary = src.match(
+    /^(log\(|phase\(|await |const\s+\w+\s*=\s*await\b|let\s+\w+\s*=\s*await\b|if \(|for \(|while \(|return )/m,
+  );
+  // `!== -1` matters: a missing definition yields -1, which is "< boundary" too.
+  const defIdx = src.indexOf("const unknownPhase");
+  ok(defIdx !== -1 && defIdx < boundary.index, "ship-issue: unknownPhase is defined in the pure prefix");
+  const guardIdx = src.indexOf("if (unknownPhase(args)) {");
+  ok(guardIdx > boundary.index, "ship-issue: the unknownPhase guard sits in the orchestration body (#1145 wiring)");
+  // Every review dispatch must come AFTER the guard, or the typo'd cycle has
+  // already spent its turns before it fails.
+  // Column-0 only: an indented `await` inside a prefix helper is not a dispatch.
+  const firstAwait = src.match(/^(?:(?:const|let)\s+\w+\s*=\s*)?await\b/m);
+  ok(
+    guardIdx !== -1 && firstAwait && guardIdx < firstAwait.index,
+    "ship-issue: the phase guard runs before the first top-level await",
+  );
+
+  // --- Behavioural: execute the REAL guard block ---------------------------
+  // Slice the guard verbatim from the source and run it, so the test fails if
+  // the throw is removed, logged-and-ignored, or its message stops naming the
+  // accepted values — not just if the predicate changes.
+  const guardEnd = src.indexOf("\n}\n", guardIdx);
+  ok(guardIdx !== -1 && guardEnd !== -1, "ship-issue: the phase guard block is sliceable");
+  const guard = src.slice(guardIdx, guardEnd + 2);
+  // `log` is a no-op stub so a throw→log mutation does NOT throw a ReferenceError
+  // and satisfy the "it throws" assertion vacuously (measured: it did).
+  const runGuard = (a) =>
+    new Function("args", "unknownPhase", "KNOWN_PHASES", "log", guard)(a, unknownPhase, KNOWN_PHASES, () => {});
+
+  let msg = "";
+  try {
+    runGuard({ phase: "post-pr" });
+  } catch (e) {
+    msg = e.message;
+  }
+  ok(msg !== "", "ship-issue: phase 'post-pr' makes the harness throw (#1145 AC#1)");
+  ok(
+    msg.includes('"post-pr"') && msg.includes("pre-pr") && msg.includes("pr-cycle"),
+    "ship-issue: the thrown message names the bad value and every accepted value",
+  );
+  for (const a of [{ phase: "pre-pr" }, { phase: "pr-cycle" }, {}, null]) {
+    let threw = false;
+    try {
+      runGuard(a);
+    } catch {
+      threw = true;
+    }
+    eq(threw, false, `ship-issue: the phase guard does not throw on ${JSON.stringify(a)}`);
+  }
+
+  // --- The cycle banner names the RAW invalid value -------------------------
+  // It logs before the guard throws, and PHASE collapses 'post-pr' to 'pre-pr',
+  // so a banner on PHASE alone would contradict the error that follows it.
+  const banner = src.match(/^log\(`review cycle .*$/m);
+  ok(
+    banner && banner[0].includes("unknownPhase(args) ? JSON.stringify(args.phase) : PHASE"),
+    "ship-issue: the cycle banner logs the raw phase when it is invalid, not the collapsed PHASE",
+  );
+}
 }
