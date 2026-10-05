@@ -529,8 +529,21 @@ async function attempt(fn, label) {
 // harness's security reviewer was told to follow a definition it never received.
 // With no checklist it skimmed the diff: across the post-#1111 cycle results it
 // was the ONLY dimension still unengaged (every `checked` entry `diff-only`)
-// after the opus retry, 4 of the 8 cycles that retried it. correctness has the
-// same dangling reference but engages unprompted, so it is left unchanged.
+// after the opus retry, 4 of the 8 cycles that retried it.
+//
+// correctness had the same dangling reference (#1146). It engaged anyway, so the
+// symptom was quieter: it reviewed WITHOUT the bug checklist's Error Handling and
+// Concurrency Red Flags — the silent-failure shapes this repo keeps filing. It
+// carries BUG_CHECKLIST, a VERBATIM copy of the code-review harness's
+// SUBREVIEWERS.bug (plugins/dev-core/agents/code-reviewer/workflow.js). A copy,
+// not a shared source: the two harnesses sit in different plugins, and a
+// workflow.js cannot import (#712). The copies cannot drift silently —
+// tests/workflow-helpers/ship-issue/11-engagement-floor.mjs area (5) reads the
+// REAL map and asserts byte equality, so edit both together.
+//
+// Every REUSED_DIMENSIONS entry MUST carry `instructions` (pinned in that same
+// area): the agent body no longer holds any Sub-Reviewer Definition to fall back
+// on.
 const SECURITY_INSTRUCTIONS =
   'You MUST open (Read) every changed code file before answering, and record ' +
   'each in `checked` with how="read". A diff-only answer is NOT a security ' +
@@ -552,9 +565,31 @@ const SECURITY_INSTRUCTIONS =
   'crypto.\n' +
   'Empty `findings` is a valid answer only after you have read the files.'
 
+const BUG_CHECKLIST =
+  'You are a bug-focused code reviewer. Analyze the provided code changes for\n' +
+  'correctness issues.\n\n' +
+  'Check for:\n\n' +
+  '- Logic errors and off-by-one mistakes\n' +
+  '- Null/undefined access and type confusion\n' +
+  '- Race conditions and data races\n' +
+  '- Incorrect boolean logic or operator precedence\n' +
+  '- Missing return statements or unreachable code\n' +
+  '- Incorrect use of APIs (wrong argument order, deprecated methods)\n\n' +
+  'Error Handling Red Flags — flag every occurrence:\n\n' +
+  '- Generic base exceptions instead of specific error types\n' +
+  '- Exceptions with no structured context (just a message string)\n' +
+  '- Swallowed exceptions (empty catch blocks or catch-and-ignore)\n' +
+  '- Duplicate logging (manual log + auto-logging exception)\n' +
+  '- Retrying permanent failures (auth errors, validation errors)\n\n' +
+  'Concurrency Red Flags — flag every occurrence:\n\n' +
+  '- Async operations without timeout limits\n' +
+  '- Connections or file handles not cleaned up on error paths\n' +
+  '- Batch operations that stop entirely on first failure (should accumulate)\n' +
+  '- Missing exponential backoff or jitter on retries'
+
 const REUSED_DIMENSIONS = [
   { name: 'security', mode: 'security', category: 'security', instructions: SECURITY_INSTRUCTIONS },
-  { name: 'correctness', mode: 'bug', category: 'correctness' },
+  { name: 'correctness', mode: 'bug', category: 'correctness', instructions: BUG_CHECKLIST },
 ]
 
 // NEW dimensions: no matching Sub-Reviewer Definition exists in code-reviewer.md,
@@ -1197,8 +1232,8 @@ const reviewerData = (manifest, diff = scopeDiff) =>
   diffSection(diff)
 
 // Reused dimensions (security, correctness): the agent's own sub-reviewer mode,
-// overriding the surfaced category name. A dimension that carries inline
-// `instructions` (security, #1138) gets them at the TAIL, after the shared
+// overriding the surfaced category name. Each carries inline `instructions`
+// (security #1138, correctness #1146) that ride the TAIL, after the shared
 // reviewerData block, so the siblings' cacheable prefix stays byte-identical
 // (#256) and only the trailing selector diverges.
 const reusedReviewerPrompt = (dim, manifest, diff = scopeDiff) =>
