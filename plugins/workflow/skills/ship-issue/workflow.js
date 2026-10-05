@@ -1992,7 +1992,9 @@ function emptyResult(parts) {
   })
 }
 
-log(`review cycle ${CYCLE}/${MAX_CYCLES} (phase: ${PHASE})`)
+// The raw value when it is invalid: PHASE collapses it to 'pre-pr', and this
+// banner prints before the unknownPhase throw below (#1145).
+log(`review cycle ${CYCLE}/${MAX_CYCLES} (phase: ${unknownPhase(args) ? JSON.stringify(args.phase) : PHASE})`)
 
 // Reject an unrecognized input key before anything is dispatched (#597). This
 // is deliberately the FIRST thing after the cycle banner: the failure costs no
