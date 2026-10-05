@@ -1909,6 +1909,15 @@ const selectReviewDimensions = ({
   return { entries, budgetExhausted, dimensionsSkipped, narrowed, cheap }
 }
 
+// issueNumberOf — `args.issue.number` as a positive integer, else null (#1150).
+// A string number ("1150") is accepted because a caller templating the args
+// may quote it; anything that is not a positive integer is null rather than a
+// guess, so the convergence helper refuses it instead of matching on garbage.
+function issueNumberOf(iss) {
+  const n = iss && typeof iss === 'object' ? Number(iss.number) : NaN
+  return Number.isInteger(n) && n > 0 ? n : null
+}
+
 // buildResult — the SINGLE constructor for a cycle result object (#636).
 //
 // WHY THIS IS A HELPER AND NOT AN OBJECT LITERAL AT THE RETURN. Everything past
@@ -1932,15 +1941,6 @@ const selectReviewDimensions = ({
 // Hoisted `function` (not a `const` arrow) for the reason spelled out over
 // `emptyResult` below: the manifest-failure path calls it before the
 // orchestration body's consts initialize.
-// issueNumberOf — `args.issue.number` as a positive integer, else null (#1150).
-// A string number ("1150") is accepted because a caller templating the args
-// may quote it; anything that is not a positive integer is null rather than a
-// guess, so the convergence helper refuses it instead of matching on garbage.
-function issueNumberOf(iss) {
-  const n = iss && typeof iss === 'object' ? Number(iss.number) : NaN
-  return Number.isInteger(n) && n > 0 ? n : null
-}
-
 function buildResult(parts) {
   const rawFindings = parts.rawFindings || []
   const blocking = parts.blocking || []
