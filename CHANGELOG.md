@@ -5,6 +5,75 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.16.0] - 2026-10-06
+
+### Added
+
+- Pin design-review corpora to SHAs with a citation gate (#1075)
+- Back the pane idle check with the #949 work registry (#1108)
+- Keep per-worktree uv venvs off the repo mount (#1091) (#1104)
+- Post-remove hook in worktree-rm.sh for consumer cleanup (#1122)
+- Surface an uncounted handoff R at resume and emit the count directive (#1132)
+- Warn before the last full-scope review cycle, stop C3 charging the cap (#1137)
+- Remove the per-worktree cargo target dir on teardown (#1152)
+
+### CI/CD
+
+- Bump the actions group with 2 updates (#1083)
+- Bump codeql upload-sarif, ruff, typos, and dprint json plugin (#1164)
+
+### Changed
+
+- Split test_unpaired_listener by concern (#1087)
+- Extract golem-gate-watch's pane classifiers into a sourced fragment (#1124)
+- Split worktree-rm leftover cluster, bound renames (#1126)
+- Extract ship-issue's opus-retry path into pure helpers (#1136)
+- Share the uv-venv path derive+verify between seed and teardown (#1135)
+- Split validate-review-convergence.sh under its LOC budget (#1141)
+
+### Documentation
+
+- No-verify rule covers git push --delete after a merge
+- Name /workflow:golem N as the primary /clear resume path (#1116)
+
+### Fixed
+
+- Gate the prose classifier language tables (#1073) (#1076)
+- Guard the python3 analyzer capture in five lint gates (#1078) (#1081)
+- Use array form for lifecycle commands so Zed runs them (#1085)
+- Recognise the ▰▱ Workflow-harness row as own-work pending (#1093)
+- Adopt a worktree the plain removal already deregistered (#1095)
+- Surface gates already open when gate-watch streams (re)arm (#1102)
+- Pin tar.umask so the release tarball is not group-writable (#1103)
+- Give each review run its own scratch dir (#1106)
+- Stop worktree-new.sh's launch hint asserting --level 4 (#1118)
+- Run the budget check on every golem path and relaunch the handoff (#1112)
+- Refuse to count an unengaged review dimension as clean (#1127)
+- Judge every run when a retried dimension's kept-run filter selects nothing (#1142)
+- Refuse uv/cargo cache entries not owned by the current user (#1144)
+- Run worktree-rm's post-remove hook unbounded, never skipped, without bounded_run (#1143)
+- Reject an unknown `phase` value in the ship-issue review harness (#1149)
+- Give security review a must-read checklist and explain its retry (#1147)
+- Give the correctness review dimension the bug checklist (#1151)
+- Stop golem-launch freezing config.sh defaults into tmux (#1156)
+- Refuse a review result file of foreign provenance (#1155)
+- Keep the golem auth token out of tmux argv and global env (#1158)
+
+### Miscellaneous
+
+- Bump containers submodule to v4.20.2
+- Bump ruff 0.16.8, agnix 0.54.0, dprint json 0.24.0 (#1084)
+- Bump containers submodule to v4.20.3
+
+### Testing
+
+- Pin the init-cycle-1 / path-later split in review-scratch recipes (#1110)
+- Pin golem's collision-guard auto-resume condition (#1134)
+- Pin golem-handoff-relaunch's failed post-/clear stamp write (#1140)
+- Drive the real harness body in the engagement-floor AC5 test (#1139)
+- Assert the virtiofs attribution at runtime, not in comments (#1148)
+- Pin both seed_cache_env refusals through both keys (#1154)
+
 ## [0.15.0] - 2026-09-16
 
 ### Added
@@ -38,6 +107,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Match grep's line model in every ported scanner (#1049)
 - Check escalation option premises before the operator sees them (#1052)
 - Skip the pre-push suite on a pure branch delete (#1054) (#1055)
+- Shard the release validate job so a tag can publish (#1064)
 
 ### Improved
 
@@ -959,6 +1029,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Relocate skill/agent quality gates + fixtures (#12)
 
+[0.16.0]: https://github.com/joshjhall/librarian/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/joshjhall/librarian/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/joshjhall/librarian/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/joshjhall/librarian/compare/v0.12.0...v0.13.0
