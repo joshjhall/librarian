@@ -392,6 +392,105 @@ test_copy_and_install_failures() {
     command rm -rf "$dest"
 }
 
+# A copy that "succeeds" with the wrong bytes must not be handed out (#1174).
+# Two golems hand-copied the harness after a refusal; the stager is the
+# sanctioned copy, so it has to verify what it installed rather than trust
+# `cp`'s exit status. The injection is a PATH stub for `cp` that exits 0 after a
+# truncated write — `command cp` skips functions but still resolves through
+# PATH. The same fixture without the stub is run first, so the refusal is
+# attributable to the mismatch and not to some unrelated failure in the setup.
+test_staged_copy_mismatch_refuses() {
+    local dest srcdir stubdir
+    dest="$(new_tree)"
+    srcdir="$(new_tree)"
+    stubdir="$(new_tree)"
+    if [ -z "$dest" ] || [ -z "$srcdir" ] || [ -z "$stubdir" ]; then
+        command rm -rf "$dest" "$srcdir" "$stubdir"
+        skip_test "mktemp unavailable"
+        return 0
+    fi
+    local src="$srcdir/harness.js"
+    command printf '// line one\n// line two\n' >"$src"
+
+    # Control: the real cp stages and verifies cleanly.
+    LAST_OUT="$(LIBRARIAN_HARNESS_ORCHESTRATE="$src" "$STAGER" stage orchestrate --dir "$dest" 2>&1)" &&
+        LAST_RC=0 || LAST_RC=$?
+    assert_equals "0" "$LAST_RC" "control: an honest copy stages (exit 0)"
+
+    # Stub: copy only the first line, exit 0. BASH_ENV is unset so a profile
+    # cannot restore PATH ahead of the stub.
+    command cat >"$stubdir/cp" <<'STUB'
+#!/usr/bin/env sh
+head -n 1 "$1" >"$2"
+exit 0
+STUB
+    command chmod +x "$stubdir/cp"
+
+    LAST_OUT="$(env -uBASH_ENV PATH="$stubdir:$PATH" \
+        LIBRARIAN_HARNESS_ORCHESTRATE="$src" "$STAGER" stage orchestrate --dir "$dest" 2>&1)" &&
+        LAST_RC=0 || LAST_RC=$?
+    assert_equals "3" "$LAST_RC" "a mismatched staged copy exits 3"
+    assert_contains "$LAST_OUT" "byte-identical" "the refusal names the identity check"
+    assert_not_contains "$LAST_OUT" "path=" "a mismatched copy emits no path="
+    local dst="$dest/.claude/tmp/harness/orchestrate.workflow.js"
+    local left=0
+    [ -e "$dst" ] && left=1
+    assert_equals "0" "$left" "the mismatched copy is removed, not left for the next run"
+    assert_contains "$LAST_OUT" "(removed)" "a successful removal is reported as such"
+
+    # A removal that FAILS must not be reported as done. An `rm` stub that does
+    # nothing leaves the bad copy in place; the refusal has to say so.
+    command printf '#!/usr/bin/env sh\nexit 1\n' >"$stubdir/rm"
+    command chmod +x "$stubdir/rm"
+    LAST_OUT="$(env -uBASH_ENV PATH="$stubdir:$PATH" \
+        LIBRARIAN_HARNESS_ORCHESTRATE="$src" "$STAGER" stage orchestrate --dir "$dest" 2>&1)" &&
+        LAST_RC=0 || LAST_RC=$?
+    assert_equals "3" "$LAST_RC" "a mismatch whose removal fails still exits 3"
+    assert_contains "$LAST_OUT" "REMOVAL FAILED" "a failed removal is named, never claimed as removed"
+    assert_not_contains "$LAST_OUT" "(removed)" "a failed removal is not reported as removed"
+
+    command rm -rf "$dest" "$srcdir" "$stubdir"
+}
+
+# A `cmp` that cannot compare (exit 2 — unreadable side, I/O error) must refuse
+# exactly like a mismatch: unverified is not verified (#1174). Only `cmp` is
+# stubbed, so the copy itself is honest and the refusal is attributable to the
+# verifier's failure alone.
+test_staged_copy_unverifiable_refuses() {
+    local dest srcdir stubdir
+    dest="$(new_tree)"
+    srcdir="$(new_tree)"
+    stubdir="$(new_tree)"
+    if [ -z "$dest" ] || [ -z "$srcdir" ] || [ -z "$stubdir" ]; then
+        command rm -rf "$dest" "$srcdir" "$stubdir"
+        skip_test "mktemp unavailable"
+        return 0
+    fi
+    local src="$srcdir/harness.js"
+    command printf '// line one\n' >"$src"
+
+    # Control: the same fixture under the real cmp stages cleanly, so any
+    # refusal below is the stub's doing, not some earlier exit-3 branch.
+    LAST_OUT="$(LIBRARIAN_HARNESS_ORCHESTRATE="$src" "$STAGER" stage orchestrate --dir "$dest" 2>&1)" &&
+        LAST_RC=0 || LAST_RC=$?
+    assert_equals "0" "$LAST_RC" "control: the fixture stages under the real cmp (exit 0)"
+
+    command printf '#!/usr/bin/env sh\nexit 2\n' >"$stubdir/cmp"
+    command chmod +x "$stubdir/cmp"
+
+    LAST_OUT="$(env -uBASH_ENV PATH="$stubdir:$PATH" \
+        LIBRARIAN_HARNESS_ORCHESTRATE="$src" "$STAGER" stage orchestrate --dir "$dest" 2>&1)" &&
+        LAST_RC=0 || LAST_RC=$?
+    assert_equals "3" "$LAST_RC" "a cmp that cannot compare (exit 2) refuses with exit 3"
+    assert_contains "$LAST_OUT" "byte-identical" "the refusal comes from the identity check"
+    assert_not_contains "$LAST_OUT" "path=" "an unverifiable copy emits no path="
+    local left=0
+    [ -e "$dest/.claude/tmp/harness/orchestrate.workflow.js" ] && left=1
+    assert_equals "0" "$left" "the unverifiable copy is removed"
+
+    command rm -rf "$dest" "$srcdir" "$stubdir"
+}
+
 # Probe 1, happy path.
 test_override_takes_precedence() {
     local tree
@@ -832,6 +931,8 @@ run_test test_staged_paths_are_not_world_readable "staged dir/file are 0700/0600
 run_test test_symlinked_root_resolves "a symlinked stage root resolves to the real directory"
 run_test test_copy_failure_refuses_loudly "an unwritable staging dir exits 3 at mktemp"
 run_test test_copy_and_install_failures "the cp failure branch exits 3 and cleans up"
+run_test test_staged_copy_mismatch_refuses "a staged copy that differs from its source exits 3"
+run_test test_staged_copy_unverifiable_refuses "a cmp that cannot compare (exit 2) refuses with exit 3"
 run_test test_staging_is_idempotent "staging is idempotent (re-stages, never bails)"
 run_test test_override_takes_precedence "probe 1: override takes precedence"
 run_test test_override_pointing_nowhere_refuses_loudly "probe 1: a dead override refuses loudly (exit 3)"
