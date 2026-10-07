@@ -283,6 +283,8 @@ test_launch_auth_non_posix_shell_still_delivers_token() {
     # to the shared server — either way kill-server would kill every live golem.
     # -S on a path with no socket errors instead of falling back.
     sock="$SANDBOX_TMUX_DIR/tmux-$(command id -u)/default"
+    assert_equals "socket" "$([ -S "$sock" ] && echo socket || echo "none at $sock")" \
+        "control: the launch's server is the sandbox socket, so cleanup reaches it"
     [ -S "$sock" ] && TMUX='' tmux -S "$sock" kill-server >/dev/null 2>&1 || true
     assert_equals "sk-shell-1159
 sk-shell-1159" "$(command cat "$sb/claude-env.log" 2>/dev/null)" \
