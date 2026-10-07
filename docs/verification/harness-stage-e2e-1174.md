@@ -75,12 +75,12 @@ test fails.
 | AC | Status |
 | --- | --- |
 | AC1 — reproduce and record the refusal | Met (above). |
-| AC2 — a golem runs the shipped harness with no copy step | **Not met in this repo; waived as stated.** No recipe or location change can remove the copy for an out-of-cwd install, since the tool accepts only a `scriptPath` under cwd. The current recipe already needs no *hand* copy. A golem in this image keeps hitting the refusal until the image is rebuilt (containers#1057). |
+| AC2 — a golem runs the shipped harness with no copy step | **Met as far as this repo can; residual waived by the operator.** No recipe or location change can remove the copy for an out-of-cwd install, since the tool accepts only a `scriptPath` under cwd. The current recipe needs no *hand* copy. A golem in the stale image keeps hitting the refusal until the image is rebuilt, which is tracked in containers#1057. |
 | AC3 — a copy lands outside `.claude/memory/` and is byte-identical | Met: `.claude/tmp/harness/`, and the `cmp` check added here. |
 
-So this change **contributes to** #1174 and does not close it. Leave the issue
-open until the image ships a release ≥ v0.15.0, or until its owner accepts the
-AC2 waiver.
+On 2026-10-07 the operator accepted the AC2 residual and decided this change
+**closes** #1174. The image rebuild is the one remaining fix, and it is tracked
+in containers#1057 rather than here.
 
 ## Remaining action
 
