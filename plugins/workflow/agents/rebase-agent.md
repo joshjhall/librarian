@@ -140,7 +140,7 @@ one added `--permission-mode auto` + a `/workflow:ship-issue` chain, another add
 `-e GOLEM_ID=golem-{N}`. The union keeps all of them:
 
 ```text
-... -e GOLEM_ID=golem-{N} "claude --permission-mode auto '/workflow:next-issue ...' ; claude --permission-mode auto '/workflow:ship-issue ...'"
+... -e GOLEM_ID=golem-{N} sh -c "claude --permission-mode auto '/workflow:next-issue ...' ; claude --permission-mode auto '/workflow:ship-issue ...'"
 ```
 
 ### Version Numbers (rebase-version)
