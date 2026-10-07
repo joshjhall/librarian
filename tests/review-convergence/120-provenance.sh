@@ -246,6 +246,12 @@ test_valueless_provenance_flag_is_refused() {
     assert_contains "$REFUSED_ERR" "--issue needs a value, got the flag '--run'" "names the swallowed flag"
     refused "--run followed by a flag" --cycle 1 --max-cycles 5 --result "$FIXTURES/zero.json" \
         --issue 1150 --run --delta-lines 40
+    # A QUOTED empty expansion (`--run "$RUN"`, RUN unset) is a present-but-
+    # empty value: the required-flag check, not the pre-scan, refuses it.
+    refused "an explicitly empty --run" --cycle 1 --max-cycles 5 --result "$FIXTURES/zero.json" \
+        --delta-lines 40 --issue 1150 --run ''
+    refused "an explicitly empty --issue" --cycle 1 --max-cycles 5 --result "$FIXTURES/zero.json" \
+        --delta-lines 40 --issue '' --run "$T_RUN"
 }
 
 test_boundary_valid_run_is_accepted() {
