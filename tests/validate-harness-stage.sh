@@ -468,6 +468,13 @@ test_staged_copy_unverifiable_refuses() {
     fi
     local src="$srcdir/harness.js"
     command printf '// line one\n' >"$src"
+
+    # Control: the same fixture under the real cmp stages cleanly, so any
+    # refusal below is the stub's doing, not some earlier exit-3 branch.
+    LAST_OUT="$(LIBRARIAN_HARNESS_ORCHESTRATE="$src" "$STAGER" stage orchestrate --dir "$dest" 2>&1)" &&
+        LAST_RC=0 || LAST_RC=$?
+    assert_equals "0" "$LAST_RC" "control: the fixture stages under the real cmp (exit 0)"
+
     command printf '#!/usr/bin/env sh\nexit 2\n' >"$stubdir/cmp"
     command chmod +x "$stubdir/cmp"
 
@@ -475,6 +482,7 @@ test_staged_copy_unverifiable_refuses() {
         LIBRARIAN_HARNESS_ORCHESTRATE="$src" "$STAGER" stage orchestrate --dir "$dest" 2>&1)" &&
         LAST_RC=0 || LAST_RC=$?
     assert_equals "3" "$LAST_RC" "a cmp that cannot compare (exit 2) refuses with exit 3"
+    assert_contains "$LAST_OUT" "byte-identical" "the refusal comes from the identity check"
     assert_not_contains "$LAST_OUT" "path=" "an unverifiable copy emits no path="
     local left=0
     [ -e "$dest/.claude/tmp/harness/orchestrate.workflow.js" ] && left=1

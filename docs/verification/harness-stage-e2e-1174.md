@@ -70,6 +70,18 @@ with exit 3 (and removes the file) on a mismatch. This is pinned by
 and exits 0. Mutation check: with the `cmp` guard replaced by `if false`, that
 test fails.
 
+## AC status
+
+| AC | Status |
+| --- | --- |
+| AC1 — reproduce and record the refusal | Met (above). |
+| AC2 — a golem runs the shipped harness with no copy step | **Not met in this repo; waived as stated.** No recipe or location change can remove the copy for an out-of-cwd install, since the tool accepts only a `scriptPath` under cwd. The current recipe already needs no *hand* copy. A golem in this image keeps hitting the refusal until the image is rebuilt (containers#1057). |
+| AC3 — a copy lands outside `.claude/memory/` and is byte-identical | Met: `.claude/tmp/harness/`, and the `cmp` check added here. |
+
+So this change **contributes to** #1174 and does not close it. Leave the issue
+open until the image ships a release ≥ v0.15.0, or until its owner accepts the
+AC2 waiver.
+
 ## Remaining action
 
 **Not fixable in this repo's plugin code:** the devcontainer must be rebuilt
