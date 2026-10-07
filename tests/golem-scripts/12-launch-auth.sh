@@ -240,6 +240,18 @@ test_launch_auth_payload_is_argv_sh_c() {
     assert_contains "$(command printf '%s\n' "$argv" | command sed -n "${n}p")" "[ -r '$sb/golem-auth." \
         "the last arg is the whole payload, opening with the token-file guard"
     assert_not_contains "$argv" "sk-argv-1159" "the token is still in no tmux arg (#1153)"
+    # Same boundaries with NO token: the empty auth prefix leaves the payload
+    # opening with `claude`, and it must still be argv `sh` `-c`, not one string.
+    new_sandbox sb
+    run_launch_auth "$sb" OP_SECRETS_CACHE="$sb/no-such-cache" TMUX_STUB_ARGV_LOG="$sb/argv.log"
+    assert_exit 0 "$RUN_RC" "a tokenless launch dispatches (exit 0)"
+    argv="$(command cat "$sb/argv.log" 2>/dev/null || true)"
+    n="$(command printf '%s\n' "$argv" | command wc -l)"
+    n=$((n + 0))
+    assert_equals "sh -c" "$(command printf '%s\n' "$argv" | command sed -n "$((n - 2))p;$((n - 1))p" | command tr '\n' ' ' | command sed 's/ $//')" \
+        "tokenless: the two args before the payload are exactly 'sh' '-c'"
+    assert_contains "$(command printf '%s\n' "$argv" | command sed -n "${n}p")" "claude --permission-mode auto '/workflow:next-issue 7" \
+        "tokenless: the last arg is the whole payload, opening at claude"
 }
 
 # End to end against a REAL tmux with $SHELL pointing at a non-POSIX stand-in (a
