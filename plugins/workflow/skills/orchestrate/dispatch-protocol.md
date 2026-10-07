@@ -90,6 +90,9 @@ dispatch is sequential and cheap — **not** workflow-driven.
    plugin, naming the re-register commands; `preflight` and `print` only warn.
    Re-register with `claude plugin marketplace add joshjhall/librarian` (or the
    baked `/opt/librarian` directory in a container), then re-dispatch.
+   `launch` also refuses (exit 3, `REFUSING golem-N`) when an auth token
+   resolved but its 0600 token file could not be written (#1160) — fix `TMPDIR`
+   first; a blind retry refuses again.
 
 1. **Launch the autonomous pipeline** as a process in each golem:
 
