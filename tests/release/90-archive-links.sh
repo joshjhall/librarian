@@ -118,6 +118,37 @@ test_archive_links_rejects_link_chain() {
     assert_contains "$out" "1 of 3 symlinks" "the chain's in-tree links are not flagged"
 }
 
+test_archive_links_rejects_benign_route_through_link() {
+    # Deliberately conservative: sub/x -> l/file resolves in-tree (l -> deep),
+    # but it still routes through a link, so it is refused. Pinned so the policy
+    # is a decision rather than an accident a later "fix" could loosen.
+    local tgz="$WORKDIR/al-benign.tar.gz" out rc=0
+    al_archive "$tgz" "sub/l=deep" "sub/x=l/file" || {
+        assert_true "false" "fixture archive (benign route-through) built"
+        return 0
+    }
+    out="$(command bash "$LINK_GUARD" "$tgz" 2>&1)" || rc=$?
+    assert_exit 1 "$rc" "an in-tree target routed through a link is still refused"
+    assert_contains "$out" "p/sub/x -> l/file  (routes through symlink p/sub/l)" \
+        "the refusal names the intermediate link"
+}
+
+test_archive_links_fails_loud_when_find_fails() {
+    # A failed scan must not read as "0 symlinks, clean". Stub find on PATH to
+    # fail; BASH_ENV is unset so no profile can restore the real PATH.
+    local tgz="$WORKDIR/al-findfail.tar.gz" stub="$WORKDIR/al-stub-bin" out rc=0
+    al_archive "$tgz" "AGENTS.md=README" || {
+        assert_true "false" "fixture archive (find failure) built"
+        return 0
+    }
+    command mkdir -p "$stub"
+    command printf '#!/bin/sh\nexit 1\n' >"$stub/find"
+    command chmod +x "$stub/find"
+    out="$(/usr/bin/env -uBASH_ENV PATH="$stub:$PATH" bash "$LINK_GUARD" "$tgz" 2>&1)" || rc=$?
+    assert_exit 2 "$rc" "a failing find is an error, not a clean scan"
+    assert_contains "$out" "could not scan the extracted tree" "the find-failure branch is the one that refused"
+}
+
 test_archive_links_newline_in_name() {
     # find output used to be newline-split, so a link named `a<NL>b` became two
     # paths and readlink died under set -e with no message. NUL-delimited, the
