@@ -79,8 +79,9 @@ test_helper_slices_out() {
 # The extraction must not leave the helper defined but uncalled — every
 # behavioural case below would stay green while no container ever got a link.
 # The cache path is pinned too: it is the volume docker-compose.yml mounts.
+# Anchored at both ends (BRE) so a comment quoting the call cannot satisfy it.
 test_script_calls_helper_with_the_volume_path() {
-    assert_file_contains "$POST_CREATE" 'ensure_codegraph_link "$PROJECT_ROOT" /cache/codegraph' \
+    assert_file_contains "$POST_CREATE" '^ensure_codegraph_link "\$PROJECT_ROOT" /cache/codegraph$' \
         "post-create.sh invokes the helper against the /cache/codegraph volume"
 }
 
