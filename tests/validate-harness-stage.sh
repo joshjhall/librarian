@@ -392,6 +392,54 @@ test_copy_and_install_failures() {
     command rm -rf "$dest"
 }
 
+# A copy that "succeeds" with the wrong bytes must not be handed out (#1174).
+# Two golems hand-copied the harness after a refusal; the stager is the
+# sanctioned copy, so it has to verify what it installed rather than trust
+# `cp`'s exit status. The injection is a PATH stub for `cp` that exits 0 after a
+# truncated write — `command cp` skips functions but still resolves through
+# PATH. The same fixture without the stub is run first, so the refusal is
+# attributable to the mismatch and not to some unrelated failure in the setup.
+test_staged_copy_mismatch_refuses() {
+    local dest srcdir stubdir
+    dest="$(new_tree)"
+    srcdir="$(new_tree)"
+    stubdir="$(new_tree)"
+    if [ -z "$dest" ] || [ -z "$srcdir" ] || [ -z "$stubdir" ]; then
+        command rm -rf "$dest" "$srcdir" "$stubdir"
+        skip_test "mktemp unavailable"
+        return 0
+    fi
+    local src="$srcdir/harness.js"
+    command printf '// line one\n// line two\n' >"$src"
+
+    # Control: the real cp stages and verifies cleanly.
+    LAST_OUT="$(LIBRARIAN_HARNESS_ORCHESTRATE="$src" "$STAGER" stage orchestrate --dir "$dest" 2>&1)" &&
+        LAST_RC=0 || LAST_RC=$?
+    assert_equals "0" "$LAST_RC" "control: an honest copy stages (exit 0)"
+
+    # Stub: copy only the first line, exit 0. BASH_ENV is unset so a profile
+    # cannot restore PATH ahead of the stub.
+    command cat >"$stubdir/cp" <<'STUB'
+#!/bin/sh
+head -n 1 "$1" >"$2"
+exit 0
+STUB
+    command chmod +x "$stubdir/cp"
+
+    LAST_OUT="$(env -uBASH_ENV PATH="$stubdir:$PATH" \
+        LIBRARIAN_HARNESS_ORCHESTRATE="$src" "$STAGER" stage orchestrate --dir "$dest" 2>&1)" &&
+        LAST_RC=0 || LAST_RC=$?
+    assert_equals "3" "$LAST_RC" "a mismatched staged copy exits 3"
+    assert_contains "$LAST_OUT" "byte-identical" "the refusal names the identity check"
+    assert_not_contains "$LAST_OUT" "path=" "a mismatched copy emits no path="
+    local dst="$dest/.claude/tmp/harness/orchestrate.workflow.js"
+    local left=0
+    [ -e "$dst" ] && left=1
+    assert_equals "0" "$left" "the mismatched copy is removed, not left for the next run"
+
+    command rm -rf "$dest" "$srcdir" "$stubdir"
+}
+
 # Probe 1, happy path.
 test_override_takes_precedence() {
     local tree
@@ -832,6 +880,7 @@ run_test test_staged_paths_are_not_world_readable "staged dir/file are 0700/0600
 run_test test_symlinked_root_resolves "a symlinked stage root resolves to the real directory"
 run_test test_copy_failure_refuses_loudly "an unwritable staging dir exits 3 at mktemp"
 run_test test_copy_and_install_failures "the cp failure branch exits 3 and cleans up"
+run_test test_staged_copy_mismatch_refuses "a staged copy that differs from its source exits 3"
 run_test test_staging_is_idempotent "staging is idempotent (re-stages, never bails)"
 run_test test_override_takes_precedence "probe 1: override takes precedence"
 run_test test_override_pointing_nowhere_refuses_loudly "probe 1: a dead override refuses loudly (exit 3)"
