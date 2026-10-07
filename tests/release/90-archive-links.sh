@@ -100,6 +100,40 @@ test_archive_links_rejects_escape_without_prefix() {
     assert_contains "$out" "1 of 2 symlinks" "the in-tree root-level link is not counted"
 }
 
+test_archive_links_rejects_link_chain() {
+    # Each link alone stays in-tree, but sub/t resolves `s` first, and s -> ..
+    # already sits at p/, so the following `../..` leaves the archive. A lexical
+    # walk counts `s` as a plain directory and passes it; the guard must refuse
+    # any target that routes THROUGH a symlink. sub/u -> s ends on the link,
+    # which is judged on its own (s itself stays in-tree), so it passes.
+    local tgz="$WORKDIR/al-chain.tar.gz" out rc=0
+    al_archive "$tgz" "sub/s=.." "sub/t=s/../.." "sub/u=s" || {
+        assert_true "false" "fixture archive (link chain) built"
+        return 0
+    }
+    out="$(command bash "$LINK_GUARD" "$tgz" 2>&1)" || rc=$?
+    assert_exit 1 "$rc" "a link-to-link chain that escapes is rejected"
+    assert_contains "$out" "p/sub/t -> s/../..  (routes through symlink p/sub/s)" \
+        "the chained link is named with the link it routes through"
+    assert_contains "$out" "1 of 3 symlinks" "the chain's in-tree links are not flagged"
+}
+
+test_archive_links_newline_in_name() {
+    # find output used to be newline-split, so a link named `a<NL>b` became two
+    # paths and readlink died under set -e with no message. NUL-delimited, the
+    # whole name is read and its escaping target reported.
+    local tgz="$WORKDIR/al-nl.tar.gz" out rc=0 nl='
+'
+    al_archive "$tgz" "sub/a${nl}b=/etc" || {
+        assert_true "false" "fixture archive (newline name) built"
+        return 0
+    }
+    out="$(command bash "$LINK_GUARD" "$tgz" 2>&1)" || rc=$?
+    assert_exit 1 "$rc" "an escaping link with a newline in its name is rejected"
+    assert_contains "$out" "1 of 1 symlinks" "the newline name is counted once, not split in two"
+    assert_contains "$out" "(absolute)" "the offender is reported with its reason"
+}
+
 test_archive_links_accepts_in_tree() {
     local tgz="$WORKDIR/al-ok.tar.gz" out rc=0
     al_archive "$tgz" "AGENTS.md=README" "sub/up=../README" "./sub/dot=./file" || {
