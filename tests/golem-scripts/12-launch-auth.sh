@@ -111,7 +111,8 @@ test_launch_auth_inherited_base_url_survives_stale_server_env() {
 }
 
 # The other two URL states (#1163 review). Cache-only: the cache's URL beats a
-# stale server-env one — the original failure, reached from the cache arm. No
+# stale server-env one — the original failure, reached from the cache arm — and
+# an empty launcher URL does not shadow it. No
 # URL anywhere: the file writes NO ANTHROPIC_BASE_URL line, so an empty export
 # cannot clobber whatever URL the session env already carries.
 test_launch_auth_base_url_cache_only_and_absent() {
@@ -124,6 +125,17 @@ test_launch_auth_base_url_cache_only_and_absent() {
     assert_equals "sk-secret-tok-244|https://cache.example" \
         "$(command head -n 1 "$sb/claude-env.log" 2>/dev/null)" \
         "the cache's URL beats a running server's stale one"
+
+    # A launcher URL that is SET but EMPTY counts as absent (`:-`), so the
+    # cache's URL still wins over the stale server one.
+    new_sandbox sb
+    command printf 'export ANTHROPIC_AUTH_TOKEN=sk-secret-tok-244\nexport ANTHROPIC_BASE_URL=https://cache.example\n' >"$sb/op-cache"
+    run_launch_auth "$sb" OP_SECRETS_CACHE="$sb/op-cache" TMUX_STUB_CMD_LOG="$sb/session-cmd" ANTHROPIC_BASE_URL=
+    assert_exit 0 "$RUN_RC" "empty-launcher-URL launch dispatches (exit 0)"
+    _run_session_cmd "$sb" ANTHROPIC_BASE_URL=https://stale.example
+    assert_equals "sk-secret-tok-244|https://cache.example" \
+        "$(command head -n 1 "$sb/claude-env.log" 2>/dev/null)" \
+        "an empty launcher URL falls back to the cache's"
 
     new_sandbox sb
     run_launch_auth "$sb" OP_SECRETS_CACHE="$sb/no-such-cache" TMUX_STUB_CMD_LOG="$sb/session-cmd" \
