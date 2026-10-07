@@ -67,9 +67,9 @@ test_launch_print_payload_is_argv_sh_c() {
         "the third-to-last tmux arg is exactly 'sh'"
     assert_equals "-c" "$(command printf '%s\n' "$argv" | command sed -n "$((n - 1))p")" \
         "the second-to-last tmux arg is exactly '-c'"
-    assert_contains "$(command printf '%s\n' "$argv" | command sed -n "${n}p")" \
-        "claude --permission-mode auto '/workflow:next-issue 5 --level 3' ; claude" \
-        "the last arg is the whole chained payload"
+    assert_equals "claude --permission-mode auto '/workflow:next-issue 5 --level 3' ; claude --permission-mode auto '/workflow:ship-issue'" \
+        "$(command printf '%s\n' "$argv" | command sed -n "${n}p")" \
+        "the last arg is exactly the whole chained payload"
 }
 
 # OPERATOR-FACING STDERR must namespace its slash-commands too (#584).
