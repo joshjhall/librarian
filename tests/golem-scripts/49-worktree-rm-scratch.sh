@@ -140,3 +140,58 @@ test_worktree_rm_status_files_resolve_from_root() {
     _scr_gone "$sb/.worktrees/.status/golem-77.json" "golem-77.json removed via the root"
     _scr_gone "$sb/.worktrees/.status/golem-77.work.jsonl" "golem-77.work.jsonl removed via the root"
 }
+
+# A status file that is not a regular file is refused, not followed: a symlink
+# golem-N.json aimed outside keeps its target, a DIRECTORY golem-N.work.jsonl
+# survives, each refusal warns, and teardown still exits 0.
+test_worktree_rm_refuses_irregular_status_files() {
+    local sb st="" link_kept="no"
+    new_sandbox sb
+    command mkdir -p "$sb/.worktrees/.status/golem-79.work.jsonl" "$sb/elsewhere"
+    command printf 'keep\n' >"$sb/elsewhere/status.json"
+    command ln -s "$sb/elsewhere/status.json" "$sb/.worktrees/.status/golem-79.json"
+    run_in "$sb" "$WT_RM" 79
+    assert_exit 0 "$RUN_RC" "a refused status file never fails teardown"
+    assert_contains "$RUN_OUT" "not removing $sb/.worktrees/.status/golem-79.json (not a regular file)" \
+        "the symlinked status file's refusal is announced"
+    assert_contains "$RUN_OUT" "not removing $sb/.worktrees/.status/golem-79.work.jsonl (not a regular file)" \
+        "the directory registry's refusal is announced"
+    assert_file_exists "$sb/elsewhere/status.json" "the symlink's target is untouched"
+    if [ -L "$sb/.worktrees/.status/golem-79.json" ]; then link_kept="yes"; fi
+    assert_equals "yes" "$link_kept" "the refused symlink is left in place"
+    if [ -d "$sb/.worktrees/.status/golem-79.work.jsonl" ]; then st="dir"; fi
+    assert_equals "dir" "$st" "the refused directory is left in place"
+}
+
+# An ABSOLUTE GOLEM_STATUS_DIR passes through untouched — joining the root onto
+# it would name a path that exists nowhere, and the files there would leak. The
+# relative .worktrees/.status copy is a control: it must NOT be the one removed.
+test_worktree_rm_absolute_status_dir_passes_through() {
+    local sb abs
+    new_sandbox sb
+    abs="$sb/abs-status"
+    command mkdir -p "$abs" "$sb/.worktrees/.status"
+    command printf '{}\n' >"$abs/golem-80.json"
+    command printf '{}\n' >"$abs/golem-80.work.jsonl"
+    command printf '{}\n' >"$sb/.worktrees/.status/golem-80.json"
+    # run_in pins GOLEM_STATUS_DIR to the relative default, so this one case
+    # spells the same scrubbed environment with the absolute dir instead.
+    RUN_RC=0
+    RUN_OUT="$(cd "$sb" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" -uBASH_ENV \
+            HOME="$sb" \
+            GOLEM_PLUGIN_PROBE="$sb/no-plugin-probe" \
+            TMUX= TMUX_TMPDIR="${SANDBOX_TMUX_DIR:-$sb/.tmux}" \
+            GOLEM_WORKTREE_DIR=.worktrees \
+            GOLEM_STATUS_DIR="$abs" \
+            GOLEM_BASE_REF=HEAD \
+            GOLEM_WORKTREE_LOCAL_FILES="" \
+            GOLEM_CARGO_CACHE_DIR="$sb/no-cargo-cache" \
+            GOLEM_UV_CACHE_DIR="$sb/no-uv-cache" \
+            "$REAL_BASH" "$WT_RM" 80 2>&1)" || RUN_RC=$?
+    assert_exit 0 "$RUN_RC" "worktree-rm with an absolute status dir succeeds"
+    _scr_gone "$abs/golem-80.json" "golem-80.json removed from the absolute status dir"
+    _scr_gone "$abs/golem-80.work.jsonl" "golem-80.work.jsonl removed from the absolute status dir"
+    assert_file_exists "$sb/.worktrees/.status/golem-80.json" \
+        "the relative default dir is not consulted when the status dir is absolute"
+}

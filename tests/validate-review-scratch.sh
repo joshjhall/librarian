@@ -19,7 +19,9 @@
 #
 # #1166 adds `remove`, the teardown verb worktree-rm.sh calls.
 #   remove deletes golem-N + solo-N    -> test_remove_deletes_both_ids_for_the_issue
-#   remove refuses a link / escape     -> test_remove_refuses_a_dir_it_does_not_own
+#   remove refuses a link / non-dir    -> test_remove_refuses_a_dir_it_does_not_own
+#   remove follows a linked ROOT       -> test_remove_accepts_a_symlinked_scratch_root
+#   remove refuses a foreign owner     -> test_remove_refuses_a_foreign_owned_dir (needs root/sudo, else SKIP)
 #
 # Every run uses a sandboxed HOME; the real cache is never touched.
 #
@@ -350,9 +352,9 @@ test_remove_deletes_both_ids_for_the_issue() {
     assert_exit 2 "$RC" "remove keeps the canonical issue gate"
 }
 
-# #1166: a link at the leaf, or a scratch root that resolves somewhere its
-# children do not, is refused with a WARNING and exit 1 — and the target is
-# untouched. The other id is still processed.
+# #1166: a link at the leaf (live or dangling) or a non-directory is refused
+# with a WARNING and exit 1 — and the target is untouched. The other id is
+# still processed.
 test_remove_refuses_a_dir_it_does_not_own() {
     local base="$SANDBOX/home/.cache/librarian-review" target="$SANDBOX/victim"
     command mkdir -p "$base/solo-41" "$target"
@@ -378,6 +380,46 @@ test_remove_refuses_a_dir_it_does_not_own() {
     assert_true "[ -f '$base/solo-43' ]" "the file is left in place"
 }
 
+# #1166: the scratch ROOT itself may be a symlink (an operator pointing
+# ~/.cache at a bigger disk) — the same rule cache_entry_path applies. A real
+# directory under a linked root is ours and is removed; a mutant that refused
+# every path under a linked root, or compared the un-canonicalized root, fails.
+test_remove_accepts_a_symlinked_scratch_root() {
+    local home="$SANDBOX/home-linked" real="$SANDBOX/real-cache"
+    command mkdir -p "$home/.cache" "$real/golem-51"
+    command printf 'x\n' >"$real/golem-51/cycle1.json"
+    command ln -s "$real" "$home/.cache/librarian-review"
+    RC=0
+    OUT="$(command env -uGOLEM_ID HOME="$home" bash "$RS" remove --issue 51 2>&1)" || RC=$?
+    assert_exit 0 "$RC" "remove under a linked root succeeds"
+    assert_contains "$OUT" "removed=$home/.cache/librarian-review/golem-51" "the dir is reported removed"
+    assert_true "[ ! -e '$real/golem-51' ]" "the dir under the linked root is gone"
+    assert_true "[ -d '$real' ]" "the linked root itself survives"
+}
+
+# #1166: a dir another uid owns on a shared HOME is refused. Building that
+# fixture needs root or passwordless sudo; without either the case SKIPS rather
+# than passing (the 27-cache-entry.sh _make_foreign rule).
+test_remove_refuses_a_foreign_owned_dir() {
+    local base="$SANDBOX/home/.cache/librarian-review" d
+    d="$base/golem-52"
+    command mkdir -p "$d"
+    command chmod 0777 "$d"
+    if [ "$(command id -u)" = 0 ]; then
+        command chown 65534 "$d" 2>/dev/null || true
+    else
+        command sudo -n chown 65534 "$d" 2>/dev/null || true
+    fi
+    if [ -O "$d" ]; then
+        skip_test "cannot create a foreign-owned fixture (not root, no passwordless sudo)"
+        return 0
+    fi
+    rs bash "$RS" remove --issue 52
+    assert_exit 1 "$RC" "a foreign-owned dir makes remove exit 1"
+    assert_contains "$OUT" "not owned by the current user" "the ownership refusal is named"
+    assert_true "[ -d '$d' ]" "the foreign-owned dir is left in place"
+}
+
 run_test test_solo_runs_on_different_issues_are_isolated
 run_test test_golem_id_wins_over_the_issue
 run_test test_init_removes_an_earlier_runs_files
@@ -389,5 +431,7 @@ run_test test_init_without_a_nonce_keeps_the_old_run
 run_test test_every_recipe_site_uses_the_helper
 run_test test_remove_deletes_both_ids_for_the_issue
 run_test test_remove_refuses_a_dir_it_does_not_own
+run_test test_remove_accepts_a_symlinked_scratch_root
+run_test test_remove_refuses_a_foreign_owned_dir
 
 generate_report

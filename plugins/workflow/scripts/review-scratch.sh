@@ -58,8 +58,8 @@
 # Exit codes: 0 = success; 2 = usage error, an unsafe input, or (path) a
 # missing / foreign / malformed stamp. remove: 0 = nothing refused (an absent
 # directory is not a refusal); 1 = at least one directory was refused or could
-# not be deleted, each named by a WARNING on stderr. An unsafe input fails loud rather than
-# falling back to a shared directory: falling back is exactly the collision
+# not be deleted, each named by a WARNING on stderr. An unsafe input fails loud
+# rather than falling back to a shared directory: falling back is exactly the collision
 # this script exists to remove.
 #
 # Runtime: bash-only, bash-3.2 clean, BSD clean, coreutils via `command`.
@@ -111,13 +111,16 @@ _root="$HOME/.cache/librarian-review"
 
 if [ "$_subcmd" = "remove" ]; then
     # Both gids are built from the validated issue number, so neither can carry
-    # a separator or `..`. What remains to refuse is a directory that is not
-    # where its NAME says — a leaf symlink, or a leaf that canonicalizes
-    # anywhere but <canonical root>/<gid> (the root ITSELF may be a link, the
-    # same rule as cache-entry.sh's cache_entry_path) — or one another user
-    # owns on a shared HOME. Like cache_entry_path this is one snapshot of a
-    # name; the window to a by-name `rm` is accepted for a per-user cache. Refusals warn and carry on to the other gid; the exit status
-    # reports them, and the caller (worktree-rm.sh) treats it as best-effort.
+    # a separator or `..`. What remains to refuse is a leaf symlink (live or
+    # dangling), a leaf that is not a directory, and one another user owns on
+    # a shared HOME. The root ITSELF may be a link — the same rule as
+    # cache-entry.sh's cache_entry_path. The canonical comparison after the
+    # `-L` test is defense in depth: with no link at the leaf it cannot differ
+    # today, but it keeps the rm aimed only at <canonical root>/<gid> should
+    # the derivation ever change. Like cache_entry_path this is one snapshot
+    # of a name; the window to a by-name `rm` is accepted for a per-user cache.
+    # Refusals warn and carry on to the other gid; the exit status reports
+    # them, and the caller (worktree-rm.sh) treats it as best-effort.
     _rc=0
     _root_real="$(command readlink -f "$_root" 2>/dev/null)" || _root_real=""
     for _gid in "golem-$_issue" "solo-$_issue"; do
