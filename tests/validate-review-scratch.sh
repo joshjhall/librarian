@@ -237,7 +237,7 @@ test_init_without_a_nonce_keeps_the_old_run() {
     d="$(val dir "$OUT")"
     command printf '{"kept":true}\n' >"$d/attempt1.json"
     command mkdir -p "$stub"
-    command printf '#!/bin/sh\nexit 1\n' >"$stub/od"
+    command printf '#!/usr/bin/env bash\nexit 1\n' >"$stub/od"
     command chmod +x "$stub/od"
     # BASH_ENV scrubbed so no profile can put the real od back ahead of the stub.
     rs BASH_ENV= PATH="$stub:$PATH" bash "$RS" init --issue 601
