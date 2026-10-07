@@ -183,6 +183,8 @@ run_fragment_test test_launch_auth_base_url_cache_only_and_absent "golem-launch:
 run_fragment_test test_launch_auth_base_url_quoting_and_no_token_boundary "golem-launch: a metachar base URL round-trips; no token still writes no file (#1163, #1170)"
 run_fragment_test test_launch_sh_quote_round_trips_edge_shapes "golem-launch: _sh_quote round-trips quote/empty edge shapes and uses no patsub replacement (#1153)"
 run_fragment_test test_launch_auth_missing_token_file_still_starts_claude "golem-launch: a vanished token file degrades to a tokenless start, never a dead session (#1153)"
+run_fragment_test test_launch_auth_payload_is_argv_sh_c "golem-launch: the payload reaches tmux as argv sh -c, never via its default-shell (#1159)"
+run_fragment_test test_launch_auth_non_posix_shell_still_delivers_token "golem-launch: a non-POSIX SHELL still yields a golem with its token, real tmux (#1159)"
 run_fragment_test test_launch_auth_token_quoting_round_trips "golem-launch: a metachar token round-trips through the token file (#1153)"
 run_fragment_test test_launch_auth_inherited_token_not_in_tmux_env "golem-launch: an inherited token never reaches tmux's env or argv (#1153)"
 run_fragment_test test_launch_auth_relative_tmpdir_path_is_absolute "golem-launch: a relative TMPDIR still yields an absolute token-file path (#1153)"

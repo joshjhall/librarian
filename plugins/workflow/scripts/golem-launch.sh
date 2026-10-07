@@ -671,11 +671,13 @@ launch_line() {
     wt="$root/$GOLEM_WORKTREE_DIR/issue-$n"
     # ONE standalone new-session, matching Bash(tmux new-session:*). The chained
     # `;` second prompt is the resume backstop (NOT `&&`); see orchestrate
-    # SKILL.md Phase D / mode-protocol.md § Supervised launch.
+    # SKILL.md Phase D / mode-protocol.md § Supervised launch. `sh -c` as its
+    # own argv words: tmux execs a multi-word command directly but hands a
+    # single string to the operator's default-shell, which may be fish/csh (#1159).
     local model_flag
     model_flag="$(golem_model_flag)"
     command printf '%s' \
-        "tmux new-session -d -s golem-$n -c \"$wt\" -e GOLEM_ID=golem-$n \"claude$model_flag --permission-mode auto '/workflow:next-issue $n --level $level' ; claude$model_flag --permission-mode auto '/workflow:ship-issue'\""
+        "tmux new-session -d -s golem-$n -c \"$wt\" -e GOLEM_ID=golem-$n sh -c \"claude$model_flag --permission-mode auto '/workflow:next-issue $n --level $level' ; claude$model_flag --permission-mode auto '/workflow:ship-issue'\""
 }
 
 cmd="${1:-}"
@@ -747,7 +749,7 @@ case "$cmd" in
         # either: the new-session that starts the server freezes the client env
         # into its GLOBAL env (#1125), and an already-running server ignores the
         # client env anyway. Only the file's PATH reaches argv; the session's
-        # shell sources it and deletes it before `claude` starts.
+        # `sh` sources it and deletes it before `claude` starts.
         # A token that resolved but cannot be written REFUSES the launch (exit
         # 3, #1160); only an unresolved token still warns and dispatches.
         resolve_auth_token
@@ -777,7 +779,12 @@ case "$cmd" in
             command echo "golem-launch: WARNING no ANTHROPIC_AUTH_TOKEN resolvable though an op-secrets cache is present; golem-$N may start unauthenticated. Dispatching anyway." >&2
         fi
         # Bare, standalone new-session — matches Bash(tmux new-session:*). The
-        # token lives only inside the 0600 file (never echoed, never in argv) so
+        # payload goes to tmux as the three words `sh` `-c` `<payload>`, never as
+        # one string: tmux runs a one-string command through its default-shell
+        # (from $SHELL), and under fish or csh the `.`/`export`/`;` syntax fails,
+        # so the golem would start tokenless with no warning (#1159). A multi-word
+        # command is exec'd directly, so the payload always runs under POSIX sh.
+        # The token lives only inside the 0600 file (never echoed, never in argv) so
         # it can't leak to a pane, log, or ps. $(golem_model_flag) splices ` --model "…"` after each
         # `claude` when GOLEM_MODEL is set, and expands to nothing (byte-identical
         # launch line) when unset.
@@ -795,7 +802,7 @@ case "$cmd" in
         # arm 1): un-export it so it never reaches the server's global env
         # (#1153). The golem gets it from the file above instead.
         export -n ANTHROPIC_AUTH_TOKEN 2>/dev/null || true
-        if ! tmux new-session -d -s "golem-$N" -c "$wt" "${env_args[@]}" \
+        if ! tmux new-session -d -s "golem-$N" -c "$wt" "${env_args[@]}" sh -c \
             "${auth_prefix}claude$MODEL_FLAG --permission-mode auto '/workflow:next-issue $N --level $LEVEL' ; claude$MODEL_FLAG --permission-mode auto '/workflow:ship-issue'"; then
             # The session never ran, so nothing will source-and-delete the file.
             [ -n "$auth_file" ] && command rm -f "$auth_file"

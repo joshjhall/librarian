@@ -275,8 +275,12 @@ level:
 
 ```bash
 tmux new-session -d -s golem-{N} -c .worktrees/issue-{N} -e GOLEM_ID=golem-{N} \
-  "claude --permission-mode auto '/workflow:next-issue {N} --level {L}' ; claude --permission-mode auto '/workflow:ship-issue'"
+  sh -c "claude --permission-mode auto '/workflow:next-issue {N} --level {L}' ; claude --permission-mode auto '/workflow:ship-issue'"
 ```
+
+`sh -c` is passed as separate words so tmux execs the payload under POSIX `sh`.
+A single-string command would run under the operator's `default-shell`, and fish
+or csh cannot parse it (#1159).
 
 Setting `GOLEM_MODEL` in the environment (e.g. `GOLEM_MODEL=sonnet`) splices
 `--model "…"` after each `claude` above, running the golem's whole pipeline on
