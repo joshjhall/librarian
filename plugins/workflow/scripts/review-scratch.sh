@@ -117,7 +117,10 @@ if [ "$_subcmd" = "remove" ]; then
     # cache-entry.sh's cache_entry_path. The canonical comparison after the
     # `-L` test is defense in depth: with no link at the leaf it cannot differ
     # today, but it keeps the rm aimed only at <canonical root>/<gid> should
-    # the derivation ever change. Like cache_entry_path this is one snapshot
+    # the derivation ever change. The same holds for the uncanonicalizable-root
+    # arm: a leaf exists only under an existing root, which readlink -f always
+    # resolves. Neither arm is reachable from a fixture, so neither has a test;
+    # they are deliberate dead guards, not untested behavior. Like cache_entry_path this is one snapshot
     # of a name; the window to a by-name `rm` is accepted for a per-user cache.
     # Refusals warn and carry on to the other gid; the exit status reports
     # them, and the caller (worktree-rm.sh) treats it as best-effort.
