@@ -162,6 +162,12 @@ resolved_ruff="$(installed_ruff_version || true)"
 # rebuilds, so only initialize when it's actually missing; an existing index is
 # left as-is (drop the volume to force a clean re-index).
 echo "==> Ensuring codegraph index..."
+# The link is untracked and gitignored (#1105: a tracked copy shipped in the
+# release tarball), so create it here when the cache volume is mounted.
+if [ ! -e "$PROJECT_ROOT/.codegraph" ] && [ ! -L "$PROJECT_ROOT/.codegraph" ] && [ -d /cache/codegraph ]; then
+    ln -s /cache/codegraph "$PROJECT_ROOT/.codegraph"
+    echo "    Linked .codegraph -> /cache/codegraph"
+fi
 if command -v codegraph >/dev/null; then
     # A failed `codegraph status` must NOT fall through to "index already
     # present" — the pipeline's exit status is the signal, so it is kept.

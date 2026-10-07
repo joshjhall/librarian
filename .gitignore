@@ -113,7 +113,10 @@ coverage/
 # CODEGRAPH (CODE KNOWLEDGE GRAPH)
 # ============================================================================
 
-.codegraph/
+# No trailing slash: `.codegraph/` matches only a directory, and the devcontainer
+# makes this a SYMLINK to /cache/codegraph, which then got committed and shipped
+# in every release tarball (#1105).
+.codegraph
 
 # ============================================================================
 # LOCAL SCRATCH TOOLING
