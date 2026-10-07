@@ -22,7 +22,7 @@
 
 test_next_scope_is_narrow_after_blocking() {
     local out
-    out="$("$RC" check --cycle 1 --max-cycles 5 \
+    out="$("$RC" check --issue "$T_ISSUE" --run "$T_RUN" --cycle 1 --max-cycles 5 \
         --result "$FIXTURES/novel.json" --delta-lines 500)"
     assert_equals "narrow" "$(val next_scope "$out")" \
         "a cycle with blocking findings advises narrowing (a fix must be re-checked)"
@@ -30,7 +30,7 @@ test_next_scope_is_narrow_after_blocking() {
 
 test_next_scope_is_full_after_clean() {
     local out
-    out="$("$RC" check --cycle 1 --max-cycles 5 \
+    out="$("$RC" check --issue "$T_ISSUE" --run "$T_RUN" --cycle 1 --max-cycles 5 \
         --result "$FIXTURES/zero.json" --delta-lines 500)"
     assert_equals "full" "$(val next_scope "$out")" \
         "a clean cycle advises a full next surface (it is a candidate terminator)"
@@ -41,7 +41,7 @@ test_next_scope_is_full_after_clean() {
 # nothing obliges another cycle and the next one must be able to terminate.
 test_next_scope_is_full_after_deferrable_only() {
     local out
-    out="$("$RC" check --cycle 1 --max-cycles 5 \
+    out="$("$RC" check --issue "$T_ISSUE" --run "$T_RUN" --cycle 1 --max-cycles 5 \
         --result "$FIXTURES/next-scope-deferrable.json" --delta-lines 500)"
     assert_equals "full" "$(val next_scope "$out")" \
         "a deferrable-only cycle advises FULL — deferrables oblige no further cycle"
@@ -65,9 +65,9 @@ test_next_scope_is_full_after_deferrable_only() {
 # bucket returns `narrow` for both and cannot pass.
 test_next_scope_after_a_crash_is_always_full() {
     local crashed healthy
-    crashed="$("$RC" check --cycle 1 --max-cycles 5 \
+    crashed="$("$RC" check --issue "$T_ISSUE" --run "$T_RUN" --cycle 1 --max-cycles 5 \
         --result "$FIXTURES/no-signal-with-blocking.json" --delta-lines 500)"
-    healthy="$("$RC" check --cycle 1 --max-cycles 5 \
+    healthy="$("$RC" check --issue "$T_ISSUE" --run "$T_RUN" --cycle 1 --max-cycles 5 \
         --result "$FIXTURES/novel.json" --delta-lines 500)"
 
     assert_equals "C0b-no-signal" "$(val rule "$crashed")" "the crashed fixture takes the C0b path"
@@ -79,7 +79,7 @@ test_next_scope_after_a_crash_is_always_full() {
     # And the empty-bucket crash, where both rules happen to agree — asserted so
     # the two crash shapes are pinned to the same answer.
     local empty_crash
-    empty_crash="$("$RC" check --cycle 1 --max-cycles 5 \
+    empty_crash="$("$RC" check --issue "$T_ISSUE" --run "$T_RUN" --cycle 1 --max-cycles 5 \
         --result "$FIXTURES/no-signal.json" --delta-lines 500)"
     assert_equals "full" "$(val next_scope "$empty_crash")" \
         "a crash with empty buckets advises full too"
@@ -87,7 +87,7 @@ test_next_scope_after_a_crash_is_always_full() {
 
 test_next_scope_handles_a_missing_blocking_key() {
     local out
-    out="$("$RC" check --cycle 1 --max-cycles 5 \
+    out="$("$RC" check --issue "$T_ISSUE" --run "$T_RUN" --cycle 1 --max-cycles 5 \
         --result "$FIXTURES/no-blocking-key.json" --delta-lines 500)"
     assert_equals "full" "$(val next_scope "$out")" \
         "an absent blocking key counts as 0 blocking findings, not null"
@@ -101,9 +101,9 @@ test_next_scope_handles_a_missing_blocking_key() {
 # individually but cannot satisfy this one.
 test_next_scope_keys_on_bucket_not_count() {
     local blocking_out deferrable_out
-    blocking_out="$("$RC" check --cycle 1 --max-cycles 5 \
+    blocking_out="$("$RC" check --issue "$T_ISSUE" --run "$T_RUN" --cycle 1 --max-cycles 5 \
         --result "$FIXTURES/novel.json" --delta-lines 500)"
-    deferrable_out="$("$RC" check --cycle 1 --max-cycles 5 \
+    deferrable_out="$("$RC" check --issue "$T_ISSUE" --run "$T_RUN" --cycle 1 --max-cycles 5 \
         --result "$FIXTURES/next-scope-deferrable.json" --delta-lines 500)"
 
     assert_equals "1" "$(val findings "$blocking_out")" "the blocking fixture has one finding"
@@ -120,26 +120,26 @@ test_next_scope_emitted_on_every_verdict() {
     local out cases fixture
     # C1-cap, C0-attempt-cap, C0b-no-signal, C2-partial, C3, C4, C8 — every
     # structurally distinct path through the rule list.
-    out="$("$RC" check --cycle 5 --max-cycles 5 --result "$FIXTURES/novel.json" --delta-lines 500)"
+    out="$("$RC" check --issue "$T_ISSUE" --run "$T_RUN" --cycle 5 --max-cycles 5 --result "$FIXTURES/novel.json" --delta-lines 500)"
     assert_equals "C1-cap" "$(val rule "$out")" "cap path reached"
     assert_not_empty "$(val next_scope "$out")" "next_scope is emitted on the C1-cap path"
 
-    out="$("$RC" check --cycle 1 --max-cycles 5 --attempt 10 --max-attempts 10 \
+    out="$("$RC" check --issue "$T_ISSUE" --run "$T_RUN" --cycle 1 --max-cycles 5 --attempt 10 --max-attempts 10 \
         --result "$FIXTURES/novel.json" --delta-lines 500)"
     assert_equals "C0-attempt-cap" "$(val rule "$out")" "attempt-cap path reached"
     assert_not_empty "$(val next_scope "$out")" "next_scope is emitted on the C0-attempt-cap path"
 
-    out="$("$RC" check --cycle 1 --max-cycles 5 --result "$FIXTURES/no-signal.json" --delta-lines 500)"
+    out="$("$RC" check --issue "$T_ISSUE" --run "$T_RUN" --cycle 1 --max-cycles 5 --result "$FIXTURES/no-signal.json" --delta-lines 500)"
     assert_equals "C0b-no-signal" "$(val rule "$out")" "no-signal path reached"
     assert_equals "full" "$(val next_scope "$out")" \
         "a crashed cycle has no blocking findings, so it advises full"
 
-    out="$("$RC" check --cycle 1 --max-cycles 5 --result "$FIXTURES/zero.json" \
+    out="$("$RC" check --issue "$T_ISSUE" --run "$T_RUN" --cycle 1 --max-cycles 5 --result "$FIXTURES/zero.json" \
         --delta-lines 500 --partial true)"
     assert_equals "C2-partial" "$(val rule "$out")" "partial path reached"
     assert_not_empty "$(val next_scope "$out")" "next_scope is emitted on the C2-partial path"
 
-    out="$("$RC" check --cycle 2 --max-cycles 5 --result "$FIXTURES/zero.json" \
+    out="$("$RC" check --issue "$T_ISSUE" --run "$T_RUN" --cycle 2 --max-cycles 5 --result "$FIXTURES/zero.json" \
         --delta-lines 100 --prev-delta-lines 1000)"
     assert_equals "C3-narrow-zero" "$(val rule "$out")" "narrow-zero path reached"
     assert_not_empty "$(val next_scope "$out")" "next_scope is emitted on the C3 path"
@@ -147,7 +147,7 @@ test_next_scope_emitted_on_every_verdict() {
     # And the field is never empty on any of them — a blank would force a
     # consumer to branch on presence, which is the contract this avoids.
     for fixture in zero novel next-scope-deferrable refuted recursive; do
-        cases="$("$RC" check --cycle 1 --max-cycles 5 \
+        cases="$("$RC" check --issue "$T_ISSUE" --run "$T_RUN" --cycle 1 --max-cycles 5 \
             --result "$FIXTURES/$fixture.json" --delta-lines 500)"
         assert_not_empty "$(val next_scope "$cases")" \
             "next_scope is non-empty for the $fixture fixture"
@@ -160,17 +160,17 @@ test_next_scope_emitted_on_every_verdict() {
 # Pins the full pre-existing output for one case per rule.
 test_next_scope_changes_no_existing_verdict() {
     local out
-    out="$("$RC" check --cycle 1 --max-cycles 5 --result "$FIXTURES/zero.json" --delta-lines 500)"
+    out="$("$RC" check --issue "$T_ISSUE" --run "$T_RUN" --cycle 1 --max-cycles 5 --result "$FIXTURES/zero.json" --delta-lines 500)"
     assert_equals "stop" "$(val verdict "$out")" "C4 still stops"
     assert_equals "C4-zero" "$(val rule "$out")" "C4 still decides"
     assert_equals "0" "$(val findings "$out")" "C4 counts unchanged"
 
-    out="$("$RC" check --cycle 2 --max-cycles 5 --result "$FIXTURES/zero.json" \
+    out="$("$RC" check --issue "$T_ISSUE" --run "$T_RUN" --cycle 2 --max-cycles 5 --result "$FIXTURES/zero.json" \
         --delta-lines 100 --prev-delta-lines 1000)"
     assert_equals "continue" "$(val verdict "$out")" "C3 still continues"
     assert_equals "C3-narrow-zero" "$(val rule "$out")" "C3 still decides"
 
-    out="$("$RC" check --cycle 5 --max-cycles 5 --result "$FIXTURES/zero.json" \
+    out="$("$RC" check --issue "$T_ISSUE" --run "$T_RUN" --cycle 5 --max-cycles 5 --result "$FIXTURES/zero.json" \
         --delta-lines 100 --prev-delta-lines 1000)"
     assert_equals "C1-cap" "$(val rule "$out")" "C1 still outranks the convergence rules"
     assert_equals "C3-narrow-zero" "$(val capped_over "$out")" "capped_over still reports what C1 hid"
@@ -184,7 +184,7 @@ test_next_scope_changes_no_existing_verdict() {
 test_clean_then_clean_terminates_in_two_cycles() {
     local c1 c2 scope delta2
     # Cycle 1: the real PR #655 shape — deferrable-only over the full diff.
-    c1="$("$RC" check --cycle 1 --max-cycles 5 \
+    c1="$("$RC" check --issue "$T_ISSUE" --run "$T_RUN" --cycle 1 --max-cycles 5 \
         --result "$FIXTURES/next-scope-deferrable.json" --delta-lines 1855)"
     assert_equals "continue" "$(val verdict "$c1")" "cycle 1 continues (novel material)"
     scope="$(val next_scope "$c1")"
@@ -193,7 +193,7 @@ test_clean_then_clean_terminates_in_two_cycles() {
     # Cycle 2 at the advised scope. `full` means the surface is the whole diff
     # again, so --delta-lines is comparable to cycle 1's rather than a fraction.
     delta2=1855
-    c2="$("$RC" check --cycle 2 --max-cycles 5 --result "$FIXTURES/zero.json" \
+    c2="$("$RC" check --issue "$T_ISSUE" --run "$T_RUN" --cycle 2 --max-cycles 5 --result "$FIXTURES/zero.json" \
         --delta-lines "$delta2" --prev-delta-lines 1855)"
     assert_equals "stop" "$(val verdict "$c2")" "cycle 2 TERMINATES the loop"
     assert_equals "C4-zero" "$(val rule "$c2")" \
@@ -204,7 +204,7 @@ test_clean_then_clean_terminates_in_two_cycles() {
     # makes the assertion above non-vacuous — it shows the scope advice, not the
     # fixture, is what produced the early stop.
     local narrowed
-    narrowed="$("$RC" check --cycle 2 --max-cycles 5 --result "$FIXTURES/zero.json" \
+    narrowed="$("$RC" check --issue "$T_ISSUE" --run "$T_RUN" --cycle 2 --max-cycles 5 --result "$FIXTURES/zero.json" \
         --delta-lines 244 --prev-delta-lines 1855)"
     assert_equals "continue" "$(val verdict "$narrowed")" \
         "the SAME clean result on a narrowed surface would NOT have terminated"

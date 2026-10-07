@@ -42,7 +42,7 @@
 #   check --cycle N --max-cycles N --result FILE --delta-lines N
 #         [--attempt N] [--max-attempts N]
 #         [--prev-result FILE ...] [--prev-delta-lines N] [--delta-files FILE]
-#         [--partial true|false] [--issue N]
+#         [--partial true|false] --issue N --run ID
 #         -> verdict   continue | stop
 #            rule      the deciding rule (C0-attempt-cap … C8-novel)
 #            capped_over  the rule that WOULD have decided had C1 not fired
@@ -187,12 +187,29 @@
 #     - `--result`'s `.cycle`, when present, must equal `--cycle`. No new flag
 #       is needed, so an un-migrated caller is protected too; a file with no
 #       `.cycle` (pre-stamp, hand-built) is still accepted.
-#     - with `--issue N`, `--result` AND every `--prev-result` must carry
-#       `.issue == N`. Absent counts as a mismatch: a caller that asserts
-#       provenance has said a file without it is not provably this run's.
-#   A mismatch exits 2 with no verdict, never a verdict on foreign input. The
+#     - `--result` AND every `--prev-result` must carry `.issue == --issue`
+#       and `.run == --run`. Absent counts as a mismatch: a file without the
+#       stamp is not provably this run's.
+#   A mismatch exits 2 with no verdict, never a verdict on foreign input, and
+#   leads stderr with the marker line `refusal=provenance` (#1157) — callers key
+#   on that, never on message prose, to tell a refusal (do NOT fall back) from
+#   a helper failure such as a missing jq or a bad --cycle (no marker). A
+#   malformed --issue/--run is a refusal too: an unsubstituted `{run}` must not
+#   reach the fallback, which reads no provenance. The
 #   check runs before any signal is counted, so it covers `--prev-result` on a
 #   zero-finding cycle too, where those files are otherwise never read.
+#
+#   `--run` (#1157) closes what `issue` + `cycle` cannot: a re-run of the same
+#   issue, or a re-attempt reusing a filename, writes a stamp IDENTICAL to this
+#   run's. The run nonce comes from `review-scratch.sh` (minted by `init`, read
+#   back by `path`), and the caller passes the same value to the harness as
+#   `args.run`. A run nonce rather than the reviewed HEAD SHA: HEAD moves on
+#   every fix cycle, so it could never vouch for a `--prev-result`.
+#
+#   Both flags are REQUIRED (#1157). `--issue` began opt-in for pre-#1150
+#   recipes, which left the helper failing open for any caller that omitted it:
+#   only `.cycle` was checked, and an unstamped file passed. A caller without
+#   them now gets exit 2 naming the flag, never a verdict on unverified input.
 #
 # C2 sits directly under it and is the safety rule: a budget-exhausted or
 # wall-timed-out cycle can never be a convergence stop. It is partial, not
@@ -223,7 +240,7 @@ USAGE="Usage: review-convergence check --cycle N --max-cycles N --result FILE --
                                   [--attempt N] [--max-attempts N]
                                   [--prev-result FILE ...] [--prev-delta-lines N]
                                   [--delta-files FILE] [--partial true|false]
-                                  [--issue N]
+                                  --issue N --run ID
   --cycle N             1-based number of cycles that PRODUCED A REVIEW (positive
                         integer). A no-signal cycle does not advance it.
   --max-cycles N        ceiling on reviewed cycles (positive integer;
@@ -240,8 +257,12 @@ USAGE="Usage: review-convergence check --cycle N --max-cycles N --result FILE --
   --delta-files FILE    newline-delimited paths in this cycle's delta
                         (git diff --name-only), for the recursive check
   --partial true|false  whether the cycle was budget-exhausted or timed out
-  --issue N             the issue under review (positive integer). Every result
-                        file must then carry \"issue\": N or the check is
+  --run ID              this review loop's run nonce: review-scratch.sh's run=
+                        line ([A-Za-z0-9._-], 1-64 chars). REQUIRED. Every
+                        result file must carry \"run\": \"ID\" or the check is
+                        refused (#1157)
+  --issue N             the issue under review (positive integer). REQUIRED.
+                        Every result file must carry \"issue\": N or the check is
                         refused (#1150)
 env: REVIEW_CONVERGENCE_SURFACE_RATIO (percent, default 50)
      REVIEW_MAX_ATTEMPTS (positive integer, default 2 x --max-cycles)"
@@ -249,6 +270,18 @@ env: REVIEW_CONVERGENCE_SURFACE_RATIO (percent, default 50)
 # die <message> — fail loud: actionable message + usage on stderr, exit 2.
 die() {
     command printf '%s\n%s\n' "$1" "$USAGE" >&2
+    exit 2
+}
+
+# refuse <message> — a PROVENANCE refusal (#1150, #1157): this run cannot vouch
+# for its input, so NO verdict is safe. Exit 2 like die, but lead stderr with
+# the stable marker line `refusal=provenance`. The recipes key on that marker,
+# not on message prose: their fallback for a non-zero exit is "compare cycle to
+# cap", which reads no provenance, so a refusal mistaken for a helper failure
+# fails OPEN — the shape this check exists to close. One marker for every
+# refusal keeps a reworded message from silently dropping out of the contract.
+refuse() {
+    command printf 'refusal=provenance\n%s\n%s\n' "$1" "$USAGE" >&2
     exit 2
 }
 
@@ -406,7 +439,7 @@ read_findings() {
 # header). <role> is `result` (this cycle's file: `.cycle` must equal $cycle
 # when present) or `prev` (an earlier cycle's: no cycle check — its number is
 # by definition a different one). Either role must carry `.issue == $issue`
-# when --issue was given.
+# and `.run == $run` (#1157).
 #
 # Validates readability and JSON itself rather than relying on read_findings
 # having run first, because it runs BEFORE read_findings (and for a
@@ -415,31 +448,40 @@ read_findings() {
 # message instead of a bare jq crash, as in no_review_signal.
 check_provenance() {
     if [ ! -r "$1" ]; then
-        die "review-convergence: cannot read result file '$1'"
+        refuse "review-convergence: cannot read result file '$1'"
     fi
     if ! command jq empty "$1" >/dev/null 2>&1; then
-        die "review-convergence: result file '$1' is not valid JSON"
+        refuse "review-convergence: result file '$1' is not valid JSON"
     fi
     # `tojson` renders a missing field as `null` and a string as `"7"`, so
     # neither can masquerade as the number 7 in the string comparisons below.
     _prov_cycle="$(command jq -r 'if type == "object" then (.cycle | tojson) else "null" end' "$1")"
     _prov_issue="$(command jq -r 'if type == "object" then (.issue | tojson) else "null" end' "$1")"
+    _prov_run="$(command jq -r 'if type == "object" then (.run | tojson) else "null" end' "$1")"
     if [ "$2" = "result" ] && [ "$_prov_cycle" != "null" ] && [ "$_prov_cycle" != "$cycle" ]; then
-        die "review-convergence: result file '$1' is for cycle $_prov_cycle, not --cycle $cycle — a stale or foreign result file; re-extract this cycle's harness result (#1150)"
+        refuse "review-convergence: result file '$1' is for cycle $_prov_cycle, not --cycle $cycle — a stale or foreign result file; re-extract this cycle's harness result (#1150)"
     fi
-    if [ -n "$issue" ] && [ "$_prov_issue" != "$issue" ]; then
-        if [ "$2" = "result" ]; then
-            _prov_what="result file"
-        else
-            _prov_what="prior-cycle result"
-        fi
+    if [ "$2" = "result" ]; then
+        _prov_what="result file"
+    else
+        _prov_what="prior-cycle result"
+    fi
+    if [ "$_prov_issue" != "$issue" ]; then
         # A null stamp is not a stale file: the harness that wrote it had no
         # usable args.issue, so re-extracting returns the same null. Say so,
         # or the operator re-extracts forever.
         if [ "$_prov_issue" = "null" ]; then
-            die "review-convergence: $_prov_what '$1' has issue null, not --issue $issue — it carries no issue stamp: either a pre-#1150 or foreign file, or the harness ran without args.issue.number; re-run the harness with issue: { number: $issue } (#1150)"
+            refuse "review-convergence: $_prov_what '$1' has issue null, not --issue $issue — it carries no issue stamp: either a pre-#1150 or foreign file, or the harness ran without args.issue.number; re-run the harness with issue: { number: $issue } (#1150)"
         fi
-        die "review-convergence: $_prov_what '$1' has issue $_prov_issue, not --issue $issue — a stale or foreign result file; re-extract it from this run's harness output (#1150)"
+        refuse "review-convergence: $_prov_what '$1' has issue $_prov_issue, not --issue $issue — a stale or foreign result file; re-extract it from this run's harness output (#1150)"
+    fi
+    # `tojson` quotes a string, so the run compares as `"<id>"`: a numeric or
+    # null `.run` can never equal it by spelling.
+    if [ "$_prov_run" != "\"$run\"" ]; then
+        if [ "$_prov_run" = "null" ]; then
+            refuse "review-convergence: $_prov_what '$1' has run null, not --run $run — it carries no run stamp: either a pre-#1157 or foreign file, or the harness ran without a valid args.run; re-run the harness with run: \"$run\" (#1157)"
+        fi
+        refuse "review-convergence: $_prov_what '$1' has run $_prov_run, not --run $run — written by a different review run of this issue (a re-run, or a re-attempt reusing the filename); re-extract it from this run's harness output (#1157)"
     fi
 }
 
@@ -704,7 +746,30 @@ warn_of() {
     fi
 }
 
+# refuse_valueless_provenance <args...> — refuse (not die) when --issue or --run
+# is present with no usable value: the LAST argument, or followed by a flag.
+# `opt` would die for both, but with no marker, so an empty `{run}` expansion
+# (`--run $RUN`, RUN unset) would reach the caller's fallback, which reads no
+# provenance — fail-open (#1157 review c5). Runs before any `opt` call.
+refuse_valueless_provenance() {
+    _rv_prev=""
+    for _rv_tok in "$@"; do
+        case "$_rv_prev" in
+            --issue | --run)
+                case "$_rv_tok" in
+                    --*) refuse "review-convergence: $_rv_prev needs a value, got the flag '$_rv_tok' — an empty or unsubstituted placeholder? (#1157)" ;;
+                esac
+                ;;
+        esac
+        _rv_prev="$_rv_tok"
+    done
+    case "$_rv_prev" in
+        --issue | --run) refuse "review-convergence: $_rv_prev needs a value but was the last argument — an empty or unsubstituted placeholder? (#1157)" ;;
+    esac
+}
+
 cmd_check() {
+    refuse_valueless_provenance "$@"
     cycle="$(opt --cycle -- "$@" || true)"
     max_cycles="$(opt --max-cycles -- "$@" || true)"
     result="$(opt --result -- "$@" || true)"
@@ -721,6 +786,7 @@ cmd_check() {
     fi
     max_attempts="$(opt --max-attempts -- "$@" || true)"
     issue="$(opt --issue -- "$@" || true)"
+    run="$(opt --run -- "$@" || true)"
 
     if [ -z "$partial" ]; then
         partial="false"
@@ -756,7 +822,15 @@ cmd_check() {
         die "review-convergence: --prev-delta-lines must be a non-negative integer, got '$prev_delta_lines'"
     fi
     if [ -n "$issue" ] && { ! is_nonneg_int "$issue" || [ "$issue" -lt 1 ]; }; then
-        die "review-convergence: --issue must be an integer >= 1, got '$issue'"
+        refuse "review-convergence: --issue must be an integer >= 1, got '$issue' — an unsubstituted {N}? (#1157)"
+    fi
+    if [ -n "$run" ]; then
+        case "$run" in
+            *[!A-Za-z0-9._-]*) refuse "review-convergence: --run must match [A-Za-z0-9._-], got '$run' — an unsubstituted {run}? (#1157)" ;;
+        esac
+        if [ "${#run}" -gt 64 ]; then
+            refuse "review-convergence: --run must be at most 64 characters, got ${#run} (#1157)"
+        fi
     fi
     case "$partial" in
         true | false) ;;
@@ -809,6 +883,15 @@ cmd_check() {
     # would carry on to emit a verdict anyway, the same swallowed-exit bug as
     # read_findings' below. Same reason it is not `$(...)` in the loop header.
     prev_results="$(opt_all --prev-result -- "$@")" || exit 2
+
+    # Both provenance flags are REQUIRED (#1157, header). Checked after every
+    # value-shape check above so a malformed argument still names itself first.
+    if [ -z "$issue" ]; then
+        refuse "review-convergence: check needs --issue N — the issue under review; without it a foreign or unstamped result file cannot be refused (#1157)"
+    fi
+    if [ -z "$run" ]; then
+        refuse "review-convergence: check needs --run ID — the run= line printed by review-scratch.sh init/path --issue $issue; without it a re-run's result file cannot be told from this run's (#1157)"
+    fi
 
     # Provenance BEFORE any signal is read (#1150, header): a verdict must never
     # be computed from a file that is not this run's. Every --prev-result is

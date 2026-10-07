@@ -62,7 +62,7 @@ a2. **Route the cycle (#550).** Ask the router whether this diff needs the
 full fan-out, and pass its verdict to the harness below as `reviewRoute`:
 
 ```bash
-# Per-run scratch dir (#1094). Read its `dir=` line as {dir}, never `$(...)`
+# Per-run scratch dir (#1094). Read `dir=`/`run=` as {dir}/{run}, never `$(...)`
 # (#815). Run exactly ONE of these — `init` empties the dir, so on a later
 # cycle it would delete the cycle JSON convergence reads as --prev-result:
 <skill-base-dir>/../../scripts/review-scratch.sh init --issue {N}   # cycle 1 only
@@ -123,7 +123,7 @@ args: {
   maxCycles: <REVIEW_MAX_CYCLES, default 5>,
   files: [<changed files, FULL scope>],
   diff: "<diff text, FULL scope>",
-  issue: { number: {N}, title: "{title}" },
+  issue: { number: {N}, title: "{title}" }, run: "{run}",  // run: the scratch helper's run= line (#1157)
   tokenCeiling: <REVIEW_TOKEN_CEILING if set; OMIT otherwise (default)>,
   preScan: [<pre-review-gates.sh TSV rows (incl. growth-graded sizing rows) + lint-gate rows from item 5>],
   conventionsDigest: "<distilled CLAUDE.md/AGENTS.md/memory rules>",
@@ -232,7 +232,7 @@ args: {
   maxCycles: <REVIEW_MAX_CYCLES>,
   files: [<changed files, FULL scope>],     // unchanged — scope-drift + summary
   diff: "<diff text, FULL scope>",          // unchanged — scope-drift reads this
-  issue: { number: {N}, title: "{title}" },
+  issue: { number: {N}, title: "{title}" }, run: "{run}",  // run: the scratch helper's run= line (#1157)
   tokenCeiling: <REVIEW_TOKEN_CEILING if set; OMIT otherwise (default)>,
   preScan: [<pre-review-gates.sh TSV rows (incl. growth-graded sizing rows) + lint-gate rows from item 5>],
   conventionsDigest: "<distilled CLAUDE.md/AGENTS.md/memory rules>",
@@ -363,7 +363,7 @@ result printed; full contract in `review-engagement.md`:
 
 ```bash
 <skill-base-dir>/../../scripts/review-convergence.sh check \
-  --issue {N} --cycle "$cycle" --max-cycles "$cap" \
+  --issue {N} --run {run} --cycle "$cycle" --max-cycles "$cap" \
   --attempt "$attempt" --max-attempts "$attempt_cap" \
   --result "$cycle_result_json" \
   --delta-lines "$delta_lines" \
@@ -405,12 +405,12 @@ posture as a missing `workflow-wall-timeout.sh`. The loop
 stays bounded either way; it just loses the early-stop and the narrow-zero
 protection.
 
-**Exception — a provenance refusal is not a fallback case (#1150).** Exit 2 with
-`a stale or foreign result file` on stderr means the `--result` or a
-`--prev-result` belongs to another issue or cycle. That is usually a failed
-extraction that left an older file at the path. Re-extract this cycle's harness
-result into the scratch dir and re-run the check. Do not fall back and do not
-delete `--issue` to silence it.
+**Exception — a provenance refusal is not a fallback case (#1150, #1157).** A
+stderr line `refusal=provenance` means a result file is missing, unreadable, or
+another issue's, cycle's, or run's, or `--issue`/`--run` was omitted. Usually a
+failed extraction left an older file at the path: re-extract this cycle's
+harness result into the scratch dir and re-run the check. Never fall back, and
+never drop `--issue` or `--run` to silence it.
 
 > **Standing rule — `blocking: []` is not a merge signal** (#580). Read every
 > finding on merit, including the deferrables, and fix anything that is a live

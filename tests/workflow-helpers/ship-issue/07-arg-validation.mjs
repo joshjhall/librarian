@@ -62,7 +62,7 @@ export async function run() {
   // build-from-contract assertion above cannot catch on its own.
   // 13 -> 14 in #550, which added `reviewRoute` (the doc-only routing verdict
   // from scripts/review-route.sh).
-  eq(KNOWN_ARG_KEYS.length, 14, "KNOWN_ARG_KEYS: holds all 14 contract keys");
+  eq(KNOWN_ARG_KEYS.length, 15, "KNOWN_ARG_KEYS: holds all 15 contract keys (run added by #1157)");
   ok(
     KNOWN_ARG_KEYS.includes("reviewRoute"),
     "KNOWN_ARG_KEYS: carries reviewRoute (#550) — without it the harness THROWS on a routed dispatch, since an unknown key is a hard error (#597)",
@@ -263,6 +263,45 @@ export async function run() {
       threw = true;
     }
     eq(threw, false, `ship-issue: the phase guard does not throw on ${JSON.stringify(a)}`);
+  }
+
+  // --- A malformed args.run fails at dispatch (#1157) -----------------------
+  // Silently nulling it would spend the cycle and then have convergence refuse
+  // the result as "no run stamp". Truth table on the predicate, then the REAL
+  // guard block executed, as for the phase guard above.
+  {
+    const { invalidRun } = extractHelpers(SHIP, ["invalidRun"]);
+    for (const a of [undefined, null, {}, { run: undefined }, { run: "4adaf6fc030a9201" }, { run: "x".repeat(64) }]) {
+      eq(invalidRun(a), false, `invalidRun: ${JSON.stringify(a)} is accepted`);
+    }
+    for (const v of ["{run}", "", "a/b", "x".repeat(65), null, 12345, ["x"]]) {
+      eq(invalidRun({ run: v }), true, `invalidRun: run ${JSON.stringify(v).slice(0, 20)} is rejected`);
+    }
+    const rIdx = src.indexOf("if (invalidRun(args)) {");
+    const iDef = src.indexOf("const invalidRun");
+    ok(iDef !== -1 && iDef < boundary.index, "ship-issue: invalidRun is defined in the pure prefix");
+    ok(
+      rIdx > boundary.index && firstAwait && rIdx < firstAwait.index,
+      "ship-issue: the run guard sits in the body, before the first top-level await",
+    );
+    const rEnd = src.indexOf("\n}\n", rIdx);
+    const rGuard = src.slice(rIdx, rEnd + 2);
+    const runRGuard = (a) => new Function("args", "invalidRun", "log", rGuard)(a, invalidRun, () => {});
+    let rmsg = "";
+    try {
+      runRGuard({ run: "{run}" });
+    } catch (e) {
+      rmsg = e.message;
+    }
+    ok(rmsg.includes('"{run}"') && rmsg.includes("review-scratch.sh"), "ship-issue: an unsubstituted {run} throws, naming the value and its source");
+    let threw = false;
+    try {
+      runRGuard({ run: "4adaf6fc030a9201" });
+      runRGuard({});
+    } catch {
+      threw = true;
+    }
+    eq(threw, false, "ship-issue: the run guard passes a valid or absent run");
   }
 
   // --- The cycle banner names the RAW invalid value -------------------------

@@ -82,6 +82,8 @@
 //     diff?:      string,                  // FULL precomputed diff for context
 //     prComments?: [{ id, author, path?, line?, body, url? }],  // pr-cycle only
 //     issue?:     { number, title }        // for scope-drift + defer-issue context
+//     run?:       string,                  // review-loop run nonce from review-scratch.sh's
+//                                          // `run=` line (#1157), stamped into the result
 //     tokenCeiling?: number,               // opt-in per-cycle output-token ceiling (#553)
 //     preScan?:   [{ file, line, category, evidence, certainty }],  // pre-review-gates.sh
 //                                          // rows + lint-gate rows (#556/#557) —

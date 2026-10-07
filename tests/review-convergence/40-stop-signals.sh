@@ -10,7 +10,7 @@
 
 test_refuted_only_stops() {
     local out
-    out="$("$RC" check --cycle 2 --max-cycles 5 --result "$FIXTURES/refuted.json" \
+    out="$("$RC" check --issue "$T_ISSUE" --run "$T_RUN" --cycle 2 --max-cycles 5 --result "$FIXTURES/refuted.json" \
         --delta-lines 400 --prev-delta-lines 400 --partial false)"
     assert_equals "stop" "$(val verdict "$out")" "a cycle whose findings all failed verification is converged (#555)"
     assert_equals "C5-refuted-only" "$(val rule "$out")" "the refuted-only rule decides"
@@ -21,7 +21,7 @@ test_partially_refuted_continues() {
     # C5 is ALL, not ANY. One live finding alongside a refuted one is still
     # material — this is the assertion that keeps C5 from swallowing real defects.
     local out
-    out="$("$RC" check --cycle 2 --max-cycles 5 --result "$FIXTURES/mixed-refuted.json" \
+    out="$("$RC" check --issue "$T_ISSUE" --run "$T_RUN" --cycle 2 --max-cycles 5 --result "$FIXTURES/mixed-refuted.json" \
         --delta-lines 400 --prev-delta-lines 400 --partial false)"
     assert_equals "continue" "$(val verdict "$out")" "one refuted finding among live ones is not convergence"
     assert_equals "C8-novel" "$(val rule "$out")" "novel material outlives the refuted one"
@@ -31,7 +31,7 @@ test_partially_refuted_continues() {
 
 test_all_duplicate_stops() {
     local out
-    out="$("$RC" check --cycle 2 --max-cycles 5 --result "$FIXTURES/novel.json" \
+    out="$("$RC" check --issue "$T_ISSUE" --run "$T_RUN" --cycle 2 --max-cycles 5 --result "$FIXTURES/novel.json" \
         --prev-result "$FIXTURES/novel.json" \
         --delta-lines 400 --prev-delta-lines 400 --partial false)"
     assert_equals "stop" "$(val verdict "$out")" "a cycle restating an earlier finding is converged (#533 cycle 5)"
@@ -44,7 +44,7 @@ test_novel_finding_against_prior_continues() {
     # proves duplication is matched on the finding, not merely on "a prior result
     # file was supplied".
     local out
-    out="$("$RC" check --cycle 2 --max-cycles 5 --result "$FIXTURES/second.json" \
+    out="$("$RC" check --issue "$T_ISSUE" --run "$T_RUN" --cycle 2 --max-cycles 5 --result "$FIXTURES/second.json" \
         --prev-result "$FIXTURES/novel.json" \
         --delta-lines 400 --prev-delta-lines 400 --partial false)"
     assert_equals "continue" "$(val verdict "$out")" "a finding absent from the prior cycle is novel"
@@ -59,7 +59,7 @@ test_partially_duplicate_continues() {
     # surfaces a new one is still producing material; stopping there would
     # discard the new defect on the very cycle it appeared.
     local out
-    out="$("$RC" check --cycle 2 --max-cycles 5 --result "$FIXTURES/mixed-duplicate.json" \
+    out="$("$RC" check --issue "$T_ISSUE" --run "$T_RUN" --cycle 2 --max-cycles 5 --result "$FIXTURES/mixed-duplicate.json" \
         --prev-result "$FIXTURES/novel.json" \
         --delta-lines 400 --prev-delta-lines 400 --partial false)"
     assert_equals "continue" "$(val verdict "$out")" "one duplicate among novel findings is not convergence"
@@ -73,7 +73,7 @@ test_duplicate_matches_across_all_earlier_cycles() {
     # cycle is still a duplicate. Matching only the immediately-preceding cycle
     # would call this novel and loop.
     local out
-    out="$("$RC" check --cycle 3 --max-cycles 5 --result "$FIXTURES/novel.json" \
+    out="$("$RC" check --issue "$T_ISSUE" --run "$T_RUN" --cycle 3 --max-cycles 5 --result "$FIXTURES/novel.json" \
         --prev-result "$FIXTURES/novel.json" --prev-result "$FIXTURES/second.json" \
         --delta-lines 400 --prev-delta-lines 400 --partial false)"
     assert_equals "C6-duplicate" "$(val rule "$out")" "a finding from cycle 1 is a duplicate in cycle 3"
@@ -83,7 +83,7 @@ test_duplicate_matches_across_all_earlier_cycles() {
 
 test_recursive_test_machinery_stops() {
     local out
-    out="$("$RC" check --cycle 2 --max-cycles 5 --result "$FIXTURES/recursive.json" \
+    out="$("$RC" check --issue "$T_ISSUE" --run "$T_RUN" --cycle 2 --max-cycles 5 --result "$FIXTURES/recursive.json" \
         --delta-files "$FIXTURES/delta-files.txt" \
         --delta-lines 400 --prev-delta-lines 400 --partial false)"
     assert_equals "stop" "$(val verdict "$out")" "findings about the last fix's own test machinery are converged (#498)"
@@ -96,7 +96,7 @@ test_test_file_outside_the_fix_delta_is_not_recursive() {
     # the no-fixed-point class — proving C7 keys off delta membership rather than
     # just a test-looking path.
     local out
-    out="$("$RC" check --cycle 2 --max-cycles 5 --result "$FIXTURES/recursive.json" \
+    out="$("$RC" check --issue "$T_ISSUE" --run "$T_RUN" --cycle 2 --max-cycles 5 --result "$FIXTURES/recursive.json" \
         --delta-files "$FIXTURES/delta-files-nontest.txt" \
         --delta-lines 400 --prev-delta-lines 400 --partial false)"
     assert_equals "continue" "$(val verdict "$out")" "a test file the last fix did not touch is real material"
@@ -108,7 +108,7 @@ test_mixed_recursive_continues() {
     # C7 is ALL, not ANY — a source defect alongside the test-machinery finding
     # keeps the loop alive.
     local out
-    out="$("$RC" check --cycle 2 --max-cycles 5 --result "$FIXTURES/mixed-recursive.json" \
+    out="$("$RC" check --issue "$T_ISSUE" --run "$T_RUN" --cycle 2 --max-cycles 5 --result "$FIXTURES/mixed-recursive.json" \
         --delta-files "$FIXTURES/delta-files.txt" \
         --delta-lines 400 --prev-delta-lines 400 --partial false)"
     assert_equals "continue" "$(val verdict "$out")" "a live source defect outlives a recursive test finding"

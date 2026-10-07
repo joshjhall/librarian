@@ -94,6 +94,8 @@ export const meta = {
 //     diff?:      string,                  // FULL precomputed diff for context
 //     prComments?: [{ id, author, path?, line?, body, url? }],  // pr-cycle only
 //     issue?:     { number, title }        // for scope-drift + defer-issue context
+//     run?:       string,                  // review-loop run nonce from review-scratch.sh's
+//                                          // `run=` line (#1157), stamped into the result
 //     tokenCeiling?: number,               // opt-in per-cycle output-token ceiling (#553)
 //     preScan?:   [{ file, line, category, evidence, certainty }],  // pre-review-gates.sh
 //                                          // rows + lint-gate rows (#556/#557) —
@@ -185,6 +187,7 @@ const KNOWN_ARG_KEYS = [
   'diff',
   'prComments',
   'issue',
+  'run',
   'tokenCeiling',
   'preScan',
   'conventionsDigest',
@@ -263,6 +266,23 @@ const scopeFiles = args && Array.isArray(args.files) ? args.files.filter(Boolean
 const scopeDiff = args && typeof args.diff === 'string' ? args.diff : ''
 const prComments = args && Array.isArray(args.prComments) ? args.prComments.filter(Boolean) : []
 const issue = args && args.issue && typeof args.issue === 'object' ? args.issue : null
+// The review loop's run nonce (#1157), stamped into the result so
+// review-convergence.sh --run can refuse a file written by a different run of
+// the same issue. `runIdOf` gates on type and charset; anything else is null,
+// which the convergence check refuses rather than matching on garbage.
+const RUN = runIdOf(args && args.run)
+
+// True when `args.run` is PRESENT but `runIdOf` rejects it (#1157). Nulling it
+// silently would spend the whole cycle and then have review-convergence.sh
+// refuse the result as "no run stamp" — misdiagnosing, say, an unsubstituted
+// `{run}` placeholder as an omission. So a bad value fails at dispatch, like an
+// unknown key (#597). Only an absent (`undefined`) run is the null default.
+const invalidRun = (a) =>
+  !!a &&
+  typeof a === 'object' &&
+  !Array.isArray(a) &&
+  a.run !== undefined &&
+  runIdOf(a.run) === null
 
 // Re-review narrowing inputs (#492), all optional — absent ⇒ full review. The
 // skill computes these each re-review cycle (it owns git; this sandbox does not):
@@ -1922,6 +1942,15 @@ function issueNumberOf(iss) {
   return null
 }
 
+// runIdOf — a run nonce as a string of [A-Za-z0-9._-]{1,64}, else null (#1157).
+// The same charset review-scratch.sh mints from and review-convergence.sh --run
+// accepts. No coercion: a number or object is null, never a stringified guess.
+// Hoisted `function` because RUN (10-args-contract.js) calls it at module load,
+// before this fragment's position in the concatenation.
+function runIdOf(raw) {
+  return typeof raw === 'string' && /^[A-Za-z0-9._-]{1,64}$/.test(raw) ? raw : null
+}
+
 // buildResult — the SINGLE constructor for a cycle result object (#636).
 //
 // WHY THIS IS A HELPER AND NOT AN OBJECT LITERAL AT THE RETURN. Everything past
@@ -1978,6 +2007,10 @@ function buildResult(parts) {
     // `null` when no `args.issue` was passed — so an absent key never reads as
     // a deliberate value.
     issue: issueNumberOf(issue),
+    // Provenance (#1157): which review RUN wrote this result — `issue` + `cycle`
+    // are identical across a re-run of the same issue. Always present, `null`
+    // when no usable `args.run` was passed.
+    run: RUN,
     scanner: 'next-issue-review',
     blocking,
     deferrable,
@@ -2154,6 +2187,17 @@ if (unknownPhase(args)) {
       `accepted values are: ${KNOWN_PHASES.join(', ')} (omit the key for the 'pre-pr' default). ` +
       'An unrecognized phase would silently run a pre-PR review that never reads the ' +
       "PR's comments. Fix the value and re-dispatch."
+  )
+}
+
+// Reject a malformed `run` VALUE (#1157, see `invalidRun`). JSON-stringified so
+// a placeholder like "{run}" is visible verbatim in the message.
+if (invalidRun(args)) {
+  throw new Error(
+    `review harness: invalid run ${JSON.stringify(args.run)} — ` +
+      "expected the run= line printed by review-scratch.sh (a string of [A-Za-z0-9._-], 1-64 chars). " +
+      'A malformed run would be stamped null and every result refused downstream. ' +
+      'Fix the value and re-dispatch.'
   )
 }
 

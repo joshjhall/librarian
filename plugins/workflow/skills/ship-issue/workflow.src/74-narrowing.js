@@ -234,6 +234,15 @@ function issueNumberOf(iss) {
   return null
 }
 
+// runIdOf — a run nonce as a string of [A-Za-z0-9._-]{1,64}, else null (#1157).
+// The same charset review-scratch.sh mints from and review-convergence.sh --run
+// accepts. No coercion: a number or object is null, never a stringified guess.
+// Hoisted `function` because RUN (10-args-contract.js) calls it at module load,
+// before this fragment's position in the concatenation.
+function runIdOf(raw) {
+  return typeof raw === 'string' && /^[A-Za-z0-9._-]{1,64}$/.test(raw) ? raw : null
+}
+
 // buildResult — the SINGLE constructor for a cycle result object (#636).
 //
 // WHY THIS IS A HELPER AND NOT AN OBJECT LITERAL AT THE RETURN. Everything past
@@ -290,6 +299,10 @@ function buildResult(parts) {
     // `null` when no `args.issue` was passed — so an absent key never reads as
     // a deliberate value.
     issue: issueNumberOf(issue),
+    // Provenance (#1157): which review RUN wrote this result — `issue` + `cycle`
+    // are identical across a re-run of the same issue. Always present, `null`
+    // when no usable `args.run` was passed.
+    run: RUN,
     scanner: 'next-issue-review',
     blocking,
     deferrable,

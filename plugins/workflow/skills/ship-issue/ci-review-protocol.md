@@ -46,7 +46,7 @@ unregistered loop reads as an idle golem for its whole duration. Protocol:
 a. **Gather the changed scope** (now includes any CI fixes):
 
 ```bash
-# Per-run scratch dir (#1094). Read its `dir=` line as {dir}, never `$(...)`
+# Per-run scratch dir (#1094). Read `dir=`/`run=` as {dir}/{run}, never `$(...)`
 # (#815). Run exactly ONE — `init` empties the dir (dropping the pre-PR loop's
 # and any earlier run's cycle JSON), so on a later attempt it would delete this
 # loop's --prev-result history. Route (#550) -> `reviewRoute` in step (c).
@@ -144,7 +144,7 @@ args: {
   files: [<changed files, FULL PR scope>],
   diff: "<diff text, FULL PR scope>",
   prComments: [<normalized comments>],
-  issue: { number: {N}, title: "{title}" },
+  issue: { number: {N}, title: "{title}" }, run: "{run}",  // run: the scratch helper's run= line (#1157)
   // Token ceiling (#553) — OPT-IN, off by default. Omit unless
   // REVIEW_TOKEN_CEILING is set; size it from observed token_report data,
   // since a too-low ceiling truncates every cycle and dead-ends the PR:
@@ -327,7 +327,7 @@ result printed; full contract in `review-engagement.md`:
 ```bash
 # substitute <skill-base-dir>: next-issue/worktree-safe-recipes.md (#815)
 <skill-base-dir>/../../scripts/review-convergence.sh check \
-  --issue {N} --cycle "$cycle" --max-cycles "$cap" \
+  --issue {N} --run {run} --cycle "$cycle" --max-cycles "$cap" \
   --attempt "$attempt" --max-attempts "$attempt_cap" \
   --result "$cycle_result_json" \
   --delta-lines "$delta_lines" \
@@ -407,9 +407,9 @@ bound, a fallback that also stops charging crashed cycles would be unbounded. Th
 loop stays bounded either way; it only loses the early-stop, the narrow-zero
 protection, and the `capped_over` disambiguation.
 
-**Exception (#1150):** exit 2 with `a stale or foreign result file` means a
-result file is another issue's or cycle's — re-extract it and re-run the check;
-never fall back or drop `--issue` (`adversarial-review-step.md`).
+**Exception (#1150, #1157):** a stderr line `refusal=provenance` means a result
+file is unusable or another issue's, cycle's, or run's — re-extract it and re-run
+the check; never fall back or drop `--issue`/`--run` (`adversarial-review-step.md`).
 
 Write each trip's harness result to `{dir}/attempt<attempt>.json` (step a's
 scratch dir, #1094) so the next cycle can pass it as

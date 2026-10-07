@@ -35,6 +35,17 @@ if (unknownPhase(args)) {
   )
 }
 
+// Reject a malformed `run` VALUE (#1157, see `invalidRun`). JSON-stringified so
+// a placeholder like "{run}" is visible verbatim in the message.
+if (invalidRun(args)) {
+  throw new Error(
+    `review harness: invalid run ${JSON.stringify(args.run)} — ` +
+      "expected the run= line printed by review-scratch.sh (a string of [A-Za-z0-9._-], 1-64 chars). " +
+      'A malformed run would be stamped null and every result refused downstream. ' +
+      'Fix the value and re-dispatch.'
+  )
+}
+
 // A cycle with neither a full diff nor a fix delta reviews nothing of its own
 // accord (#597, AC#3). This is NOT an error: omitting `diff` is a documented
 // supported mode — each reviewer then derives it in-agent via `git diff

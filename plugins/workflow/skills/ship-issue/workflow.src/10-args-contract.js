@@ -15,6 +15,7 @@ const KNOWN_ARG_KEYS = [
   'diff',
   'prComments',
   'issue',
+  'run',
   'tokenCeiling',
   'preScan',
   'conventionsDigest',
@@ -93,6 +94,23 @@ const scopeFiles = args && Array.isArray(args.files) ? args.files.filter(Boolean
 const scopeDiff = args && typeof args.diff === 'string' ? args.diff : ''
 const prComments = args && Array.isArray(args.prComments) ? args.prComments.filter(Boolean) : []
 const issue = args && args.issue && typeof args.issue === 'object' ? args.issue : null
+// The review loop's run nonce (#1157), stamped into the result so
+// review-convergence.sh --run can refuse a file written by a different run of
+// the same issue. `runIdOf` gates on type and charset; anything else is null,
+// which the convergence check refuses rather than matching on garbage.
+const RUN = runIdOf(args && args.run)
+
+// True when `args.run` is PRESENT but `runIdOf` rejects it (#1157). Nulling it
+// silently would spend the whole cycle and then have review-convergence.sh
+// refuse the result as "no run stamp" — misdiagnosing, say, an unsubstituted
+// `{run}` placeholder as an omission. So a bad value fails at dispatch, like an
+// unknown key (#597). Only an absent (`undefined`) run is the null default.
+const invalidRun = (a) =>
+  !!a &&
+  typeof a === 'object' &&
+  !Array.isArray(a) &&
+  a.run !== undefined &&
+  runIdOf(a.run) === null
 
 // Re-review narrowing inputs (#492), all optional — absent ⇒ full review. The
 // skill computes these each re-review cycle (it owns git; this sandbox does not):
