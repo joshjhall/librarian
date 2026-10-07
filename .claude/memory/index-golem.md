@@ -38,6 +38,7 @@ human gate) live in the root [MEMORY.md](MEMORY.md).
 - [#443 portable command paths](issue-443-portable-command-paths.md) — swept ~1,500 paths → `command`/`_bin()`; 5 must-NOT-sweep classes
 - [golem-watch trap signal testing](golem-watch-trap-signal-testing.md) — trap INT/TERM needs a STRUCTURAL grep (#359/#360)
 - [golem-gate-watch host leak](golem-gate-watch-host-leak.md) — fails locally when host golem sessions leak into the sweep; CI passes
+- [Private tmux server: use -S socket path](tmux-private-server-must-be-addressed-by-socket-path.md) — a missing TMUX_TMPDIR silently falls back to the SHARED server and $TMUX outranks it, so a "sandboxed" kill-server killed every golem, twice
 - [CI hang: group signal](ci-hang-golem-watch-group-signal.md) — case-4 group-signal escapes on headless x86_64; FIX = remove case 4 (#444)
 
 ## Worktree isolation (the #451/#501/#506 chain)
