@@ -39,7 +39,10 @@ refused() {
     command rm -f "$errf"
     assert_exit "2" "$rc" "$label exits 2"
     assert_not_contains "$out" "verdict=" "$label emits no verdict on stdout"
-    assert_contains "$REFUSED_ERR" "refusal=provenance" "$label carries the refusal marker"
+    # The FIRST line, exactly: a caller may read only that line, and the
+    # header documents the marker as leading stderr.
+    assert_equals "refusal=provenance" "${REFUSED_ERR%%
+*}" "$label leads stderr with the refusal marker"
 }
 
 test_foreign_issue_result_is_refused_not_stopped() {
@@ -189,16 +192,16 @@ test_non_string_run_does_not_match() {
 test_bad_run_value_fails_loud() {
     local v
     # The third value is 65 characters: one past the cap.
-    for v in 'a/b' 'a b' 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'; do
-        arg_error "--run '$v'" --cycle 1 --max-cycles 5 --issue 1150 --run "$v" \
+    for v in 'a/b' 'a b' '{run}' 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'; do
+        refused "--run '$v'" --cycle 1 --max-cycles 5 --issue 1150 --run "$v" \
             --result "$FIXTURES/zero.json" --delta-lines 40
         assert_contains "$REFUSED_ERR" "--run must" "--run '$v' names the flag"
     done
 }
 
-# arg_error <label> <args...> — a malformed ARGUMENT, not a provenance refusal:
+# arg_error <label> <args...> — a helper/usage failure unrelated to provenance:
 # exit 2 with no verdict and NO `refusal=provenance` marker, so the recipes'
-# fallback stays reachable for a genuine helper/usage failure (#1157).
+# fallback stays reachable when the helper genuinely cannot decide (#1157).
 arg_error() {
     local label="$1" rc=0 out errf
     shift
@@ -213,14 +216,23 @@ arg_error() {
 
 test_bad_issue_value_fails_loud() {
     local v err
-    for v in 0 07 x -3; do
-        arg_error "--issue '$v'" --cycle 1 --max-cycles 5 --issue "$v" --run "$T_RUN" \
+    # A malformed provenance flag IS a refusal (#1157 review c4): most likely an
+    # unsubstituted placeholder, and falling back would skip provenance.
+    for v in 0 07 x -3 '{N}'; do
+        refused "--issue '$v'" --cycle 1 --max-cycles 5 --issue "$v" --run "$T_RUN" \
             --result "$FIXTURES/zero.json" --delta-lines 40
         err="$REFUSED_ERR"
         assert_contains "$err" "--issue must be an integer >= 1" "--issue '$v' names the flag"
     done
+}
+
+test_helper_failures_carry_no_refusal_marker() {
+    # The negative half of the contract: an ordinary usage error is NOT a
+    # refusal, or the documented fallback for a broken helper is unreachable.
     arg_error "a bad --cycle" --cycle 0 --max-cycles 5 --issue 1150 --run "$T_RUN" \
         --result "$FIXTURES/zero.json" --delta-lines 40
+    arg_error "a missing --delta-lines" --cycle 1 --max-cycles 5 --issue 1150 --run "$T_RUN" \
+        --result "$FIXTURES/zero.json"
 }
 
 test_string_cycle_does_not_match_the_number() {
@@ -310,9 +322,11 @@ test_recipes_key_the_refusal_exception_on_the_marker() {
     # lacked that phrase would fall back fail-open — which is what #1157 cycle 3
     # found for every run and required-flag refusal. Pin the marker at both
     # exception paragraphs, and that neither keys on the old phrase.
+    # Whitespace-normalized: the old trigger was line-wrapped in one recipe, so
+    # a raw single-line needle could never match it there (#1157 review c4).
     local f body
     for f in adversarial-review-step.md ci-review-protocol.md; do
-        body="$(command cat "$REPO_ROOT/plugins/workflow/skills/ship-issue/$f")"
+        body="$(command tr '\n' ' ' <"$REPO_ROOT/plugins/workflow/skills/ship-issue/$f" | command tr -s ' ')"
         assert_contains "$body" 'stderr line `refusal=provenance`' "$f keys the exception on the marker"
         assert_not_contains "$body" 'with `a stale or foreign result file`' "$f no longer keys on message prose"
     done

@@ -192,8 +192,10 @@
 #       stamp is not provably this run's.
 #   A mismatch exits 2 with no verdict, never a verdict on foreign input, and
 #   leads stderr with the marker line `refusal=provenance` (#1157) — callers key
-#   on that, never on message prose, to tell a refusal (re-extract; do NOT fall
-#   back) from an ordinary usage error (which carries no marker). The
+#   on that, never on message prose, to tell a refusal (do NOT fall back) from
+#   a helper failure such as a missing jq or a bad --cycle (no marker). A
+#   malformed --issue/--run is a refusal too: an unsubstituted `{run}` must not
+#   reach the fallback, which reads no provenance. The
 #   check runs before any signal is counted, so it covers `--prev-result` on a
 #   zero-finding cycle too, where those files are otherwise never read.
 #
@@ -797,14 +799,14 @@ cmd_check() {
         die "review-convergence: --prev-delta-lines must be a non-negative integer, got '$prev_delta_lines'"
     fi
     if [ -n "$issue" ] && { ! is_nonneg_int "$issue" || [ "$issue" -lt 1 ]; }; then
-        die "review-convergence: --issue must be an integer >= 1, got '$issue'"
+        refuse "review-convergence: --issue must be an integer >= 1, got '$issue' — an unsubstituted {N}? (#1157)"
     fi
     if [ -n "$run" ]; then
         case "$run" in
-            *[!A-Za-z0-9._-]*) die "review-convergence: --run must match [A-Za-z0-9._-], got '$run'" ;;
+            *[!A-Za-z0-9._-]*) refuse "review-convergence: --run must match [A-Za-z0-9._-], got '$run' — an unsubstituted {run}? (#1157)" ;;
         esac
         if [ "${#run}" -gt 64 ]; then
-            die "review-convergence: --run must be at most 64 characters, got ${#run}"
+            refuse "review-convergence: --run must be at most 64 characters, got ${#run} (#1157)"
         fi
     fi
     case "$partial" in

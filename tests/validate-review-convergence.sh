@@ -203,6 +203,7 @@ run_fragment_test test_unusable_prev_result_is_refused_on_a_zero_cycle "a missin
 run_fragment_test test_unstamped_prev_result_is_refused_under_issue "an unstamped --prev-result under --issue -> exit 2 (#1150)"
 run_fragment_test test_non_object_result_is_refused_under_issue "an array --result under --issue -> exit 2, not a jq crash (#1150)"
 run_fragment_test test_null_cycle_result_is_accepted "an explicit null cycle stamp is accepted (#1150)"
+run_fragment_test test_helper_failures_carry_no_refusal_marker "a usage error carries no refusal marker (#1157)"
 run_fragment_test test_recipes_key_the_refusal_exception_on_the_marker "recipes key the refusal exception on refusal=provenance (#1157)"
 run_fragment_test test_every_shipped_recipe_passes_issue "every recipe invocation of check passes --issue and --run (#1150, #1157)"
 
