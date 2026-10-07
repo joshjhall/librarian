@@ -110,6 +110,36 @@ test_launch_auth_inherited_base_url_survives_stale_server_env() {
         "the golem gets the launcher's URL, not the running server's stale one"
 }
 
+# The other two URL states (#1163 review). Cache-only: the cache's URL beats a
+# stale server-env one — the original failure, reached from the cache arm. No
+# URL anywhere: the file writes NO ANTHROPIC_BASE_URL line, so an empty export
+# cannot clobber whatever URL the session env already carries.
+test_launch_auth_base_url_cache_only_and_absent() {
+    local sb authf
+    new_sandbox sb
+    command printf 'export ANTHROPIC_AUTH_TOKEN=sk-secret-tok-244\nexport ANTHROPIC_BASE_URL=https://cache.example\n' >"$sb/op-cache"
+    run_launch_auth "$sb" OP_SECRETS_CACHE="$sb/op-cache" TMUX_STUB_CMD_LOG="$sb/session-cmd"
+    assert_exit 0 "$RUN_RC" "cache-only launch dispatches (exit 0)"
+    _run_session_cmd "$sb" ANTHROPIC_BASE_URL=https://stale.example
+    assert_equals "sk-secret-tok-244|https://cache.example" \
+        "$(command head -n 1 "$sb/claude-env.log" 2>/dev/null)" \
+        "the cache's URL beats a running server's stale one"
+
+    new_sandbox sb
+    run_launch_auth "$sb" OP_SECRETS_CACHE="$sb/no-such-cache" TMUX_STUB_CMD_LOG="$sb/session-cmd" \
+        ANTHROPIC_AUTH_TOKEN=sk-nourl-1163 # gitleaks:allow (fake fixture token)
+    assert_exit 0 "$RUN_RC" "no-URL launch dispatches (exit 0)"
+    authf="$(command ls "$sb"/golem-auth.* 2>/dev/null | command head -n 1)"
+    # Positive control: the absence below cannot pass on a missing file.
+    assert_not_empty "$authf" "control: the token file was written"
+    # lint-allow-unanchored: per-run sandbox token file, no committed prose
+    assert_file_not_contains "$authf" "ANTHROPIC_BASE_URL" "no URL known → no base-URL line in the file"
+    _run_session_cmd "$sb" ANTHROPIC_BASE_URL=https://session.example
+    assert_equals "sk-nourl-1163|https://session.example" \
+        "$(command head -n 1 "$sb/claude-env.log" 2>/dev/null)" \
+        "the session's own URL is left untouched"
+}
+
 # _sh_quote itself, sliced out and driven directly over the shapes that break a
 # naive quoter: leading/trailing/adjacent quotes, and an empty value. Each must
 # round-trip through `sh` byte-for-byte — on the bash running this suite only.
