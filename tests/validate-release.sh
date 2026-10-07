@@ -130,6 +130,7 @@ run_fragment_test test_archive_links_rejects_escape_without_prefix "check-archiv
 run_fragment_test test_archive_links_rejects_link_chain "check-archive-links.sh rejects a target routed through another symlink"
 run_fragment_test test_archive_links_rejects_benign_route_through_link "check-archive-links.sh refuses an in-tree target routed through a link (conservative)"
 run_fragment_test test_archive_links_fails_loud_when_find_fails "check-archive-links.sh exits 2 when the scan itself fails"
+run_fragment_test test_archive_links_never_writes_through_the_archive "check-archive-links.sh never writes through a symlink planted in the archive"
 run_fragment_test test_archive_links_newline_in_name "check-archive-links.sh reads a newline-bearing link name whole (NUL-delimited)"
 run_fragment_test test_archive_links_accepts_in_tree "check-archive-links.sh passes relative in-tree links and scans every one"
 run_fragment_test test_archive_links_fails_loud_on_bad_input "check-archive-links.sh exits 2 on missing/unlistable/empty/absent input"

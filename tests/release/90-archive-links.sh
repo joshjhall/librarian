@@ -149,6 +149,24 @@ test_archive_links_fails_loud_when_find_fails() {
     assert_contains "$out" "could not scan the extracted tree" "the find-failure branch is the one that refused"
 }
 
+test_archive_links_never_writes_through_the_archive() {
+    # The guard's own scan list once lived INSIDE the extraction root, so an
+    # archive shipping a symlink of that name redirected the write to the
+    # link's target. Plant links at every name the guard might write, pointing
+    # at a sentinel, and assert the sentinel is untouched.
+    local tgz="$WORKDIR/al-plant.tar.gz" victim="$WORKDIR/al-victim.txt" rc=0
+    command printf 'sentinel\n' >"$victim"
+    AL_PREFIX="" al_archive "$tgz" ".check-archive-links.list=$victim" \
+        "links.list=$victim" "tree=$victim" || {
+        assert_true "false" "fixture archive (planted list links) built"
+        return 0
+    }
+    command bash "$LINK_GUARD" "$tgz" >/dev/null 2>&1 || rc=$?
+    assert_exit 1 "$rc" "the planted absolute links are themselves rejected"
+    assert_equals "sentinel" "$(command cat "$victim")" \
+        "no file outside the scratch dir was written through a planted link"
+}
+
 test_archive_links_newline_in_name() {
     # find output used to be newline-split, so a link named `a<NL>b` became two
     # paths and readlink died under set -e with no message. NUL-delimited, the

@@ -55,10 +55,15 @@ if [ -z "$listing" ]; then
     exit 2
 fi
 
+# The archive is untrusted, so it is extracted into its own subdirectory: any
+# file this script writes lives BESIDE the extraction root, never inside it,
+# where a planted symlink of the same name would redirect the write.
 scratch="$(mktemp -d "${TMPDIR:-/tmp}/check-archive-links.XXXXXX")"
 trap 'rm -rf "$scratch"' EXIT
+root="$scratch/tree"
+mkdir "$root"
 
-if ! tar -xzf "$tarball" -C "$scratch"; then
+if ! tar -xzf "$tarball" -C "$root"; then
     echo "check-archive-links: tar could not extract $tarball" >&2
     exit 2
 fi
@@ -113,7 +118,7 @@ escapes() {
             *)
                 depth=$((depth + 1))
                 cur="${cur:+$cur/}$part"
-                if [ "$i" -lt "$n" ] && [ -L "$scratch/$cur" ]; then
+                if [ "$i" -lt "$n" ] && [ -L "$root/$cur" ]; then
                     echo "routes through symlink $cur"
                     return 0
                 fi
@@ -129,15 +134,14 @@ offenders=""
 # NUL-delimited so a link name holding a newline cannot split into fragments.
 # Captured to a file first, never read through a process substitution, so a
 # failing find is an error rather than a scan of zero links that reads as clean.
-# The list lives in the scratch dir; it is a regular file, so -type l skips it.
-list="$scratch/.check-archive-links.list"
-if ! find "$scratch" -type l -print0 >"$list"; then
+list="$scratch/links.list"
+if ! find "$root" -type l -print0 >"$list"; then
     echo "check-archive-links: could not scan the extracted tree" >&2
     exit 2
 fi
 while IFS= read -r -d '' path; do
     links=$((links + 1))
-    rel="${path#"$scratch"/}"
+    rel="${path#"$root"/}"
     target="$(readlink "$path")"
     if why="$(escapes "$rel" "$target")"; then
         bad=$((bad + 1))
