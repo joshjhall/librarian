@@ -37,25 +37,36 @@
 # — next-issue/worktree-safe-recipes.md § Pattern 1 — instead of being
 # `$(...)`-captured.
 #
+# #1166 adds `remove`, the teardown half: worktree-rm.sh calls it so a finished
+# issue's directory does not outlive the issue. It deliberately IGNORES
+# $GOLEM_ID — teardown runs from the main checkout, where GOLEM_ID is unset or
+# names some OTHER golem — and removes BOTH ids the issue can have used:
+# `golem-<issue>` (the id golem-launch.sh exports) and `solo-<issue>`.
+#
 # Usage:
 #   review-scratch.sh init --issue N   # empty + create + stamp; first attempt of a loop
 #   review-scratch.sh path --issue N   # verify the stamp, keep contents
+#   review-scratch.sh remove --issue N # delete golem-N/ and solo-N/ (teardown)
 #
-# Output (stdout):
+# Output (stdout), init / path:
 #   dir=<absolute path>
 #   gid=<golem id or solo-N>
 #   run=<run nonce from the stamp>
+# Output (stdout), remove — one line per directory actually deleted:
+#   removed=<absolute path>
 #
 # Exit codes: 0 = success; 2 = usage error, an unsafe input, or (path) a
-# missing / foreign / malformed stamp. An unsafe input fails loud rather than
-# falling back to a shared directory: falling back is exactly the collision
+# missing / foreign / malformed stamp. remove: 0 = nothing refused (an absent
+# directory is not a refusal); 1 = at least one directory was refused or could
+# not be deleted, each named by a WARNING on stderr. An unsafe input fails loud
+# rather than falling back to a shared directory: falling back is exactly the collision
 # this script exists to remove.
 #
 # Runtime: bash-only, bash-3.2 clean, BSD clean, coreutils via `command`.
 
 set -euo pipefail
 
-USAGE="Usage: review-scratch.sh init|path --issue N"
+USAGE="Usage: review-scratch.sh init|path|remove --issue N"
 
 # die <message> — fail loud: actionable message + usage on stderr, exit 2.
 die() {
@@ -67,7 +78,7 @@ die() {
 _subcmd="$1"
 shift
 case "$_subcmd" in
-    init | path) ;;
+    init | path | remove) ;;
     *) die "unknown subcommand: $_subcmd" ;;
 esac
 
@@ -90,6 +101,65 @@ case "$_issue" in
     '' | *[!0-9]* | 0*) die "--issue must be an issue number (digits, no leading zero), got '$_issue'" ;;
 esac
 
+[ -n "${HOME:-}" ] || die "HOME is unset or empty; refusing to guess a scratch root"
+case "$HOME" in
+    /*) ;;
+    *) die "HOME must be an absolute path, got '$HOME'" ;;
+esac
+
+_root="$HOME/.cache/librarian-review"
+
+if [ "$_subcmd" = "remove" ]; then
+    # Both gids are built from the validated issue number, so neither can carry
+    # a separator or `..`. What remains to refuse is a leaf symlink (live or
+    # dangling), a leaf that is not a directory, and one another user owns on
+    # a shared HOME. The root ITSELF may be a link — the same rule as
+    # cache-entry.sh's cache_entry_path. The canonical comparison after the
+    # `-L` test is defense in depth: with no link at the leaf it cannot differ
+    # today, but it keeps the rm aimed only at <canonical root>/<gid> should
+    # the derivation ever change. The same holds for the uncanonicalizable-root
+    # arm: a leaf exists only under an existing root, which readlink -f always
+    # resolves. Neither arm is reachable from a fixture, so neither has a test;
+    # they are deliberate dead guards, not untested behavior. Like cache_entry_path this is one snapshot
+    # of a name; the window to a by-name `rm` is accepted for a per-user cache.
+    # Refusals warn and carry on to the other gid; the exit status reports
+    # them, and the caller (worktree-rm.sh) treats it as best-effort.
+    _rc=0
+    _root_real="$(command readlink -f "$_root" 2>/dev/null)" || _root_real=""
+    for _gid in "golem-$_issue" "solo-$_issue"; do
+        _dir="$_root/$_gid"
+        # `-L` first: a dangling link fails `-e` but is still not ours to follow.
+        if [ ! -L "$_dir" ] && [ ! -e "$_dir" ]; then
+            continue
+        fi
+        _why=""
+        if [ -L "$_dir" ]; then
+            _why="it is a symlink"
+        elif [ ! -d "$_dir" ]; then
+            _why="it is not a directory"
+        elif [ -z "$_root_real" ] || [ "$_root_real" = "/" ]; then
+            _why="the scratch root '$_root' cannot be canonicalized"
+        elif [ "$(command readlink -f "$_dir" 2>/dev/null || true)" != "$_root_real/$_gid" ]; then
+            _why="it does not canonicalize to '$_root_real/$_gid'"
+        elif [ ! -O "$_dir" ]; then
+            _why="it is not owned by the current user"
+        fi
+        if [ -n "$_why" ]; then
+            command printf 'review-scratch: WARNING: refusing to remove %s: %s\n' "$_dir" "$_why" >&2
+            _rc=1
+            continue
+        fi
+        # No trailing slash, and the leaf was just proven not to be a link.
+        if command rm -rf -- "$_dir" 2>/dev/null && [ ! -e "$_dir" ]; then
+            command printf 'removed=%s\n' "$_dir"
+        else
+            command printf 'review-scratch: WARNING: could not remove %s\n' "$_dir" >&2
+            _rc=1
+        fi
+    done
+    exit "$_rc"
+fi
+
 # An empty GOLEM_ID is treated as unset — the same reading the inline
 # `{GOLEM_ID or "solo"}` gave it.
 _gid="${GOLEM_ID:-}"
@@ -104,13 +174,7 @@ case "$_gid" in
         ;;
 esac
 
-[ -n "${HOME:-}" ] || die "HOME is unset or empty; refusing to guess a scratch root"
-case "$HOME" in
-    /*) ;;
-    *) die "HOME must be an absolute path, got '$HOME'" ;;
-esac
-
-_dir="$HOME/.cache/librarian-review/$_gid"
+_dir="$_root/$_gid"
 _stamp="$_dir/.scratch-stamp"
 
 if [ "$_subcmd" = "init" ]; then
