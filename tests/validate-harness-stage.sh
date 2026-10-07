@@ -440,7 +440,7 @@ STUB
 
     # A removal that FAILS must not be reported as done. An `rm` stub that does
     # nothing leaves the bad copy in place; the refusal has to say so.
-    command printf '#!/bin/sh\nexit 1\n' >"$stubdir/rm"
+    command printf '#!/usr/bin/env sh\nexit 1\n' >"$stubdir/rm"
     command chmod +x "$stubdir/rm"
     LAST_OUT="$(env -uBASH_ENV PATH="$stubdir:$PATH" \
         LIBRARIAN_HARNESS_ORCHESTRATE="$src" "$STAGER" stage orchestrate --dir "$dest" 2>&1)" &&
