@@ -117,6 +117,10 @@ test_unsafe_inputs_fail_loud() {
     assert_exit 2 "$RC" "non-numeric --issue is refused"
     rs bash "$RS" init --issue ""
     assert_exit 2 "$RC" "empty --issue is refused"
+    rs bash "$RS" init --issue 0
+    assert_exit 2 "$RC" "--issue 0 is refused"
+    rs bash "$RS" init --issue 007
+    assert_exit 2 "$RC" "a leading-zero --issue is refused (the stamp is compared as a string)"
     rs GOLEM_ID=.. bash "$RS" init --issue 1
     assert_exit 2 "$RC" "GOLEM_ID=.. is refused"
     rs GOLEM_ID=../keep bash "$RS" init --issue 1
@@ -225,6 +229,24 @@ test_path_refuses_a_dir_it_cannot_vouch_for() {
     assert_contains "$OUT" "no scratch dir for this run" "the symlink is refused as not-a-dir"
 }
 
+test_init_without_a_nonce_keeps_the_old_run() {
+    # An `od` that yields no usable bytes: init must fail loud AND, because the
+    # nonce is minted before the wipe, leave the existing run untouched.
+    local d stub="$SANDBOX/stub-od"
+    rs bash "$RS" init --issue 601
+    d="$(val dir "$OUT")"
+    command printf '{"kept":true}\n' >"$d/attempt1.json"
+    command mkdir -p "$stub"
+    command printf '#!/bin/sh\nexit 1\n' >"$stub/od"
+    command chmod +x "$stub/od"
+    # BASH_ENV scrubbed so no profile can put the real od back ahead of the stub.
+    rs BASH_ENV= PATH="$stub:$PATH" bash "$RS" init --issue 601
+    assert_exit 2 "$RC" "init with no RNG output is refused"
+    assert_contains "$OUT" "could not mint a run nonce" "the refusal names the nonce"
+    assert_true "[ -f '$d/attempt1.json' ]" "a failed mint deletes nothing (mint precedes the wipe)"
+    assert_true "[ -f '$(stamp_of "$d")' ]" "the old run's stamp survives"
+}
+
 # fenced_bash <file> — print only the lines inside ```bash fences: the recipe
 # an agent executes, so a prose mention of the helper cannot satisfy AC3.
 fenced_bash() {
@@ -294,6 +316,7 @@ run_test test_init_on_a_symlinked_dir_removes_only_the_link
 run_test test_unsafe_inputs_fail_loud
 run_test test_init_stamps_a_run_that_path_echoes
 run_test test_path_refuses_a_dir_it_cannot_vouch_for
+run_test test_init_without_a_nonce_keeps_the_old_run
 run_test test_every_recipe_site_uses_the_helper
 
 generate_report

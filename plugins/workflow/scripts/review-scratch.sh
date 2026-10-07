@@ -83,8 +83,11 @@ while [ "$#" -gt 0 ]; do
     esac
 done
 
+# Canonical form only — no `0`, no leading zero — the same spelling
+# review-convergence.sh's is_nonneg_int accepts. The stamp is an identity key
+# compared as a string, so `007` and `7` must not both be valid (#1157).
 case "$_issue" in
-    '' | *[!0-9]*) die "--issue must be an issue number (digits only), got '$_issue'" ;;
+    '' | *[!0-9]* | 0*) die "--issue must be an issue number (digits, no leading zero), got '$_issue'" ;;
 esac
 
 # An empty GOLEM_ID is treated as unset — the same reading the inline
