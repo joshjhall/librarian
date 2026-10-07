@@ -326,11 +326,12 @@ test_copy_failure_refuses_loudly() {
 }
 
 # The cp and mv branches proper — the two the test above does NOT reach. Both
-# end in `_refuse 3` and both are reachable in practice (a full disk, a vanished
-# source, a clobbered destination). The mv branch matters most: it is the atomic
-# rename this file's header calls load-bearing for concurrent-reader safety, so
-# a refactor that stopped treating a failed `mv` as fatal would leave the caller
-# with a `path=` naming a file that was never installed.
+# end in `_refuse 3`, both are covered here, and both are reachable in practice
+# (a full disk, a vanished source, a clobbered destination). The mv branch
+# matters most: it is the atomic rename this file's header calls load-bearing
+# for concurrent-reader safety, so a refactor that stopped treating a failed
+# `mv` as fatal would leave the caller with a `path=` naming a file that was
+# never installed.
 test_copy_and_install_failures() {
     local dest
     dest="$(new_tree)"
@@ -372,22 +373,48 @@ test_copy_and_install_failures() {
     fi
     command rm -rf "$srcdir"
 
-    # (b) THE mv BRANCH IS NOT COVERED, deliberately, and this note is the
-    #     honest alternative to a fixture that passes for the wrong reason.
+    # (b) mv failure — a PATH stub for `mv` that exits 1. `command mv` skips
+    #     functions but still resolves through PATH, so the stub reaches it
+    #     (#1182; the technique #1181 introduced for `cp`/`cmp`). No on-disk
+    #     contrivance works here: a directory at the destination does NOT fail
+    #     the rename, because `mv file dir` moves the file INTO dir and
+    #     succeeds, and the temp file and destination share a directory by
+    #     construction.
     #
-    #     Two contrivances were tried and both were wrong: a directory at the
-    #     destination does NOT fail the rename, because `mv file dir` moves the
-    #     file INTO dir and succeeds — verified with both an empty and a
-    #     non-empty directory. Since the temp file and the destination are
-    #     always in the SAME directory by construction (that is the point of the
-    #     atomic-rename design), a same-filesystem rename onto a path the
-    #     process just proved it can write has no straightforward failure mode
-    #     left to inject.
-    #
-    #     Rather than assert something untrue, the gap is recorded: a regression
-    #     that stopped treating a failed `mv` as fatal would not be caught here.
-    #     The invariant that DOES hold — never exit 0 without a usable path — is
-    #     asserted over every id by test_never_exits_zero_without_a_path.
+    #     The control run below is load-bearing, not just attribution: it
+    #     leaves an identical copy at the destination. If a failed `mv` stopped
+    #     being fatal, `chmod` and `cmp` would then pass against that STALE copy
+    #     and the stager would exit 0 with a `path=` it never installed — the
+    #     exact hazard. On a fresh destination the same regression still exits
+    #     3 (at `chmod`), so the exit code alone would not catch it there.
+    local stubdir
+    srcdir="$(new_tree)"
+    stubdir="$(new_tree)"
+    if [ -z "$srcdir" ] || [ -z "$stubdir" ]; then
+        command rm -rf "$dest" "$srcdir" "$stubdir"
+        skip_test "mktemp unavailable"
+        return 0
+    fi
+    src="$srcdir/harness.js"
+    command printf '// source\n' >"$src"
+
+    LAST_OUT="$(LIBRARIAN_HARNESS_ORCHESTRATE="$src" "$STAGER" stage orchestrate --dir "$dest" 2>&1)" &&
+        LAST_RC=0 || LAST_RC=$?
+    assert_equals "0" "$LAST_RC" "control: the fixture stages under the real mv (exit 0)"
+
+    # BASH_ENV is unset so a profile cannot restore PATH ahead of the stub.
+    command printf '#!/usr/bin/env sh\nexit 1\n' >"$stubdir/mv"
+    command chmod +x "$stubdir/mv"
+    LAST_OUT="$(env -uBASH_ENV PATH="$stubdir:$PATH" \
+        LIBRARIAN_HARNESS_ORCHESTRATE="$src" "$STAGER" stage orchestrate --dir "$dest" 2>&1)" &&
+        LAST_RC=0 || LAST_RC=$?
+    assert_equals "3" "$LAST_RC" "a failed mv exits 3 even over a pre-staged copy"
+    assert_contains "$LAST_OUT" "cannot install" "the refusal names the install step"
+    assert_not_contains "$LAST_OUT" "path=" "a failed install emits no path="
+    local tmpleft
+    tmpleft="$(command find "$dest/.claude/tmp/harness" -name '.orchestrate.*' 2>/dev/null || true)"
+    assert_equals "" "$tmpleft" "a failed install cleans up its temp file"
+    command rm -rf "$srcdir" "$stubdir"
 
     command rm -rf "$dest"
 }
@@ -930,7 +957,7 @@ run_test test_default_dir_is_cwd "stage with no --dir defaults to cwd"
 run_test test_staged_paths_are_not_world_readable "staged dir/file are 0700/0600 regardless of umask"
 run_test test_symlinked_root_resolves "a symlinked stage root resolves to the real directory"
 run_test test_copy_failure_refuses_loudly "an unwritable staging dir exits 3 at mktemp"
-run_test test_copy_and_install_failures "the cp failure branch exits 3 and cleans up"
+run_test test_copy_and_install_failures "the cp and mv failure branches exit 3 and clean up"
 run_test test_staged_copy_mismatch_refuses "a staged copy that differs from its source exits 3"
 run_test test_staged_copy_unverifiable_refuses "a cmp that cannot compare (exit 2) refuses with exit 3"
 run_test test_staging_is_idempotent "staging is idempotent (re-stages, never bails)"
