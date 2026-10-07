@@ -118,6 +118,7 @@ source_fragments "$SCRIPT_DIR/golem-scripts" \
     45-worktree-rm-symlink.sh \
     47-worktree-rm-named.sh \
     48-worktree-rm-post-remove-hook.sh \
+    49-worktree-rm-scratch.sh \
     50-attach.sh \
     60-status.sh \
     70-status-checkpoint.sh \
@@ -448,6 +449,14 @@ run_fragment_test test_worktree_rm_post_remove_hook_repo_local_unrunnable_warns 
 run_fragment_test test_worktree_rm_post_remove_hook_skipped_on_repair_only "worktree-rm: a core.worktree repair alone never runs the hook (#1092 review)"
 run_fragment_test test_worktree_rm_post_remove_hook_repo_local_symlink_runs "worktree-rm: a .golem/post-remove symlink to an executable runs (#1092 review)"
 run_fragment_test test_worktree_rm_post_remove_hook_runs_unbounded_without_bounded_run "worktree-rm: without bounded_run the hook still runs once, unbounded, with a warning (#1123)"
+
+# 49-worktree-rm-scratch.sh (#1166)
+run_fragment_test test_worktree_rm_removes_scratch_and_registry "worktree-rm: issue teardown removes golem-N/solo-N scratch + golem-N.{json,work.jsonl}; a sibling's survive (#1166)"
+run_fragment_test test_worktree_rm_reaps_scratch_without_worktree "worktree-rm: leftover scratch/registry alone is still reaped (#1166)"
+run_fragment_test test_worktree_rm_dirty_refusal_keeps_scratch "worktree-rm: a dirty refusal keeps scratch + registry (#1166)"
+run_fragment_test test_worktree_rm_name_mode_keeps_scratch "worktree-rm: name mode leaves scratch + registry alone (#1166)"
+run_fragment_test test_worktree_rm_refuses_symlinked_scratch "worktree-rm: a symlinked scratch dir is refused with a warning, exit 0 (#1166)"
+run_fragment_test test_worktree_rm_status_files_resolve_from_root "worktree-rm: status files resolve from the main root, not the cwd (#1166)"
 run_fragment_test test_attach_non_integer_exits_2 "golem-attach: non-integer arg exits 2"
 run_fragment_test test_attach_no_session_exits_1 "golem-attach: no session/container exits 1"
 run_fragment_test test_status_empty_reports_no_golems "golem-status: empty state reports no active golems"

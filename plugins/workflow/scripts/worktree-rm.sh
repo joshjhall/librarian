@@ -34,6 +34,9 @@
 #   GOLEM_WORKTREE_DIR (.worktrees)   GOLEM_BRANCH_PREFIX (feature/issue-)
 #   GOLEM_UV_CACHE_DIR (/cache/venv) — the per-issue venv removed on teardown
 #   GOLEM_CARGO_CACHE_DIR (/cache/target) — the per-issue cargo target dir, likewise
+#   GOLEM_STATUS_DIR (.worktrees/.status) — golem-N.json + golem-N.work.jsonl removed (#1166)
+# Issue mode also removes the review scratch dirs ~/.cache/librarian-review/
+# {golem,solo}-N/ through `review-scratch.sh remove` (#1166).
 #   GOLEM_POST_REMOVE_HOOK ("") / GOLEM_POST_REMOVE_HOOK_TIMEOUT (300) — below
 #   GOLEM_RENAME_TIMEOUT (30) — bounds each rename-aside of a wedged leftover
 #
@@ -999,6 +1002,47 @@ if [ "$wt_mode" = "issue" ]; then
     if remove_cache_entry "cargo target dir" "$GOLEM_CARGO_CACHE_DIR" "$root" "$N"; then
         removed=1
     fi
+
+    # The issue's review scratch dirs (#1166). The path is derived ONLY by
+    # review-scratch.sh (#1094) — never re-spelled here — and `remove` covers
+    # both ids the issue can have run under (golem-N, solo-N), refusing a link
+    # or a dir outside its cache root with a stderr WARNING. Its non-zero exit
+    # means "something was refused", already announced, so it is swallowed.
+    scratch_out="$("$SCRIPT_DIR/review-scratch.sh" remove --issue "$N")" || true
+    while IFS= read -r scratch_line; do
+        case "$scratch_line" in
+            removed=*)
+                command echo "  removed review scratch dir ${scratch_line#removed=}"
+                removed=1
+                ;;
+        esac
+    done <<EOF
+$scratch_out
+EOF
+
+    # The golem's status cache and background-work registry (#949), which the
+    # gate-watch idle check reads — a stale one for a reused id is a wrong
+    # input there (#1166). Resolved from the MAIN-checkout root, never the
+    # cwd, by the same join as golem-work.sh's work_join_status_dir: an
+    # absolute GOLEM_STATUS_DIR passes through untouched. Not sourced from
+    # there because that file reassigns SCRIPT_DIR and its tool vars at source
+    # time. Only a regular file is removed; anything else is left with a WARNING.
+    case "$GOLEM_STATUS_DIR" in
+        /*) rm_status_dir="$GOLEM_STATUS_DIR" ;;
+        *) rm_status_dir="$root/$GOLEM_STATUS_DIR" ;;
+    esac
+    for status_file in "$rm_status_dir/golem-$N.json" "$rm_status_dir/golem-$N.work.jsonl"; do
+        if [ -L "$status_file" ] || { [ -e "$status_file" ] && [ ! -f "$status_file" ]; }; then
+            command echo "worktree-rm: WARNING: not removing $status_file (not a regular file)" >&2
+        elif [ -f "$status_file" ]; then
+            if command rm -f -- "$status_file" 2>/dev/null; then
+                command echo "  removed $status_file"
+                removed=1
+            else
+                command echo "worktree-rm: WARNING: could not remove $status_file" >&2
+            fi
+        fi
+    done
 fi
 
 # Snapshot "something was torn down" BEFORE the repair below, which also sets
