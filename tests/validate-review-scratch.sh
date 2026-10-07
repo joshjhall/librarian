@@ -22,6 +22,7 @@
 #   remove refuses a link / non-dir    -> test_remove_refuses_a_dir_it_does_not_own
 #   remove follows a linked ROOT       -> test_remove_accepts_a_symlinked_scratch_root
 #   remove refuses a foreign owner     -> test_remove_refuses_a_foreign_owned_dir (needs root/sudo, else SKIP)
+#   remove reports a failed rm         -> test_remove_reports_an_rm_it_could_not_finish
 #
 # Every run uses a sandboxed HOME; the real cache is never touched.
 #
@@ -420,6 +421,28 @@ test_remove_refuses_a_foreign_owned_dir() {
     assert_true "[ -d '$d' ]" "the foreign-owned dir is left in place"
 }
 
+# #1166: an rm that cannot finish is reported, never read as a removal: a
+# subdirectory without write permission keeps its entry, so `rm -rf` fails and
+# the dir remains. remove must warn `could not remove`, exit 1, and print no
+# `removed=` line. Root ignores the mode bits, so the case SKIPS there.
+test_remove_reports_an_rm_it_could_not_finish() {
+    local base="$SANDBOX/home/.cache/librarian-review" d
+    d="$base/golem-61"
+    command mkdir -p "$d/locked"
+    command printf 'x\n' >"$d/locked/pinned"
+    command chmod 0555 "$d/locked"
+    if [ "$(command id -u)" = 0 ]; then
+        command chmod 0755 "$d/locked"
+        skip_test "root ignores directory write permission; cannot make rm fail"
+        return 0
+    fi
+    rs bash "$RS" remove --issue 61
+    command chmod 0755 "$d/locked"
+    assert_exit 1 "$RC" "an unfinished rm makes remove exit 1"
+    assert_contains "$OUT" "WARNING: could not remove $d" "the failure is named"
+    assert_not_contains "$OUT" "removed=$d" "an unfinished rm is never reported as removed"
+}
+
 run_test test_solo_runs_on_different_issues_are_isolated
 run_test test_golem_id_wins_over_the_issue
 run_test test_init_removes_an_earlier_runs_files
@@ -433,5 +456,6 @@ run_test test_remove_deletes_both_ids_for_the_issue
 run_test test_remove_refuses_a_dir_it_does_not_own
 run_test test_remove_accepts_a_symlinked_scratch_root
 run_test test_remove_refuses_a_foreign_owned_dir
+run_test test_remove_reports_an_rm_it_could_not_finish
 
 generate_report

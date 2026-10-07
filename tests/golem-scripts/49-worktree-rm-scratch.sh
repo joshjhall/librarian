@@ -195,3 +195,29 @@ test_worktree_rm_absolute_status_dir_passes_through() {
     assert_file_exists "$sb/.worktrees/.status/golem-80.json" \
         "the relative default dir is not consulted when the status dir is absolute"
 }
+
+# review-scratch.sh failing OUTRIGHT (exit 2 — here a relative HOME it refuses
+# to guess from) stays best-effort: teardown exits 0 and the status files,
+# which do not depend on HOME, are still removed.
+test_worktree_rm_survives_a_failing_scratch_helper() {
+    local sb
+    new_sandbox sb
+    command mkdir -p "$sb/.worktrees/.status"
+    command printf '{}\n' >"$sb/.worktrees/.status/golem-81.json"
+    RUN_RC=0
+    RUN_OUT="$(cd "$sb" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" -uBASH_ENV \
+            HOME=relative-home \
+            GOLEM_PLUGIN_PROBE="$sb/no-plugin-probe" \
+            TMUX= TMUX_TMPDIR="${SANDBOX_TMUX_DIR:-$sb/.tmux}" \
+            GOLEM_WORKTREE_DIR=.worktrees \
+            GOLEM_STATUS_DIR=.worktrees/.status \
+            GOLEM_BASE_REF=HEAD \
+            GOLEM_WORKTREE_LOCAL_FILES="" \
+            GOLEM_CARGO_CACHE_DIR="$sb/no-cargo-cache" \
+            GOLEM_UV_CACHE_DIR="$sb/no-uv-cache" \
+            "$REAL_BASH" "$WT_RM" 81 2>&1)" || RUN_RC=$?
+    assert_exit 0 "$RUN_RC" "a failing review-scratch.sh never fails teardown"
+    assert_contains "$RUN_OUT" "HOME must be an absolute path" "the helper's refusal is visible"
+    _scr_gone "$sb/.worktrees/.status/golem-81.json" "status files are still removed after the helper fails"
+}

@@ -459,6 +459,7 @@ run_fragment_test test_worktree_rm_refuses_symlinked_scratch "worktree-rm: a sym
 run_fragment_test test_worktree_rm_status_files_resolve_from_root "worktree-rm: status files resolve from the main root, not the cwd (#1166)"
 run_fragment_test test_worktree_rm_refuses_irregular_status_files "worktree-rm: a symlinked/dir status file is refused with a warning, exit 0 (#1166 review)"
 run_fragment_test test_worktree_rm_absolute_status_dir_passes_through "worktree-rm: an absolute GOLEM_STATUS_DIR passes through (#1166 review)"
+run_fragment_test test_worktree_rm_survives_a_failing_scratch_helper "worktree-rm: a failing review-scratch.sh stays best-effort (#1166 review)"
 run_fragment_test test_attach_non_integer_exits_2 "golem-attach: non-integer arg exits 2"
 run_fragment_test test_attach_no_session_exits_1 "golem-attach: no session/container exits 1"
 run_fragment_test test_status_empty_reports_no_golems "golem-status: empty state reports no active golems"
