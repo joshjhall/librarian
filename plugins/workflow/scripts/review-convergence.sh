@@ -462,7 +462,7 @@ check_provenance() {
     # null `.run` can never equal it by spelling.
     if [ "$_prov_run" != "\"$run\"" ]; then
         if [ "$_prov_run" = "null" ]; then
-            die "review-convergence: $_prov_what '$1' has run null, not --run $run — it carries no run stamp: either a pre-#1157 or foreign file, or the harness ran without args.run; re-run the harness with run: \"$run\" (#1157)"
+            die "review-convergence: $_prov_what '$1' has run null, not --run $run — it carries no run stamp: either a pre-#1157 or foreign file, or the harness ran without a valid args.run; re-run the harness with run: \"$run\" (#1157)"
         fi
         die "review-convergence: $_prov_what '$1' has run $_prov_run, not --run $run — written by a different review run of this issue (a re-run, or a re-attempt reusing the filename); re-extract it from this run's harness output (#1157)"
     fi

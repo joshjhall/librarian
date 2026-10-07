@@ -213,6 +213,17 @@ test_path_refuses_a_dir_it_cannot_vouch_for() {
     rs bash "$RS" path --issue 505
     assert_exit 2 "$RC" "a stamp with an unsafe run is refused"
     assert_contains "$OUT" "malformed run stamp" "the refusal names the malformed stamp"
+    # Shapes init never writes: each must fail HERE, as malformed, not later as
+    # a misleading harness null-run or another-issue mismatch.
+    command printf 'issue=505\nrun=0123456789abcdef0\n' >"$(stamp_of "$d")"
+    rs bash "$RS" path --issue 505
+    assert_contains "$OUT" "malformed run stamp (run=" "a 17-char run is malformed"
+    command printf 'issue=505\nrun=0123456789abcdeg\n' >"$(stamp_of "$d")"
+    rs bash "$RS" path --issue 505
+    assert_contains "$OUT" "malformed run stamp (run=" "a non-hex run is malformed"
+    command printf 'issue=0505\nrun=0123456789abcdef\n' >"$(stamp_of "$d")"
+    rs bash "$RS" path --issue 505
+    assert_contains "$OUT" "malformed run stamp (issue=" "a leading-zero stamp issue is malformed, not a mismatch"
     # No trailing newline: the last line must still be read.
     command printf 'issue=505\nrun=0123456789abcdef' >"$(stamp_of "$d")"
     rs bash "$RS" path --issue 505

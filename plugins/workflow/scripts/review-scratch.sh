@@ -146,12 +146,19 @@ else
             run) _run="$_v" ;;
         esac
     done <"$_stamp"
+    # Exactly the shape init writes: a canonical issue number and a 16-hex
+    # nonce. Anything else was not written by init, so it fails HERE with the
+    # malformed-stamp message rather than downstream as a misleading mismatch.
     case "$_st_issue" in
-        '' | *[!0-9]*) die "scratch dir '$_dir' has a malformed run stamp (issue='$_st_issue'); $_hint" ;;
+        '' | *[!0-9]* | 0*) die "scratch dir '$_dir' has a malformed run stamp (issue='$_st_issue'); $_hint" ;;
     esac
     case "$_run" in
-        '' | *[!A-Za-z0-9._-]*) die "scratch dir '$_dir' has a malformed run stamp (run='$_run'); $_hint" ;;
+        *[!0-9a-f]*) _bad_run=1 ;;
+        *) _bad_run=0 ;;
     esac
+    if [ "$_bad_run" -eq 1 ] || [ "${#_run}" -ne 16 ]; then
+        die "scratch dir '$_dir' has a malformed run stamp (run='$_run'); $_hint"
+    fi
     if [ "$_st_issue" != "$_issue" ]; then
         die "scratch dir '$_dir' is stamped for issue $_st_issue, not --issue $_issue — another issue's run (a GOLEM_ID reused across issues?); $_hint"
     fi

@@ -272,6 +272,18 @@ const issue = args && args.issue && typeof args.issue === 'object' ? args.issue 
 // which the convergence check refuses rather than matching on garbage.
 const RUN = runIdOf(args && args.run)
 
+// True when `args.run` is PRESENT but `runIdOf` rejects it (#1157). Nulling it
+// silently would spend the whole cycle and then have review-convergence.sh
+// refuse the result as "no run stamp" — misdiagnosing, say, an unsubstituted
+// `{run}` placeholder as an omission. So a bad value fails at dispatch, like an
+// unknown key (#597). Only an absent (`undefined`) run is the null default.
+const invalidRun = (a) =>
+  !!a &&
+  typeof a === 'object' &&
+  !Array.isArray(a) &&
+  a.run !== undefined &&
+  runIdOf(a.run) === null
+
 // Re-review narrowing inputs (#492), all optional — absent ⇒ full review. The
 // skill computes these each re-review cycle (it owns git; this sandbox does not):
 // the fix-commit delta since the last reviewed SHA, and which dimensions blocked
@@ -2175,6 +2187,17 @@ if (unknownPhase(args)) {
       `accepted values are: ${KNOWN_PHASES.join(', ')} (omit the key for the 'pre-pr' default). ` +
       'An unrecognized phase would silently run a pre-PR review that never reads the ' +
       "PR's comments. Fix the value and re-dispatch."
+  )
+}
+
+// Reject a malformed `run` VALUE (#1157, see `invalidRun`). JSON-stringified so
+// a placeholder like "{run}" is visible verbatim in the message.
+if (invalidRun(args)) {
+  throw new Error(
+    `review harness: invalid run ${JSON.stringify(args.run)} — ` +
+      "expected the run= line printed by review-scratch.sh (a string of [A-Za-z0-9._-], 1-64 chars). " +
+      'A malformed run would be stamped null and every result refused downstream. ' +
+      'Fix the value and re-dispatch.'
   )
 }
 
