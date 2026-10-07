@@ -142,7 +142,7 @@ test_archive_links_fails_loud_when_find_fails() {
         return 0
     }
     command mkdir -p "$stub"
-    command printf '#!/bin/sh\nexit 1\n' >"$stub/find"
+    command printf '#!/bin/sh\nexit 1\n' >"$stub/find" # lint-allow-path: shebang of a stub file, not a tool call
     command chmod +x "$stub/find"
     out="$(/usr/bin/env -uBASH_ENV PATH="$stub:$PATH" bash "$LINK_GUARD" "$tgz" 2>&1)" || rc=$?
     assert_exit 2 "$rc" "a failing find is an error, not a clean scan"
