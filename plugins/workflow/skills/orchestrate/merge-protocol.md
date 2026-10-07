@@ -123,7 +123,7 @@ when `git merge` reports conflicts in the legacy path):
    another's change — so the correct resolution is the **union** of all three:
 
    ```text
-   ... -e GOLEM_ID=golem-{N} "claude --permission-mode auto '/workflow:next-issue ...' ; claude --permission-mode auto '/workflow:ship-issue ...'"
+   ... -e GOLEM_ID=golem-{N} sh -c "claude --permission-mode auto '/workflow:next-issue ...' ; claude --permission-mode auto '/workflow:ship-issue ...'"
    ```
 
    The old "same region → escalate" reading would have forced a needless human

@@ -165,7 +165,9 @@ inbox_in() {
 # prepend to PATH via stdout is unnecessary; callers use "$sb/bin".
 # Optional knobs: TMUX_STUB_ENV_LOG (dump env, #1125), TMUX_STUB_CMD_LOG (save
 # new-session's LAST arg — the session command — verbatim, so a test can run it,
-# #1153), TMUX_STUB_RC (exit with this status instead of 0).
+# #1153), TMUX_STUB_ARGV_LOG (new-session's args one per line, so a test can
+# assert word BOUNDARIES a joined $* hides, #1159), TMUX_STUB_RC (exit with this
+# status instead of 0).
 plant_tmux_stub() {
     local sb="$1"
     command mkdir -p "$sb/bin"
@@ -180,6 +182,7 @@ if [ "${1:-}" = new-session ] && [ -n "${TMUX_STUB_CMD_LOG:-}" ]; then
     for last in "$@"; do :; done
     printf '%s' "$last" >"$TMUX_STUB_CMD_LOG"
 fi
+[ "${1:-}" = new-session ] && [ -n "${TMUX_STUB_ARGV_LOG:-}" ] && printf '%s\n' "$@" >"$TMUX_STUB_ARGV_LOG"
 exit "${TMUX_STUB_RC:-0}"
 EOF
     command chmod +x "$sb/bin/tmux"

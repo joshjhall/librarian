@@ -47,6 +47,33 @@ test_launch_print_emits_new_session() {
     assert_not_contains "$RUN_OUT" "'/ship-issue" "never emits the bare (un-namespaced) /ship-issue"
 }
 
+# The PRINTED line hands tmux the payload as the three words `sh` `-c`
+# `<payload>`, same as the launch path (#1159): an operator pastes it, and a
+# one-string command would run under their default-shell (fish/csh). Executed
+# through sh against the tmux stub and asserted per ARG, since a substring
+# check cannot tell `sh -c "X"` from the one string `sh -c X`.
+test_launch_print_payload_is_argv_sh_c() {
+    local sb argv n
+    new_sandbox sb
+    run_in "$sb" "$LAUNCH" print 5 --level 3
+    assert_exit 0 "$RUN_RC" "print <N> exits 0"
+    plant_tmux_stub "$sb"
+    # TMUX='' + TMUX_TMPDIR: if the stub is ever bypassed, a real tmux reaches
+    # only a sandbox server, never the shared default one live golems run on.
+    TMUX='' TMUX_TMPDIR="${SANDBOX_TMUX_DIR:-$sb/.tmux}" PATH="$sb/bin:$PATH" TMUX_STUB_ARGV_LOG="$sb/argv.log" command sh -c "$RUN_OUT" >/dev/null 2>&1 || true
+    argv="$(command cat "$sb/argv.log" 2>/dev/null || true)"
+    assert_contains "$argv" "golem-5" "control: the printed line reached the stub"
+    n="$(command printf '%s\n' "$argv" | command wc -l)"
+    n=$((n + 0))
+    assert_equals "sh" "$(command printf '%s\n' "$argv" | command sed -n "$((n - 2))p")" \
+        "the third-to-last tmux arg is exactly 'sh'"
+    assert_equals "-c" "$(command printf '%s\n' "$argv" | command sed -n "$((n - 1))p")" \
+        "the second-to-last tmux arg is exactly '-c'"
+    assert_equals "claude --permission-mode auto '/workflow:next-issue 5 --level 3' ; claude --permission-mode auto '/workflow:ship-issue'" \
+        "$(command printf '%s\n' "$argv" | command sed -n "${n}p")" \
+        "the last arg is exactly the whole chained payload"
+}
+
 # OPERATOR-FACING STDERR must namespace its slash-commands too (#584).
 #
 # The assertions above cover the LAUNCH LINE. The two refusal messages — the

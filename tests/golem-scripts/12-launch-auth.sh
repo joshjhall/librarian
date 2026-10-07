@@ -219,6 +219,92 @@ test_launch_auth_missing_token_file_still_starts_claude() {
         "both claude calls still run, tokenless, when the token file has vanished"
 }
 
+# The session command reaches tmux as the three words `sh` `-c` `<payload>`,
+# never as one string (#1159): tmux hands a one-string command to its
+# default-shell, which comes from $SHELL and may be fish or csh. Asserted per
+# ARG, since a joined argv log cannot tell `sh -c X` from the one string `sh -c X`.
+test_launch_auth_payload_is_argv_sh_c() {
+    local sb argv n
+    new_sandbox sb
+    run_launch_auth "$sb" OP_SECRETS_CACHE="$sb/no-such-cache" TMUX_STUB_ARGV_LOG="$sb/argv.log" \
+        ANTHROPIC_AUTH_TOKEN=sk-argv-1159 # gitleaks:allow (fake fixture token)
+    assert_exit 0 "$RUN_RC" "launch dispatches (exit 0)"
+    argv="$(command cat "$sb/argv.log" 2>/dev/null || true)"
+    assert_contains "$argv" "golem-7" "control: the per-arg log is this launch's"
+    n="$(command printf '%s\n' "$argv" | command wc -l)"
+    n=$((n + 0))
+    assert_equals "sh" "$(command printf '%s\n' "$argv" | command sed -n "$((n - 2))p")" \
+        "the third-to-last tmux arg is exactly 'sh'"
+    assert_equals "-c" "$(command printf '%s\n' "$argv" | command sed -n "$((n - 1))p")" \
+        "the second-to-last tmux arg is exactly '-c'"
+    assert_contains "$(command printf '%s\n' "$argv" | command sed -n "${n}p")" "[ -r '$sb/golem-auth." \
+        "the last arg is the whole payload, opening with the token-file guard"
+    assert_not_contains "$argv" "sk-argv-1159" "the token is still in no tmux arg (#1153)"
+    # Same boundaries with NO token: the empty auth prefix leaves the payload
+    # opening with `claude`, and it must still be argv `sh` `-c`, not one string.
+    new_sandbox sb
+    run_launch_auth "$sb" OP_SECRETS_CACHE="$sb/no-such-cache" TMUX_STUB_ARGV_LOG="$sb/argv.log"
+    assert_exit 0 "$RUN_RC" "a tokenless launch dispatches (exit 0)"
+    argv="$(command cat "$sb/argv.log" 2>/dev/null || true)"
+    n="$(command printf '%s\n' "$argv" | command wc -l)"
+    n=$((n + 0))
+    assert_equals "sh -c" "$(command printf '%s\n' "$argv" | command sed -n "$((n - 2))p;$((n - 1))p" | command tr '\n' ' ' | command sed 's/ $//')" \
+        "tokenless: the two args before the payload are exactly 'sh' '-c'"
+    assert_contains "$(command printf '%s\n' "$argv" | command sed -n "${n}p")" "claude --permission-mode auto '/workflow:next-issue 7" \
+        "tokenless: the last arg is the whole payload, opening at claude"
+}
+
+# End to end against a REAL tmux with $SHELL pointing at a non-POSIX stand-in (a
+# script that logs and fails, as fish/csh fail on `.`/`export`): the golem must
+# still start WITH its token, and the stand-in must never run (#1159). Before
+# the fix tmux ran the payload through that shell and the token never arrived.
+test_launch_auth_non_posix_shell_still_delivers_token() {
+    local sb i sock
+    if ! command -v tmux >/dev/null 2>&1; then
+        skip_test "tmux not installed (the default-shell path needs a real server)"
+        return 0
+    fi
+    new_sandbox sb
+    # Fail closed on isolation: tmux 3.5a reads a TMUX_TMPDIR that does NOT exist
+    # as unset and falls back to the SHARED default server, where this launch
+    # would land golem-7 and the cleanup below would kill every live golem.
+    if [ -z "${SANDBOX_TMUX_DIR:-}" ] || [ ! -d "$SANDBOX_TMUX_DIR" ]; then
+        assert_equals "an existing dir" "${SANDBOX_TMUX_DIR:-unset} (missing)" \
+            "sandbox tmux dir exists before a real tmux runs"
+        return 0
+    fi
+    command mkdir -p "$sb/fakebin"
+    command printf '%s\n' '#!/usr/bin/env sh' \
+        'printf "%s\n" "${ANTHROPIC_AUTH_TOKEN:-}" >>"$CLAUDE_ENV_LOG"' >"$sb/fakebin/claude"
+    command printf '%s\n' '#!/usr/bin/env sh' 'printf "%s\n" "$*" >>"$BAD_SHELL_LOG"' 'exit 1' >"$sb/badshell"
+    command chmod +x "$sb/fakebin/claude" "$sb/badshell"
+    # PATH last wins over run_launch_auth's stub dir, so the REAL tmux runs.
+    run_launch_auth "$sb" OP_SECRETS_CACHE="$sb/no-such-cache" \
+        SHELL="$sb/badshell" BAD_SHELL_LOG="$sb/badshell.log" CLAUDE_ENV_LOG="$sb/claude-env.log" \
+        PATH="$sb/fakebin:$PATH" ANTHROPIC_AUTH_TOKEN=sk-shell-1159 # gitleaks:allow (fake fixture token)
+    assert_exit 0 "$RUN_RC" "launch under a non-POSIX SHELL dispatches (exit 0)"
+    # Bounded wait for both chained claude calls (~10s), never GNU timeout.
+    i=0
+    while [ "$i" -lt 100 ]; do
+        [ "$(command wc -l 2>/dev/null <"$sb/claude-env.log" || echo 0)" -ge 2 ] && break
+        command sleep 0.1
+        i=$((i + 1))
+    done
+    # Clean up by explicit socket PATH (-S), never by TMUX/TMUX_TMPDIR: $TMUX
+    # outranks TMUX_TMPDIR inside a golem, and a missing TMUX_TMPDIR falls back
+    # to the shared server — either way kill-server would kill every live golem.
+    # -S on a path with no socket errors instead of falling back.
+    sock="$SANDBOX_TMUX_DIR/tmux-$(command id -u)/default"
+    assert_equals "socket" "$([ -S "$sock" ] && echo socket || echo "none at $sock")" \
+        "control: the launch's server is the sandbox socket, so cleanup reaches it"
+    [ -S "$sock" ] && TMUX='' tmux -S "$sock" kill-server >/dev/null 2>&1 || true
+    assert_equals "sk-shell-1159
+sk-shell-1159" "$(command cat "$sb/claude-env.log" 2>/dev/null)" \
+        "both claude calls receive the token despite a non-POSIX default-shell"
+    assert_equals "" "$(command cat "$sb/badshell.log" 2>/dev/null)" \
+        "the operator's default-shell never ran the session payload"
+}
+
 # A token carrying shell metacharacters round-trips byte-for-byte: the file is
 # sourced by sh, so an unquoted `'` would break it and a `$` would expand.
 test_launch_auth_token_quoting_round_trips() {
