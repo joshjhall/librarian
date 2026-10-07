@@ -180,6 +180,7 @@ run_fragment_test test_launch_auth_cache_injects_token "golem-launch: cache toke
 run_fragment_test test_launch_auth_launcher_base_url_not_overridden "golem-launch: a launcher ANTHROPIC_BASE_URL wins over the cache and reaches the golem via the file (#244, #1163)"
 run_fragment_test test_launch_auth_inherited_base_url_survives_stale_server_env "golem-launch: an inherited base URL beats a running server's stale global env (#1163)"
 run_fragment_test test_launch_auth_base_url_cache_only_and_absent "golem-launch: a cache-only URL beats a stale one; no URL known writes no base-URL line (#1163)"
+run_fragment_test test_launch_auth_base_url_quoting_and_no_token_boundary "golem-launch: a metachar base URL round-trips; no token still writes no file (#1163, #1170)"
 run_fragment_test test_launch_sh_quote_round_trips_edge_shapes "golem-launch: _sh_quote round-trips quote/empty edge shapes and uses no patsub replacement (#1153)"
 run_fragment_test test_launch_auth_missing_token_file_still_starts_claude "golem-launch: a vanished token file degrades to a tokenless start, never a dead session (#1153)"
 run_fragment_test test_launch_auth_token_quoting_round_trips "golem-launch: a metachar token round-trips through the token file (#1153)"

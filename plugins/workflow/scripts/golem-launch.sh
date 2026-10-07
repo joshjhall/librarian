@@ -250,7 +250,9 @@ _sh_quote() {
 # when the launcher has one: an already-running tmux server hands a new session
 # its GLOBAL env, not this client's, so the golem would otherwise run with no
 # base URL or a stale one and send a proxy-issued token to the wrong endpoint
-# (#1163). The golem's session command sources then deletes it
+# (#1163). With no resolved token no file is written at all, so that launch's
+# URL still rides the server env (#1170). The golem's session command sources
+# then deletes it
 # (#1153), so the token never appears in any argv. Fails (non-zero, no path)
 # when the file cannot be created or written; a partial file is removed. A
 # session killed before its first command runs leaves the file behind — still

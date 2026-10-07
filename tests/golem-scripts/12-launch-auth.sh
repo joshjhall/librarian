@@ -140,6 +140,31 @@ test_launch_auth_base_url_cache_only_and_absent() {
         "the session's own URL is left untouched"
 }
 
+# A URL carrying shell metacharacters round-trips through the sourced file, and
+# the no-token boundary is pinned: with a launcher URL but NO resolvable token
+# no file is written, so nothing reaches argv. Delivering the URL there is
+# #1170; this assertion is what that change must flip deliberately.
+test_launch_auth_base_url_quoting_and_no_token_boundary() {
+    local sb url log
+    url="https://proxy.example/a?x=1&y='q' \$HOME"
+    new_sandbox sb
+    run_launch_auth "$sb" OP_SECRETS_CACHE="$sb/no-such-cache" TMUX_STUB_CMD_LOG="$sb/session-cmd" \
+        ANTHROPIC_AUTH_TOKEN=sk-quote-1163 ANTHROPIC_BASE_URL="$url" # gitleaks:allow (fake fixture token)
+    assert_exit 0 "$RUN_RC" "metachar-URL launch dispatches (exit 0)"
+    _run_session_cmd "$sb"
+    assert_equals "sk-quote-1163|$url" "$(command head -n 1 "$sb/claude-env.log" 2>/dev/null)" \
+        "a metachar base URL round-trips through the token file byte-for-byte"
+
+    new_sandbox sb
+    run_launch_auth "$sb" OP_SECRETS_CACHE="$sb/no-such-cache" TMUX_STUB_CMD_LOG="$sb/session-cmd" \
+        ANTHROPIC_BASE_URL=https://launcher.example
+    assert_exit 0 "$RUN_RC" "URL-only launch dispatches (exit 0)"
+    log="$(command cat "$sb/tmux-args.log" 2>/dev/null || true)"
+    assert_contains "$log" "new-session -d -s golem-7" "control: the tmux argv was logged"
+    assert_not_contains "$log" "golem-auth." "no token → no auth file is sourced (#1170 boundary)"
+    assert_equals "" "$(command ls "$sb"/golem-auth.* 2>/dev/null)" "no token → no auth file written"
+}
+
 # _sh_quote itself, sliced out and driven directly over the shapes that break a
 # naive quoter: leading/trailing/adjacent quotes, and an empty value. Each must
 # round-trip through `sh` byte-for-byte — on the bash running this suite only.
