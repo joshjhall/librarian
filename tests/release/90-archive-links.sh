@@ -214,6 +214,27 @@ test_archive_links_fails_loud_on_bad_input() {
     assert_exit 2 "$rc" "no argument prints usage"
 }
 
+test_archive_links_fails_loud_when_extract_fails() {
+    # A member named `../links.list` lists cleanly, but both GNU tar and bsdtar
+    # refuse to extract a `..` path. That drives the extract-failure branch (exit
+    # 2, never a scan of a partial tree), and the name is the guard's own scan
+    # list, which sits beside the extraction root. So it also pins that a
+    # traversal entry cannot land a file there: the guard runs under a private
+    # TMPDIR that must be empty again afterwards. -P keeps the `../` in the name.
+    local dir="$WORKDIR/al-dotdot" tmp="$WORKDIR/al-dotdot-tmp" out rc=0 left
+    command mkdir -p "$dir/in" "$tmp"
+    command printf 'x\n' >"$dir/links.list"
+    (cd "$dir/in" && command tar -czPf ../evil.tar.gz ../links.list) 2>/dev/null || {
+        assert_true "false" "fixture archive (..-member) built"
+        return 0
+    }
+    out="$(TMPDIR="$tmp" command bash "$LINK_GUARD" "$dir/evil.tar.gz" 2>&1)" || rc=$?
+    assert_exit 2 "$rc" "an archive that lists but cannot extract fails loud"
+    assert_contains "$out" "could not extract" "the extract-failure branch is the one that refused"
+    left="$(command ls -A "$tmp")"
+    assert_equals "" "$left" "no traversal entry escaped the extraction root, and scratch was cleaned"
+}
+
 # The shipped tree itself: archive this repo's HEAD exactly as release.yml does
 # and run the guard. This is what catches the next committed escaping link at
 # pre-push instead of at tag time.
