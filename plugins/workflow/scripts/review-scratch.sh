@@ -20,6 +20,16 @@
 #   2. `init` empties the directory — the first attempt of a review loop never
 #      sees a file an earlier run left behind.
 #
+# #1157 ties the directory to ONE run. `init` writes a stamp file naming the
+# issue and a fresh run nonce; `path` refuses a directory whose stamp is absent
+# or names another issue, and echoes the stamp's nonce. The caller passes that
+# nonce to the review harness (`args.run`, stamped into every result) and to
+# `review-convergence.sh check --run`, which refuses any result file from a
+# different run — even one with the same issue and cycle, which #1150's stamp
+# cannot tell apart. `path` no longer creates the directory: a later attempt
+# that finds no stamp has lost its run, and silently starting a fresh one would
+# drop the --prev-result history the loop's stop decision reads.
+#
 # WHY A SCRIPT, and not a fourth copy of the inline spelling: three copies of a
 # recipe drift (that is how this bug's fallback was duplicated in the first
 # place), and the callers run worktree-isolated, where the Bash tool refuses a
@@ -28,16 +38,18 @@
 # `$(...)`-captured.
 #
 # Usage:
-#   review-scratch.sh init --issue N   # empty + create; first attempt of a loop
-#   review-scratch.sh path --issue N   # create if absent, keep contents
+#   review-scratch.sh init --issue N   # empty + create + stamp; first attempt of a loop
+#   review-scratch.sh path --issue N   # verify the stamp, keep contents
 #
 # Output (stdout):
 #   dir=<absolute path>
 #   gid=<golem id or solo-N>
+#   run=<run nonce from the stamp>
 #
-# Exit codes: 0 = success; 2 = usage error or an unsafe input. An unsafe input
-# fails loud rather than falling back to a shared directory: falling back is
-# exactly the collision this script exists to remove.
+# Exit codes: 0 = success; 2 = usage error, an unsafe input, or (path) a
+# missing / foreign / malformed stamp. An unsafe input fails loud rather than
+# falling back to a shared directory: falling back is exactly the collision
+# this script exists to remove.
 #
 # Runtime: bash-only, bash-3.2 clean, BSD clean, coreutils via `command`.
 
@@ -96,13 +108,52 @@ case "$HOME" in
 esac
 
 _dir="$HOME/.cache/librarian-review/$_gid"
+_stamp="$_dir/.scratch-stamp"
 
 if [ "$_subcmd" = "init" ]; then
+    # 16 hex chars from the kernel RNG. `od` + `tr` rather than `xxd` or
+    # `openssl`, which base macOS / bare linux may lack. Minted BEFORE the wipe
+    # so a host with no RNG fails without having deleted the old run.
+    _run="$(command od -An -N8 -tx1 /dev/urandom 2>/dev/null | command tr -d ' \n')" || _run=""
+    case "$_run" in
+        *[!0-9a-f]*) _run="" ;;
+    esac
+    [ "${#_run}" -eq 16 ] || die "could not mint a run nonce from /dev/urandom (got '$_run')"
     # No trailing slash: if $_dir is a symlink this removes the LINK, never the
     # tree it points at.
     command rm -rf -- "$_dir"
+    command mkdir -p -- "$_dir"
+    command printf 'issue=%s\nrun=%s\n' "$_issue" "$_run" >"$_stamp"
+else
+    # path: the directory must already belong to THIS issue's run. Read the
+    # stamp with a pure-bash parse (CLAUDE.md runtime policy: no sed for a
+    # trivial format). Unknown keys are ignored; a missing key is malformed.
+    _hint="run 'review-scratch.sh init --issue $_issue' on the loop's first attempt, which starts a new run"
+    if [ -L "$_dir" ] || [ ! -d "$_dir" ]; then
+        die "no scratch dir for this run at '$_dir'; $_hint"
+    fi
+    if [ ! -f "$_stamp" ] || [ ! -r "$_stamp" ]; then
+        die "scratch dir '$_dir' has no readable run stamp (made before #1157, or not by init); $_hint"
+    fi
+    _st_issue=""
+    _run=""
+    while IFS='=' read -r _k _v || [ -n "$_k" ]; do
+        case "$_k" in
+            issue) _st_issue="$_v" ;;
+            run) _run="$_v" ;;
+        esac
+    done <"$_stamp"
+    case "$_st_issue" in
+        '' | *[!0-9]*) die "scratch dir '$_dir' has a malformed run stamp (issue='$_st_issue'); $_hint" ;;
+    esac
+    case "$_run" in
+        '' | *[!A-Za-z0-9._-]*) die "scratch dir '$_dir' has a malformed run stamp (run='$_run'); $_hint" ;;
+    esac
+    if [ "$_st_issue" != "$_issue" ]; then
+        die "scratch dir '$_dir' is stamped for issue $_st_issue, not --issue $_issue — another issue's run (a GOLEM_ID reused across issues?); $_hint"
+    fi
 fi
-command mkdir -p -- "$_dir"
 
 command printf 'dir=%s\n' "$_dir"
 command printf 'gid=%s\n' "$_gid"
+command printf 'run=%s\n' "$_run"

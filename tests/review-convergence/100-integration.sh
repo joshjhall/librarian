@@ -16,7 +16,7 @@ test_loop_terminates_on_a_never_converging_review() {
     local cycle=1 verdict="" out iterations=0
     while [ "$iterations" -lt 20 ]; do
         iterations=$((iterations + 1))
-        out="$("$RC" check --cycle "$cycle" --max-cycles 5 --result "$FIXTURES/novel.json" \
+        out="$("$RC" check --issue "$T_ISSUE" --run "$T_RUN" --cycle "$cycle" --max-cycles 5 --result "$FIXTURES/novel.json" \
             --delta-lines 400 --prev-delta-lines 400 --partial false)"
         verdict="$(val verdict "$out")"
         [ "$verdict" = "stop" ] && break
@@ -33,7 +33,7 @@ test_loop_terminates_early_on_a_converged_review() {
     local cycle=1 verdict="" out iterations=0
     while [ "$iterations" -lt 20 ]; do
         iterations=$((iterations + 1))
-        out="$("$RC" check --cycle "$cycle" --max-cycles 5 --result "$FIXTURES/zero.json" \
+        out="$("$RC" check --issue "$T_ISSUE" --run "$T_RUN" --cycle "$cycle" --max-cycles 5 --result "$FIXTURES/zero.json" \
             --delta-lines 400 --prev-delta-lines 400 --partial false)"
         verdict="$(val verdict "$out")"
         [ "$verdict" = "stop" ] && break

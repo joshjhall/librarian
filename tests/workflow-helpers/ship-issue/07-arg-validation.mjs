@@ -62,7 +62,7 @@ export async function run() {
   // build-from-contract assertion above cannot catch on its own.
   // 13 -> 14 in #550, which added `reviewRoute` (the doc-only routing verdict
   // from scripts/review-route.sh).
-  eq(KNOWN_ARG_KEYS.length, 14, "KNOWN_ARG_KEYS: holds all 14 contract keys");
+  eq(KNOWN_ARG_KEYS.length, 15, "KNOWN_ARG_KEYS: holds all 15 contract keys (run added by #1157)");
   ok(
     KNOWN_ARG_KEYS.includes("reviewRoute"),
     "KNOWN_ARG_KEYS: carries reviewRoute (#550) — without it the harness THROWS on a routed dispatch, since an unknown key is a hard error (#597)",

@@ -48,6 +48,7 @@ export function run() {
       phase: "pr-cycle",
       files: ["a.js", "b.js", "c.js"],
       issue: { number: 1150, title: "provenance" },
+      run: "a1b2c3d4e5f60718",
     },
   );
 
@@ -74,6 +75,7 @@ export function run() {
     "cycle",
     "phase",
     "issue",
+    "run",
     "scanner",
     "blocking",
     "deferrable",
@@ -142,6 +144,25 @@ export function run() {
     }
     const scalar = extractHelpers(SHIP, ["buildResult"], { issue: 1150 }).buildResult;
     eq(scalar({}).issue, null, "buildResult: a bare-number args.issue (not { number }) is null (#1150)");
+  }
+
+  // --- (1a'') Provenance: the result names its run (#1157) -----------------
+  //
+  // issue + cycle are identical across a re-run of the same issue; only the run
+  // nonce tells review-convergence.sh --run the two files apart. Exact-string
+  // assertion so a constant or a coerced value fails.
+  eq(buildResult({}).run, "a1b2c3d4e5f60718", "buildResult: run is args.run verbatim (#1157)");
+  {
+    const bare = extractHelpers(SHIP, ["buildResult"], { cycle: 1 }).buildResult;
+    eq(bare({}).run, null, "buildResult: run is null, not omitted, with no args.run (#1157)");
+    // No coercion and no charset escape: each must be null, never a stamp that
+    // could equal a --run value by spelling.
+    for (const bad of [12345, true, ["x"], { id: "x" }, "", "a/b", "a b", "x".repeat(65)]) {
+      const b = extractHelpers(SHIP, ["buildResult"], { run: bad }).buildResult;
+      eq(b({}).run, null, `buildResult: run ${JSON.stringify(bad).slice(0, 20)} is null — [A-Za-z0-9._-]{1,64} strings only (#1157)`);
+    }
+    const edge = extractHelpers(SHIP, ["buildResult"], { run: "x".repeat(64) }).buildResult;
+    eq(edge({}).run, "x".repeat(64), "buildResult: a 64-char run is accepted — the cap is inclusive (#1157)");
   }
   eq(
     buildResult({}).summary.files_scanned,

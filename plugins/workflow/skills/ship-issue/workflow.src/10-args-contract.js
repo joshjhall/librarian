@@ -15,6 +15,7 @@ const KNOWN_ARG_KEYS = [
   'diff',
   'prComments',
   'issue',
+  'run',
   'tokenCeiling',
   'preScan',
   'conventionsDigest',
@@ -93,6 +94,11 @@ const scopeFiles = args && Array.isArray(args.files) ? args.files.filter(Boolean
 const scopeDiff = args && typeof args.diff === 'string' ? args.diff : ''
 const prComments = args && Array.isArray(args.prComments) ? args.prComments.filter(Boolean) : []
 const issue = args && args.issue && typeof args.issue === 'object' ? args.issue : null
+// The review loop's run nonce (#1157), stamped into the result so
+// review-convergence.sh --run can refuse a file written by a different run of
+// the same issue. `runIdOf` gates on type and charset; anything else is null,
+// which the convergence check refuses rather than matching on garbage.
+const RUN = runIdOf(args && args.run)
 
 // Re-review narrowing inputs (#492), all optional — absent ⇒ full review. The
 // skill computes these each re-review cycle (it owns git; this sandbox does not):

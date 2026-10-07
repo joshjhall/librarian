@@ -1,5 +1,5 @@
 # shellcheck shell=bash
-# Result-file provenance (#1150) — review-convergence tests.
+# Result-file provenance (#1150, #1157) — review-convergence tests.
 #
 # Sourced by tests/validate-review-convergence.sh, which defines RC and sources
 # tests/lib/review-convergence-sandbox.sh (FIXTURES / finding / val) BEFORE
@@ -11,13 +11,14 @@
 # shape with agreeing values — so a refusal cannot pass merely because a
 # stamped file is unreadable to the script for some unrelated reason.
 
-# stamped <name> <cycle-json> <issue-json> <blocking-json> — write a result
-# fixture carrying provenance. The provenance args are raw JSON so a case can
-# pass `null`, a string, or omit nothing by accident. Single-area helper, so it
-# lives here rather than in the shared sandbox.
+# stamped <name> <cycle-json> <issue-json> <blocking-json> [<run-json>] — write
+# a result fixture carrying provenance. The provenance args are raw JSON so a
+# case can pass `null`, a string, or omit nothing by accident. <run-json>
+# defaults to this suite's run, "$T_RUN". Single-area helper, so it lives here
+# rather than in the shared sandbox.
 stamped() {
-    command printf '{"cycle":%s,"issue":%s,"blocking":[%s],"deferrable":[]}\n' \
-        "$2" "$3" "$4" >"$FIXTURES/prov-$1.json"
+    command printf '{"cycle":%s,"issue":%s,"run":%s,"blocking":[%s],"deferrable":[]}\n' \
+        "$2" "$3" "${5:-\"$T_RUN\"}" "$4" >"$FIXTURES/prov-$1.json"
     command printf '%s' "$FIXTURES/prov-$1.json"
 }
 
@@ -42,9 +43,9 @@ test_foreign_issue_result_is_refused_not_stopped() {
     # as-is it is a C4-zero stop; with --issue it must be a refusal instead.
     local f err
     f="$(stamped foreign-zero 1 999 "")"
-    assert_equals "stop" "$(val verdict "$("$RC" check --cycle 1 --max-cycles 5 \
-        --result "$f" --delta-lines 40)")" "precondition: unchecked, the foreign zero reads as stop"
-    refused "a foreign-issue --result" --cycle 1 --max-cycles 5 --issue 1150 \
+    assert_equals "stop" "$(val verdict "$("$RC" check --cycle 1 --max-cycles 5 --issue 999 \
+        --run "$T_RUN" --result "$f" --delta-lines 40)")" "precondition: for its own issue, the foreign zero reads as stop"
+    refused "a foreign-issue --result" --cycle 1 --max-cycles 5 --issue 1150 --run "$T_RUN" \
         --result "$f" --delta-lines 40
     err="$REFUSED_ERR"
     assert_contains "$err" "has issue 999, not --issue 1150" "the message names both issues"
@@ -54,7 +55,7 @@ test_foreign_issue_result_is_refused_not_stopped() {
 test_result_without_issue_is_refused_when_issue_is_asserted() {
     local f err
     f="$(stamped no-issue 1 null "")"
-    refused "an unstamped --result under --issue" --cycle 1 --max-cycles 5 --issue 1150 \
+    refused "an unstamped --result under --issue" --cycle 1 --max-cycles 5 --issue 1150 --run "$T_RUN" \
         --result "$f" --delta-lines 40
     err="$REFUSED_ERR"
     assert_contains "$err" "has issue null" "a missing issue is a mismatch, not a pass"
@@ -69,27 +70,17 @@ test_string_issue_does_not_match_the_number() {
     # distinct, so a templated file cannot pass by coincidence of spelling.
     local f
     f="$(stamped string-issue 1 '"1150"' "")"
-    refused "a string-typed issue" --cycle 1 --max-cycles 5 --issue 1150 \
+    refused "a string-typed issue" --cycle 1 --max-cycles 5 --issue 1150 --run "$T_RUN" \
         --result "$f" --delta-lines 40
-}
-
-test_foreign_cycle_result_is_refused_without_issue() {
-    # No --issue at all: the cycle check needs no new flag, so the pre-#1094
-    # recipe (which never passes --issue) is protected too.
-    local f err
-    f="$(stamped old-cycle 1 1150 "")"
-    refused "a cycle-1 file read as cycle 2" --cycle 2 --max-cycles 5 \
-        --result "$f" --delta-lines 40
-    err="$REFUSED_ERR"
-    assert_contains "$err" "is for cycle 1, not --cycle 2" "the message names both cycles"
 }
 
 test_foreign_cycle_result_is_refused_with_matching_issue() {
     # Right issue, wrong cycle: the reused-filename-after-a-failed-write case.
     local f
     f="$(stamped same-issue-old-cycle 1 1150 "")"
-    refused "a right-issue wrong-cycle --result" --cycle 2 --max-cycles 5 --issue 1150 \
+    refused "a right-issue wrong-cycle --result" --cycle 2 --max-cycles 5 --issue 1150 --run "$T_RUN" \
         --result "$f" --delta-lines 40
+    assert_contains "$REFUSED_ERR" "is for cycle 1, not --cycle 2" "the message names both cycles"
 }
 
 test_foreign_prev_result_is_refused_on_a_zero_cycle() {
@@ -99,7 +90,7 @@ test_foreign_prev_result_is_refused_on_a_zero_cycle() {
     local cur prev err
     cur="$(stamped cur-zero 2 1150 "")"
     prev="$(stamped prev-foreign 1 999 "$(finding src/a.js 10 correctness R8-defect-in-new-code)")"
-    refused "a foreign --prev-result" --cycle 2 --max-cycles 5 --issue 1150 \
+    refused "a foreign --prev-result" --cycle 2 --max-cycles 5 --issue 1150 --run "$T_RUN" \
         --result "$cur" --prev-result "$prev" --delta-lines 40 --prev-delta-lines 40
     err="$REFUSED_ERR"
     assert_contains "$err" "prior-cycle result" "the message says which file was foreign"
@@ -113,7 +104,7 @@ test_foreign_prev_result_is_refused_among_valid_ones() {
     cur="$(stamped cur-novel 3 1150 "$(finding src/b.js 20 correctness R8-defect-in-new-code)")"
     good="$(stamped prev-good 1 1150 "")"
     bad="$(stamped prev-bad 2 42 "")"
-    refused "a foreign second --prev-result" --cycle 3 --max-cycles 5 --issue 1150 \
+    refused "a foreign second --prev-result" --cycle 3 --max-cycles 5 --issue 1150 --run "$T_RUN" \
         --result "$cur" --prev-result "$good" --prev-result "$bad" --delta-lines 40
 }
 
@@ -123,24 +114,88 @@ test_matching_provenance_yields_a_verdict() {
     local cur prev out rc=0
     cur="$(stamped ok-cur 2 1150 "$(finding src/c.js 30 correctness R8-defect-in-new-code)")"
     prev="$(stamped ok-prev 1 1150 "$(finding src/a.js 10 correctness R8-defect-in-new-code)")"
-    out="$("$RC" check --cycle 2 --max-cycles 5 --issue 1150 --result "$cur" \
+    out="$("$RC" check --cycle 2 --max-cycles 5 --issue 1150 --run "$T_RUN" --result "$cur" \
         --prev-result "$prev" --delta-lines 40 --prev-delta-lines 40)" || rc=$?
     assert_exit "0" "$rc" "matching provenance exits 0"
     assert_equals "C8-novel" "$(val rule "$out")" "matching provenance reaches the rule list"
 }
 
-test_unstamped_result_without_issue_is_unchanged() {
-    # Back-compat: a file with no provenance fields and no --issue decides
-    # exactly as before #1150.
-    local out
-    out="$("$RC" check --cycle 1 --max-cycles 5 --result "$FIXTURES/zero.json" --delta-lines 40)"
-    assert_equals "C4-zero" "$(val rule "$out")" "an unstamped result still decides without --issue"
+test_missing_issue_is_refused() {
+    # #1157: --issue is REQUIRED. Opt-in, a caller that omitted it got only the
+    # .cycle check and an unstamped file passed. The control is the same call
+    # WITH the flag deciding (test_matching_provenance_yields_a_verdict).
+    refused "check without --issue" --cycle 1 --max-cycles 5 --run "$T_RUN" \
+        --result "$FIXTURES/zero.json" --delta-lines 40
+    assert_contains "$REFUSED_ERR" "check needs --issue N" "the refusal names the missing flag"
+}
+
+test_missing_run_is_refused() {
+    refused "check without --run" --cycle 1 --max-cycles 5 --issue "$T_ISSUE" \
+        --result "$FIXTURES/zero.json" --delta-lines 40
+    assert_contains "$REFUSED_ERR" "check needs --run ID" "the refusal names the missing flag"
+    assert_contains "$REFUSED_ERR" "review-scratch.sh init/path --issue $T_ISSUE" \
+        "the refusal says where the run id comes from"
+}
+
+test_foreign_run_result_is_refused() {
+    # #1157's core case: same issue, same cycle, different run — a re-run of
+    # the issue, or a re-attempt reusing the filename. issue + cycle agree, so
+    # only the run nonce can tell the files apart.
+    local f
+    f="$(stamped other-run 1 1150 "" '"0123456789abcdef"')"
+    refused "a same-issue same-cycle other-run --result" --cycle 1 --max-cycles 5 --issue 1150 \
+        --run "$T_RUN" --result "$f" --delta-lines 40
+    assert_contains "$REFUSED_ERR" "has run \"0123456789abcdef\", not --run $T_RUN" "the message names both runs"
+    assert_contains "$REFUSED_ERR" "re-extract" "the message says what to do"
+}
+
+test_foreign_run_prev_result_is_refused_on_a_zero_cycle() {
+    local cur prev
+    cur="$(stamped cur-zero-otherrun 2 1150 "")"
+    prev="$(stamped prev-otherrun 1 1150 "$(finding src/a.js 10 correctness R8-defect-in-new-code)" '"0123456789abcdef"')"
+    refused "an other-run --prev-result" --cycle 2 --max-cycles 5 --issue 1150 --run "$T_RUN" \
+        --result "$cur" --prev-result "$prev" --delta-lines 40 --prev-delta-lines 40
+    assert_contains "$REFUSED_ERR" "prior-cycle result" "the message says which file was foreign"
+}
+
+test_unstamped_run_is_refused() {
+    # A null / absent run is a mismatch, and re-extracting cannot fix it — the
+    # message must name the harness args instead (as for a null issue).
+    local f g
+    f="$(stamped null-run 1 1150 "" null)"
+    refused "a null-run --result" --cycle 1 --max-cycles 5 --issue 1150 --run "$T_RUN" \
+        --result "$f" --delta-lines 40
+    assert_contains "$REFUSED_ERR" "has run null" "a null run is a mismatch, not a pass"
+    assert_contains "$REFUSED_ERR" "re-run the harness with run: \"$T_RUN\"" \
+        "a null run points at the harness args"
+    g="$FIXTURES/prov-no-run-key.json"
+    command printf '{"cycle":1,"issue":1150,"blocking":[],"deferrable":[]}\n' >"$g"
+    refused "a --result with no run key" --cycle 1 --max-cycles 5 --issue 1150 --run "$T_RUN" \
+        --result "$g" --delta-lines 40
+}
+
+test_non_string_run_does_not_match() {
+    # tojson quotes a string: a numeric .run cannot equal a numeric-looking --run.
+    local f
+    f="$(stamped numeric-run 1 1150 "" 12345)"
+    refused "a numeric .run" --cycle 1 --max-cycles 5 --issue 1150 --run 12345 \
+        --result "$f" --delta-lines 40
+}
+
+test_bad_run_value_fails_loud() {
+    local v
+    # The third value is 65 characters: one past the cap.
+    for v in 'a/b' 'a b' 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'; do
+        refused "--run '$v'" --cycle 1 --max-cycles 5 --issue 1150 --run "$v" \
+            --result "$FIXTURES/zero.json" --delta-lines 40
+        assert_contains "$REFUSED_ERR" "--run must" "--run '$v' names the flag"
+    done
 }
 
 test_bad_issue_value_fails_loud() {
     local v err
     for v in 0 07 x -3; do
-        refused "--issue '$v'" --cycle 1 --max-cycles 5 --issue "$v" \
+        refused "--issue '$v'" --cycle 1 --max-cycles 5 --issue "$v" --run "$T_RUN" \
             --result "$FIXTURES/zero.json" --delta-lines 40
         err="$REFUSED_ERR"
         assert_contains "$err" "--issue must be an integer >= 1" "--issue '$v' names the flag"
@@ -151,7 +206,7 @@ test_string_cycle_does_not_match_the_number() {
     # The cycle twin of the string-issue case: "1" is not the integer 1.
     local f
     f="$(stamped string-cycle '"1"' 1150 "")"
-    refused "a string-typed cycle" --cycle 1 --max-cycles 5 --issue 1150 \
+    refused "a string-typed cycle" --cycle 1 --max-cycles 5 --issue 1150 --run "$T_RUN" \
         --result "$f" --delta-lines 40
 }
 
@@ -163,13 +218,13 @@ test_unusable_prev_result_is_refused_on_a_zero_cycle() {
     cur="$(stamped cur-zero-unusable 2 1150 "")"
     command printf 'not json\n' >"$FIXTURES/prov-invalid.json"
     command printf '[1,2]\n' >"$FIXTURES/prov-array.json"
-    refused "a missing --prev-result" --cycle 2 --max-cycles 5 --issue 1150 \
+    refused "a missing --prev-result" --cycle 2 --max-cycles 5 --issue 1150 --run "$T_RUN" \
         --result "$cur" --prev-result "$FIXTURES/prov-does-not-exist.json" --delta-lines 40
     assert_contains "$REFUSED_ERR" "cannot read result file" "a missing --prev-result names the read failure"
-    refused "an invalid-JSON --prev-result" --cycle 2 --max-cycles 5 --issue 1150 \
+    refused "an invalid-JSON --prev-result" --cycle 2 --max-cycles 5 --issue 1150 --run "$T_RUN" \
         --result "$cur" --prev-result "$FIXTURES/prov-invalid.json" --delta-lines 40
     assert_contains "$REFUSED_ERR" "is not valid JSON" "an invalid --prev-result names the parse failure"
-    refused "an array --prev-result" --cycle 2 --max-cycles 5 --issue 1150 \
+    refused "an array --prev-result" --cycle 2 --max-cycles 5 --issue 1150 --run "$T_RUN" \
         --result "$cur" --prev-result "$FIXTURES/prov-array.json" --delta-lines 40
     assert_contains "$REFUSED_ERR" "has issue null" "a non-object --prev-result reads as unstamped, not a jq crash"
 }
@@ -180,7 +235,7 @@ test_unstamped_prev_result_is_refused_under_issue() {
     local cur prev
     cur="$(stamped cur-zero-nullprev 2 1150 "")"
     prev="$(stamped prev-null 1 null "")"
-    refused "an unstamped --prev-result under --issue" --cycle 2 --max-cycles 5 --issue 1150 \
+    refused "an unstamped --prev-result under --issue" --cycle 2 --max-cycles 5 --issue 1150 --run "$T_RUN" \
         --result "$cur" --prev-result "$prev" --delta-lines 40
     assert_contains "$REFUSED_ERR" "prior-cycle result" "the null prev names its role"
     assert_contains "$REFUSED_ERR" "has issue null" "the null prev names the missing stamp"
@@ -190,7 +245,7 @@ test_non_object_result_is_refused_under_issue() {
     # The `result` role's half of the type guard: an array --result reads as
     # unstamped and is refused with a provenance message, not a bare jq crash.
     command printf '[1,2]\n' >"$FIXTURES/prov-array-result.json"
-    refused "an array --result under --issue" --cycle 1 --max-cycles 5 --issue 1150 \
+    refused "an array --result under --issue" --cycle 1 --max-cycles 5 --issue 1150 --run "$T_RUN" \
         --result "$FIXTURES/prov-array-result.json" --delta-lines 40
     assert_contains "$REFUSED_ERR" "result file" "the array result names its role"
     assert_contains "$REFUSED_ERR" "has issue null" "the array result reads as unstamped"
@@ -201,19 +256,9 @@ test_null_cycle_result_is_accepted() {
     # cycle check (only a PRESENT cycle can disagree) and reaches a verdict.
     local f out rc=0
     f="$(stamped null-cycle null 1150 "")"
-    out="$("$RC" check --cycle 3 --max-cycles 5 --issue 1150 --result "$f" --delta-lines 40)" || rc=$?
+    out="$("$RC" check --cycle 3 --max-cycles 5 --issue 1150 --run "$T_RUN" --result "$f" --delta-lines 40)" || rc=$?
     assert_exit "0" "$rc" "a null cycle stamp is not a mismatch"
     assert_equals "C4-zero" "$(val rule "$out")" "a null cycle stamp reaches the rule list"
-}
-
-test_unreadable_prev_result_is_refused_without_issue() {
-    # Prev validation is unconditional, not gated on --issue: a missing prior
-    # file on a zero cycle used to be silently never opened (#1150 review).
-    local cur
-    cur="$(stamped cur-zero-noissue 2 1150 "")"
-    refused "a missing --prev-result with no --issue" --cycle 2 --max-cycles 5 \
-        --result "$cur" --prev-result "$FIXTURES/prov-absent-noissue.json" --delta-lines 40
-    assert_contains "$REFUSED_ERR" "cannot read result file" "the read failure is named without --issue too"
 }
 
 # recipe_check_invocations — print each `review-convergence.sh check` command
@@ -239,16 +284,17 @@ recipe_check_invocations() {
 }
 
 test_every_shipped_recipe_passes_issue() {
-    # The --issue check is opt-in, so a recipe edit that drops the flag would
-    # leave it silently inert while every test above stays green. Pin it at the
-    # call sites themselves.
+    # Both flags are required (#1157), so a recipe that drops one now dies at
+    # runtime instead of going inert — but only when a review loop runs. Pin it
+    # at the call sites themselves so the break shows up here first.
     local inv n=0 missing=""
     while IFS= read -r inv; do
         [ -n "$inv" ] || continue
         n=$((n + 1))
         # `--issue` must carry a value: a bare trailing `--issue` would pass a
         # substring match yet die at runtime ("needs a value").
-        if ! command printf '%s\n' "$inv" | command grep -E ' --issue [^[:space:]-]' >/dev/null; then
+        if ! command printf '%s\n' "$inv" | command grep -E ' --issue [^[:space:]-]' >/dev/null ||
+            ! command printf '%s\n' "$inv" | command grep -E ' --run [^[:space:]-]' >/dev/null; then
             missing="$missing ${inv%%:<*}" # path:line only
         fi
     done <<EOF
@@ -257,5 +303,5 @@ EOF
     # Vacuity floor: the two shipped review loops. Zero would mean the parser,
     # not the recipes, is broken — and would pass every per-call check.
     assert_true "[ $n -ge 2 ]" "found every recipe invocation of check (got $n, want >= 2)"
-    assert_equals "" "$missing" "every recipe invocation of check passes --issue"
+    assert_equals "" "$missing" "every recipe invocation of check passes --issue and --run"
 }

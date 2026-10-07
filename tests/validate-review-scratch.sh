@@ -12,6 +12,11 @@
 #   AC3 one derivation at every site   -> test_every_recipe_site_uses_the_helper
 #       (+ #1107: each loop's init is cycle-1-only and paired with path)
 #
+# #1157 ties a dir to one run: init stamps the issue + a fresh run nonce, and
+# path refuses a dir whose stamp is absent, foreign or malformed.
+#   init stamps / path echoes the run  -> test_init_stamps_a_run_that_path_echoes
+#   path refuses an unowned dir        -> test_path_refuses_a_dir_it_cannot_vouch_for
+#
 # Every run uses a sandboxed HOME; the real cache is never touched.
 #
 # Pure bash + coreutils via `command`. bash-3.2 clean, BSD-regex clean.
@@ -44,16 +49,16 @@ rs() {
 }
 
 test_solo_runs_on_different_issues_are_isolated() {
-    rs bash "$RS" path --issue 1094
-    assert_exit 0 "$RC" "solo path succeeds"
+    rs bash "$RS" init --issue 1094
+    assert_exit 0 "$RC" "solo init succeeds"
     local a b
     a="$(val dir "$OUT")"
     assert_equals "solo-1094" "$(val gid "$OUT")" "solo gid is scoped by issue"
     assert_equals "$SANDBOX/home/.cache/librarian-review/solo-1094" "$a" \
         "dir sits under \$HOME/.cache/librarian-review"
-    assert_true "[ -d '$a' ]" "path creates the directory"
+    assert_true "[ -d '$a' ]" "init creates the directory"
 
-    rs bash "$RS" path --issue 1095
+    rs bash "$RS" init --issue 1095
     b="$(val dir "$OUT")"
     assert_not_empty "$b" "second issue yields a dir"
     if [ "$a" = "$b" ]; then
@@ -62,18 +67,18 @@ test_solo_runs_on_different_issues_are_isolated() {
 }
 
 test_golem_id_wins_over_the_issue() {
-    rs GOLEM_ID=golem-7 bash "$RS" path --issue 1094
-    assert_exit 0 "$RC" "orchestrated path succeeds"
+    rs GOLEM_ID=golem-7 bash "$RS" init --issue 1094
+    assert_exit 0 "$RC" "orchestrated init succeeds"
     assert_equals "golem-7" "$(val gid "$OUT")" "GOLEM_ID is the gid when set"
     assert_equals "$SANDBOX/home/.cache/librarian-review/golem-7" "$(val dir "$OUT")" \
         "orchestrated dir is keyed by GOLEM_ID"
 
-    rs GOLEM_ID= bash "$RS" path --issue 12
+    rs GOLEM_ID= bash "$RS" init --issue 12
     assert_equals "solo-12" "$(val gid "$OUT")" "an empty GOLEM_ID reads as unset"
 }
 
 test_init_removes_an_earlier_runs_files() {
-    rs bash "$RS" path --issue 77
+    rs bash "$RS" init --issue 77
     local d
     d="$(val dir "$OUT")"
     command printf '{"stale":true}\n' >"$d/cycle1.json"
@@ -131,6 +136,93 @@ test_unsafe_inputs_fail_loud() {
     assert_exit 2 "$RC" "unknown subcommand is refused"
     rs bash "$RS" path --issue 1 --bogus
     assert_exit 2 "$RC" "unknown flag is refused"
+}
+
+# stamp_of <dir> — the stamp file init writes; one spelling for every case.
+stamp_of() {
+    command printf '%s/.scratch-stamp' "$1"
+}
+
+test_init_stamps_a_run_that_path_echoes() {
+    local d r1 r2
+    rs bash "$RS" init --issue 1157
+    assert_exit 0 "$RC" "init succeeds"
+    d="$(val dir "$OUT")"
+    r1="$(val run "$OUT")"
+    assert_true "printf '%s' '$r1' | grep -E '^[0-9a-f]{16}\$' >/dev/null" \
+        "init mints a 16-hex run nonce (got '$r1')"
+    assert_equals "issue=1157" "$(command grep '^issue=' "$(stamp_of "$d")")" \
+        "the stamp names the issue"
+    assert_equals "run=$r1" "$(command grep '^run=' "$(stamp_of "$d")")" \
+        "the stamp holds the nonce init printed"
+
+    rs bash "$RS" path --issue 1157
+    assert_exit 0 "$RC" "path on this issue's dir succeeds"
+    assert_equals "$r1" "$(val run "$OUT")" "path echoes the stamped run, not a new one"
+    assert_equals "$d" "$(val dir "$OUT")" "path and init agree on the dir"
+
+    # A second init is a new run: a re-run of the same issue must not reuse the
+    # nonce, or its result files would pass as this run's (#1157 gap 1).
+    rs bash "$RS" init --issue 1157
+    r2="$(val run "$OUT")"
+    assert_not_empty "$r2" "the second init mints a run"
+    if [ "$r1" = "$r2" ]; then
+        _fail "two inits minted the same run nonce" "Run: $r1"
+    fi
+}
+
+test_path_refuses_a_dir_it_cannot_vouch_for() {
+    local base="$SANDBOX/home/.cache/librarian-review" d
+    # No dir at all: path used to CREATE it, silently starting a fresh run with
+    # no --prev-result history.
+    rs bash "$RS" path --issue 501
+    assert_exit 2 "$RC" "path with no dir is refused"
+    assert_contains "$OUT" "no scratch dir for this run" "the refusal names the missing dir"
+    assert_contains "$OUT" "init --issue 501" "the refusal says to run init"
+    assert_true "[ ! -e '$base/solo-501' ]" "a refused path creates nothing"
+
+    # An unstamped dir — what every pre-#1157 run left behind.
+    command mkdir -p "$base/solo-502"
+    rs bash "$RS" path --issue 502
+    assert_exit 2 "$RC" "path on an unstamped dir is refused"
+    assert_contains "$OUT" "no readable run stamp" "the refusal names the missing stamp"
+
+    # A stamp for another issue: one GOLEM_ID reused across two issues.
+    rs GOLEM_ID=golem-9 bash "$RS" init --issue 503
+    rs GOLEM_ID=golem-9 bash "$RS" path --issue 504
+    assert_exit 2 "$RC" "path on another issue's dir is refused"
+    assert_contains "$OUT" "stamped for issue 503, not --issue 504" "the refusal names both issues"
+    rs GOLEM_ID=golem-9 bash "$RS" path --issue 503
+    assert_exit 0 "$RC" "control: the same dir under its own issue is accepted"
+
+    # Malformed stamps: each key missing or garbled in turn.
+    d="$base/solo-505"
+    command mkdir -p "$d"
+    command printf 'run=0123456789abcdef\n' >"$(stamp_of "$d")"
+    rs bash "$RS" path --issue 505
+    assert_exit 2 "$RC" "a stamp with no issue is refused"
+    assert_contains "$OUT" "malformed run stamp (issue=''" "a missing issue reads as malformed, not as a mismatch"
+    command printf 'issue=505\n' >"$(stamp_of "$d")"
+    rs bash "$RS" path --issue 505
+    assert_exit 2 "$RC" "a stamp with no run is refused"
+    command printf 'issue=505\nrun=../x\n' >"$(stamp_of "$d")"
+    rs bash "$RS" path --issue 505
+    assert_exit 2 "$RC" "a stamp with an unsafe run is refused"
+    assert_contains "$OUT" "malformed run stamp" "the refusal names the malformed stamp"
+    # No trailing newline: the last line must still be read.
+    command printf 'issue=505\nrun=0123456789abcdef' >"$(stamp_of "$d")"
+    rs bash "$RS" path --issue 505
+    assert_exit 0 "$RC" "a stamp without a trailing newline is still read"
+    assert_equals "0123456789abcdef" "$(val run "$OUT")" "its run is echoed"
+
+    # A symlinked dir is not this run's dir, even when its target carries a
+    # VALID stamp for this very issue — the link itself was never made by init.
+    command mkdir -p "$SANDBOX/planted"
+    command printf 'issue=507\nrun=0123456789abcdef\n' >"$(stamp_of "$SANDBOX/planted")"
+    command ln -s "$SANDBOX/planted" "$base/solo-507"
+    rs bash "$RS" path --issue 507
+    assert_exit 2 "$RC" "path through a symlinked dir is refused"
+    assert_contains "$OUT" "no scratch dir for this run" "the symlink is refused as not-a-dir"
 }
 
 # fenced_bash <file> — print only the lines inside ```bash fences: the recipe
@@ -200,6 +292,8 @@ run_test test_golem_id_wins_over_the_issue
 run_test test_init_removes_an_earlier_runs_files
 run_test test_init_on_a_symlinked_dir_removes_only_the_link
 run_test test_unsafe_inputs_fail_loud
+run_test test_init_stamps_a_run_that_path_echoes
+run_test test_path_refuses_a_dir_it_cannot_vouch_for
 run_test test_every_recipe_site_uses_the_helper
 
 generate_report

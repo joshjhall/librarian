@@ -19,7 +19,7 @@ test_capped_over_names_the_would_be_narrow_zero() {
     # under the 50% floor). The cap fired on a cycle the rule list itself calls
     # uninformative, and `verdict` alone could not say so.
     local out
-    out="$("$RC" check --cycle 5 --max-cycles 5 --result "$FIXTURES/zero.json" \
+    out="$("$RC" check --issue "$T_ISSUE" --run "$T_RUN" --cycle 5 --max-cycles 5 --result "$FIXTURES/zero.json" \
         --delta-lines 149 --prev-delta-lines 647 --partial false)"
     assert_equals "stop" "$(val verdict "$out")" "the cap still stops (C1 outranks C3)"
     assert_equals "C1-cap" "$(val rule "$out")" "the cap is still the deciding rule"
@@ -33,9 +33,9 @@ test_capped_over_matches_the_verdict_with_the_cap_lifted() {
     # above non-tautological — it pins capped_over against an independently
     # computed value rather than against a constant.
     local capped lifted
-    capped="$("$RC" check --cycle 5 --max-cycles 5 --result "$FIXTURES/zero.json" \
+    capped="$("$RC" check --issue "$T_ISSUE" --run "$T_RUN" --cycle 5 --max-cycles 5 --result "$FIXTURES/zero.json" \
         --delta-lines 149 --prev-delta-lines 647 --partial false)"
-    lifted="$("$RC" check --cycle 5 --max-cycles 99 --result "$FIXTURES/zero.json" \
+    lifted="$("$RC" check --issue "$T_ISSUE" --run "$T_RUN" --cycle 5 --max-cycles 99 --result "$FIXTURES/zero.json" \
         --delta-lines 149 --prev-delta-lines 647 --partial false)"
     assert_equals "C3-narrow-zero" "$(val rule "$lifted")" "with the cap lifted, C3 decides"
     assert_equals "continue" "$(val verdict "$lifted")" "and it would have CONTINUED"
@@ -49,7 +49,7 @@ test_capped_over_distinguishes_a_corroborated_cap() {
     # Same cycle and cap as the narrow-zero case — only the surface differs — so
     # a capped_over that ignored the inputs cannot report both.
     local out
-    out="$("$RC" check --cycle 5 --max-cycles 5 --result "$FIXTURES/zero.json" \
+    out="$("$RC" check --issue "$T_ISSUE" --run "$T_RUN" --cycle 5 --max-cycles 5 --result "$FIXTURES/zero.json" \
         --delta-lines 400 --prev-delta-lines 400 --partial false)"
     assert_equals "C1-cap" "$(val rule "$out")" "the cap decides"
     assert_equals "C4-zero" "$(val capped_over "$out")" \
@@ -61,7 +61,7 @@ test_capped_over_reports_still_productive_material() {
     # material (#533's only blocking finding arrived past the then-cap). The stop
     # is a pure budget artifact and capped_over must say so.
     local out
-    out="$("$RC" check --cycle 5 --max-cycles 5 --result "$FIXTURES/novel.json" \
+    out="$("$RC" check --issue "$T_ISSUE" --run "$T_RUN" --cycle 5 --max-cycles 5 --result "$FIXTURES/novel.json" \
         --delta-lines 400 --prev-delta-lines 400 --partial false)"
     assert_equals "C1-cap" "$(val rule "$out")" "the cap decides"
     assert_equals "C8-novel" "$(val capped_over "$out")" \
@@ -74,7 +74,7 @@ test_capped_over_reports_a_capped_partial() {
     # concealed — proving the field walks the real chain rather than skipping to
     # the zero/finding rules.
     local out
-    out="$("$RC" check --cycle 5 --max-cycles 5 --result "$FIXTURES/novel.json" \
+    out="$("$RC" check --issue "$T_ISSUE" --run "$T_RUN" --cycle 5 --max-cycles 5 --result "$FIXTURES/novel.json" \
         --delta-lines 400 --partial true)"
     assert_equals "C1-cap" "$(val rule "$out")" "the cap outranks C2 (termination intact)"
     assert_equals "C2-partial" "$(val capped_over "$out")" "capped_over reports the partial"
@@ -85,7 +85,7 @@ test_capped_over_is_empty_on_a_non_cap_stop() {
     # empty. Without this, a capped_over that always reported something would
     # make every stop look like a budget artifact.
     local out
-    out="$("$RC" check --cycle 2 --max-cycles 5 --result "$FIXTURES/zero.json" \
+    out="$("$RC" check --issue "$T_ISSUE" --run "$T_RUN" --cycle 2 --max-cycles 5 --result "$FIXTURES/zero.json" \
         --delta-lines 400 --prev-delta-lines 400 --partial false)"
     assert_equals "C4-zero" "$(val rule "$out")" "a real convergence stop"
     assert_equals "" "$(val capped_over "$out")" "capped_over is empty when C1 did not fire"
@@ -96,9 +96,9 @@ test_capped_over_is_emitted_on_every_verdict() {
     # caller can read it unconditionally without testing for its existence.
     local out
     for out in \
-        "$("$RC" check --cycle 1 --max-cycles 5 --result "$FIXTURES/novel.json" --delta-lines 400 --partial false)" \
-        "$("$RC" check --cycle 5 --max-cycles 5 --result "$FIXTURES/zero.json" --delta-lines 400 --partial false)" \
-        "$("$RC" check --cycle 2 --max-cycles 5 --result "$FIXTURES/refuted.json" --delta-lines 400 --partial false)"; do
+        "$("$RC" check --issue "$T_ISSUE" --run "$T_RUN" --cycle 1 --max-cycles 5 --result "$FIXTURES/novel.json" --delta-lines 400 --partial false)" \
+        "$("$RC" check --issue "$T_ISSUE" --run "$T_RUN" --cycle 5 --max-cycles 5 --result "$FIXTURES/zero.json" --delta-lines 400 --partial false)" \
+        "$("$RC" check --issue "$T_ISSUE" --run "$T_RUN" --cycle 2 --max-cycles 5 --result "$FIXTURES/refuted.json" --delta-lines 400 --partial false)"; do
         assert_contains "$out" "capped_over=" "capped_over key present on every verdict"
     done
 }
