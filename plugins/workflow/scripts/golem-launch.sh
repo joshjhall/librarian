@@ -31,8 +31,8 @@
 #                    is re-denied (#29). To dispatch a batch, call `launch <N>`
 #                    once per issue — never loop inside one Bash invocation.
 #
-#   3. auth inject — before dispatch, resolve ANTHROPIC_AUTH_TOKEN (and, when it
-#                    comes from the cache, ANTHROPIC_BASE_URL) and hand it to the
+#   3. auth inject — before dispatch, resolve ANTHROPIC_AUTH_TOKEN (plus any
+#                    ANTHROPIC_BASE_URL, launcher's over cache's) and hand it to the
 #                    golem through a 0600 file its session command sources and
 #                    then deletes (#244, #1153) — never `tmux -e`, which puts the
 #                    token in the tmux server's argv for its lifetime. A
@@ -243,15 +243,22 @@ _sh_quote() {
     command printf "'%s'" "$out"
 }
 
-# write_auth_file — write the resolved token (and base URL when it rides along)
-# as `export` lines into a fresh owner-only (0600) file under ${TMPDIR:-/tmp},
-# and print its path. The golem's session command sources then deletes it
+# write_auth_file — write the resolved token (and the base URL, whenever one is
+# known) as `export` lines into a fresh owner-only (0600) file under
+# ${TMPDIR:-/tmp}, and print its path. The base URL is the launcher's own when
+# set (it wins over the cache's, #244), else the cache's. It is written even
+# when the launcher has one: an already-running tmux server hands a new session
+# its GLOBAL env, not this client's, so the golem would otherwise run with no
+# base URL or a stale one and send a proxy-issued token to the wrong endpoint
+# (#1163). With no resolved token no file is written at all, so that launch's
+# URL still rides the server env (#1170). The golem's session command sources
+# then deletes it
 # (#1153), so the token never appears in any argv. Fails (non-zero, no path)
 # when the file cannot be created or written; a partial file is removed. A
 # session killed before its first command runs leaves the file behind — still
 # 0600, readable only by this uid.
 write_auth_file() {
-    local f
+    local f url="${ANTHROPIC_BASE_URL:-$RESOLVED_BASE_URL}"
     f="$(umask 077 && command mktemp "${TMPDIR:-/tmp}/golem-auth.XXXXXX" 2>/dev/null)" || return 1
     [ -n "$f" ] || return 1
     # The session `.`-sources this path AFTER tmux -c has moved it into the
@@ -267,8 +274,8 @@ write_auth_file() {
     }
     {
         command printf 'export ANTHROPIC_AUTH_TOKEN=%s\n' "$(_sh_quote "$RESOLVED_AUTH_TOKEN")"
-        if [ -n "$RESOLVED_BASE_URL" ] && [ -z "${ANTHROPIC_BASE_URL:-}" ]; then
-            command printf 'export ANTHROPIC_BASE_URL=%s\n' "$(_sh_quote "$RESOLVED_BASE_URL")"
+        if [ -n "$url" ]; then
+            command printf 'export ANTHROPIC_BASE_URL=%s\n' "$(_sh_quote "$url")"
         fi
     } >"$f" 2>/dev/null || {
         command rm -f "$f"
@@ -732,8 +739,8 @@ case "$cmd" in
         # session sources (#1153). Only deliver ANTHROPIC_AUTH_TOKEN when it
         # actually resolved — an empty value is NEVER passed (it could override a
         # token the golem's own shell init would otherwise supply on a host).
-        # ANTHROPIC_BASE_URL rides along only when it came from the cache AND the
-        # launcher's own env lacks it.
+        # ANTHROPIC_BASE_URL rides along in the same file whenever one is known,
+        # the launcher's winning over the cache's (#244, #1163).
         #
         # Never argv: `tmux -e VAR=…` lands in the server's argv for its whole
         # lifetime, readable by every local user via ps. Never inherited env

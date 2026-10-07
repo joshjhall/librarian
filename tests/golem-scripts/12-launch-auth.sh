@@ -23,9 +23,12 @@
 # $sb/session-cmd under `sh -c` (what tmux does), with a fake `claude` on PATH
 # that records the ANTHROPIC_* values it was started with into
 # $sb/claude-env.log. ANTHROPIC_* are unset, so anything recorded came from the
-# token file, not the test's own env.
+# token file, not the test's own env. Extra VAR=value args are set in the
+# session env AFTER the scrub — modelling what an already-running tmux server's
+# GLOBAL env hands a new session (#1163).
 _run_session_cmd() {
     local sb="$1"
+    shift
     command mkdir -p "$sb/fakebin"
     command printf '%s\n' '#!/usr/bin/env sh' \
         'printf "%s|%s\n" "${ANTHROPIC_AUTH_TOKEN:-}" "${ANTHROPIC_BASE_URL:-}" >>"$CLAUDE_ENV_LOG"' \
@@ -33,7 +36,7 @@ _run_session_cmd() {
     command chmod +x "$sb/fakebin/claude"
     (cd "$sb" &&
         /usr/bin/env -uANTHROPIC_AUTH_TOKEN -uANTHROPIC_BASE_URL -uBASH_ENV -uENV \
-            PATH="$sb/fakebin:$PATH" CLAUDE_ENV_LOG="$sb/claude-env.log" \
+            PATH="$sb/fakebin:$PATH" CLAUDE_ENV_LOG="$sb/claude-env.log" "$@" \
             sh -c "$(command cat "$sb/session-cmd")" >/dev/null 2>&1)
 }
 
@@ -65,8 +68,10 @@ sk-secret-tok-244|https://bifrost.example" "$(command cat "$sb/claude-env.log" 2
         "the session deletes the token file once sourced"
 }
 
-# The launcher's own ANTHROPIC_BASE_URL wins: the file carries the cache's
-# token but NOT the cache's base URL, so the golem keeps the launcher's.
+# The launcher's own ANTHROPIC_BASE_URL wins over the cache's (#244) — and it
+# rides in the token file, not the inherited env: an already-running tmux server
+# hands the session its stale GLOBAL env, modelled here by a session-env URL
+# the file must override (#1163).
 test_launch_auth_launcher_base_url_not_overridden() {
     local sb authf
     new_sandbox sb
@@ -78,12 +83,98 @@ test_launch_auth_launcher_base_url_not_overridden() {
     # Positive control: the absence below cannot pass on a missing file.
     assert_not_empty "$authf" "the token file was written"
     # lint-allow-unanchored: per-run sandbox token file, no committed prose
-    assert_file_contains "$authf" "ANTHROPIC_AUTH_TOKEN" "control: the token file carries the token"
+    assert_file_contains "$authf" "https://launcher.example" "the token file carries the launcher's base URL"
     # lint-allow-unanchored: per-run sandbox token file, no committed prose
-    assert_file_not_contains "$authf" "ANTHROPIC_BASE_URL" "the token file does not carry the cache base URL"
+    assert_file_not_contains "$authf" "cache.example" "the token file does not carry the cache base URL"
+    _run_session_cmd "$sb" ANTHROPIC_BASE_URL=https://stale.example
+    assert_equals "sk-secret-tok-244|https://launcher.example
+sk-secret-tok-244|https://launcher.example" "$(command cat "$sb/claude-env.log" 2>/dev/null)" \
+        "both claude calls get the launcher's URL over a stale server-env one"
+}
+
+# Resolution arm 1 (token AND base URL inherited by the launcher, no cache): the
+# URL used to be left to inheritance, which a running server breaks (#1163). It
+# must reach the golem via the file over a stale session URL, never via argv.
+test_launch_auth_inherited_base_url_survives_stale_server_env() {
+    local sb log
+    new_sandbox sb
+    run_launch_auth "$sb" OP_SECRETS_CACHE="$sb/no-such-cache" TMUX_STUB_CMD_LOG="$sb/session-cmd" \
+        ANTHROPIC_AUTH_TOKEN=sk-inherited-1163 ANTHROPIC_BASE_URL=https://launcher.example # gitleaks:allow (fake fixture token)
+    assert_exit 0 "$RUN_RC" "launch with an inherited token + base URL dispatches (exit 0)"
+    log="$(command cat "$sb/tmux-args.log" 2>/dev/null || true)"
+    assert_contains "$log" "new-session -d -s golem-7" "control: the tmux argv was logged"
+    assert_not_contains "$log" "launcher.example" "the base URL is in no tmux argv"
+    _run_session_cmd "$sb" ANTHROPIC_BASE_URL=https://stale.example
+    assert_equals "sk-inherited-1163|https://launcher.example" \
+        "$(command head -n 1 "$sb/claude-env.log" 2>/dev/null)" \
+        "the golem gets the launcher's URL, not the running server's stale one"
+}
+
+# The other two URL states (#1163 review). Cache-only: the cache's URL beats a
+# stale server-env one — the original failure, reached from the cache arm — and
+# an empty launcher URL does not shadow it. No
+# URL anywhere: the file writes NO ANTHROPIC_BASE_URL line, so an empty export
+# cannot clobber whatever URL the session env already carries.
+test_launch_auth_base_url_cache_only_and_absent() {
+    local sb authf
+    new_sandbox sb
+    command printf 'export ANTHROPIC_AUTH_TOKEN=sk-secret-tok-244\nexport ANTHROPIC_BASE_URL=https://cache.example\n' >"$sb/op-cache"
+    run_launch_auth "$sb" OP_SECRETS_CACHE="$sb/op-cache" TMUX_STUB_CMD_LOG="$sb/session-cmd"
+    assert_exit 0 "$RUN_RC" "cache-only launch dispatches (exit 0)"
+    _run_session_cmd "$sb" ANTHROPIC_BASE_URL=https://stale.example
+    assert_equals "sk-secret-tok-244|https://cache.example" \
+        "$(command head -n 1 "$sb/claude-env.log" 2>/dev/null)" \
+        "the cache's URL beats a running server's stale one"
+
+    # A launcher URL that is SET but EMPTY counts as absent (`:-`), so the
+    # cache's URL still wins over the stale server one.
+    new_sandbox sb
+    command printf 'export ANTHROPIC_AUTH_TOKEN=sk-secret-tok-244\nexport ANTHROPIC_BASE_URL=https://cache.example\n' >"$sb/op-cache"
+    run_launch_auth "$sb" OP_SECRETS_CACHE="$sb/op-cache" TMUX_STUB_CMD_LOG="$sb/session-cmd" ANTHROPIC_BASE_URL=
+    assert_exit 0 "$RUN_RC" "empty-launcher-URL launch dispatches (exit 0)"
+    _run_session_cmd "$sb" ANTHROPIC_BASE_URL=https://stale.example
+    assert_equals "sk-secret-tok-244|https://cache.example" \
+        "$(command head -n 1 "$sb/claude-env.log" 2>/dev/null)" \
+        "an empty launcher URL falls back to the cache's"
+
+    new_sandbox sb
+    run_launch_auth "$sb" OP_SECRETS_CACHE="$sb/no-such-cache" TMUX_STUB_CMD_LOG="$sb/session-cmd" \
+        ANTHROPIC_AUTH_TOKEN=sk-nourl-1163 # gitleaks:allow (fake fixture token)
+    assert_exit 0 "$RUN_RC" "no-URL launch dispatches (exit 0)"
+    authf="$(command ls "$sb"/golem-auth.* 2>/dev/null | command head -n 1)"
+    # Positive control: the absence below cannot pass on a missing file.
+    assert_not_empty "$authf" "control: the token file was written"
+    # lint-allow-unanchored: per-run sandbox token file, no committed prose
+    assert_file_not_contains "$authf" "ANTHROPIC_BASE_URL" "no URL known → no base-URL line in the file"
+    _run_session_cmd "$sb" ANTHROPIC_BASE_URL=https://session.example
+    assert_equals "sk-nourl-1163|https://session.example" \
+        "$(command head -n 1 "$sb/claude-env.log" 2>/dev/null)" \
+        "the session's own URL is left untouched"
+}
+
+# A URL carrying shell metacharacters round-trips through the sourced file, and
+# the no-token boundary is pinned: with a launcher URL but NO resolvable token
+# no file is written, so nothing reaches argv. Delivering the URL there is
+# #1170; this assertion is what that change must flip deliberately.
+test_launch_auth_base_url_quoting_and_no_token_boundary() {
+    local sb url log
+    url="https://proxy.example/a?x=1&y='q' \$HOME"
+    new_sandbox sb
+    run_launch_auth "$sb" OP_SECRETS_CACHE="$sb/no-such-cache" TMUX_STUB_CMD_LOG="$sb/session-cmd" \
+        ANTHROPIC_AUTH_TOKEN=sk-quote-1163 ANTHROPIC_BASE_URL="$url" # gitleaks:allow (fake fixture token)
+    assert_exit 0 "$RUN_RC" "metachar-URL launch dispatches (exit 0)"
     _run_session_cmd "$sb"
-    assert_equals "sk-secret-tok-244|" "$(command head -n 1 "$sb/claude-env.log" 2>/dev/null)" \
-        "the file delivers the token and leaves the base URL to the launcher env"
+    assert_equals "sk-quote-1163|$url" "$(command head -n 1 "$sb/claude-env.log" 2>/dev/null)" \
+        "a metachar base URL round-trips through the token file byte-for-byte"
+
+    new_sandbox sb
+    run_launch_auth "$sb" OP_SECRETS_CACHE="$sb/no-such-cache" TMUX_STUB_CMD_LOG="$sb/session-cmd" \
+        ANTHROPIC_BASE_URL=https://launcher.example
+    assert_exit 0 "$RUN_RC" "URL-only launch dispatches (exit 0)"
+    log="$(command cat "$sb/tmux-args.log" 2>/dev/null || true)"
+    assert_contains "$log" "new-session -d -s golem-7" "control: the tmux argv was logged"
+    assert_not_contains "$log" "golem-auth." "no token → no auth file is sourced (#1170 boundary)"
+    assert_equals "" "$(command ls "$sb"/golem-auth.* 2>/dev/null)" "no token → no auth file written"
 }
 
 # _sh_quote itself, sliced out and driven directly over the shapes that break a
