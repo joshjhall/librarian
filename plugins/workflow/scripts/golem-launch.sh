@@ -130,7 +130,8 @@
 #   2  usage error
 #   3  preflight: launch rules MISSING in both scopes (actionable, not opaque);
 #      launch: plugin version skew detected (running helper != active install),
-#      or the plugin is not resolvable / reports zero skills (#946)
+#      or the plugin is not resolvable / reports zero skills (#946), or a
+#      token resolved but its 0600 token file could not be written (#1160)
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(command dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -740,6 +741,8 @@ case "$cmd" in
         # into its GLOBAL env (#1125), and an already-running server ignores the
         # client env anyway. Only the file's PATH reaches argv; the session's
         # shell sources it and deletes it before `claude` starts.
+        # A token that resolved but cannot be written REFUSES the launch (exit
+        # 3, #1160); only an unresolved token still warns and dispatches.
         resolve_auth_token
         env_args=(-e "GOLEM_ID=golem-$N")
         auth_file=""
@@ -752,8 +755,12 @@ case "$cmd" in
                 # Guarded, a missing file degrades to a tokenless start.
                 auth_prefix="[ -r $(_sh_quote "$auth_file") ] && . $(_sh_quote "$auth_file"); rm -f $(_sh_quote "$auth_file"); "
             else
-                auth_file=""
-                command echo "golem-launch: WARNING could not write a private token file under ${TMPDIR:-/tmp}; golem-$N starts without the resolved ANTHROPIC_AUTH_TOKEN. Dispatching anyway." >&2
+                # Refuse rather than dispatch a golem KNOWN to lack auth (#1160):
+                # it would die at its first network call, the #244 failure. Before
+                # tmux runs, so no session starts and no server env is frozen. The
+                # token is never echoed, and never falls back to argv.
+                command echo "golem-launch: REFUSING golem-$N — an ANTHROPIC_AUTH_TOKEN resolved but no private 0600 token file could be written under ${TMPDIR:-/tmp}; a golem started now would have no auth (#244). Point TMPDIR at a writable directory and retry." >&2
+                exit 3
             fi
         elif [ -e "${OP_SECRETS_CACHE:-/dev/shm/op-secrets-cache}" ]; then
             # A cache marker exists but nothing resolved — this env looks like it

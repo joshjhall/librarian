@@ -192,20 +192,42 @@ test_launch_auth_relative_tmpdir_path_is_absolute() {
         "the golem receives the token when its shell starts in the worktree"
 }
 
-# The token file cannot be created → warn, dispatch tokenless, and NEVER fall
-# back to putting the token in argv.
-test_launch_auth_unwritable_tmpdir_never_falls_back_to_argv() {
-    local sb log
+# A token resolved but its file cannot be created → REFUSE the launch (exit 3)
+# before tmux runs, rather than dispatch a golem known to lack auth (#1160), and
+# NEVER fall back to putting the token in argv (#1153). The in-function control
+# runs the identical sandbox with a writable TMPDIR first, so "tmux was never
+# invoked" cannot pass on a stub that simply never logs.
+test_launch_auth_unwritable_tmpdir_refuses_launch() {
+    local sb ctl log
+    new_sandbox ctl
+    run_launch_auth "$ctl" OP_SECRETS_CACHE="$ctl/no-such-cache" \
+        ANTHROPIC_AUTH_TOKEN=sk-nowhere-1160 # gitleaks:allow (fake fixture token)
+    assert_exit 0 "$RUN_RC" "control: a writable TMPDIR dispatches (exit 0)"
+    assert_contains "$(command cat "$ctl/tmux-args.log" 2>/dev/null)" "new-session -d -s golem-7" \
+        "control: the tmux stub logs a dispatch in this sandbox shape"
     new_sandbox sb
     run_launch_auth "$sb" OP_SECRETS_CACHE="$sb/no-such-cache" TMPDIR="$sb/no-such-dir" \
-        ANTHROPIC_AUTH_TOKEN=sk-nowhere-1153
-    assert_exit 0 "$RUN_RC" "an unwritable token dir still dispatches (exit 0)"
-    assert_contains "$RUN_OUT" "could not write a private token file" "warns that the token was not delivered"
-    assert_not_contains "$RUN_OUT" "sk-nowhere-1153" "the warning does not echo the token"
+        ANTHROPIC_AUTH_TOKEN=sk-nowhere-1160 # gitleaks:allow (fake fixture token)
+    assert_exit 3 "$RUN_RC" "an unwritable token dir with a resolved token refuses (exit 3)"
+    assert_contains "$RUN_OUT" "REFUSING golem-7" "names the refused golem"
+    assert_contains "$RUN_OUT" "TMPDIR" "points the operator at TMPDIR"
+    assert_not_contains "$RUN_OUT" "started golem-7" "a refused launch does not claim it started"
+    assert_not_contains "$RUN_OUT" "sk-nowhere-1160" "the refusal does not echo the token"
     log="$(command cat "$sb/tmux-args.log" 2>/dev/null || true)"
-    assert_contains "$log" "new-session -d -s golem-7" "control: the tmux argv was logged"
-    assert_not_contains "$log" "sk-nowhere-1153" "no argv fallback for the token"
-    assert_not_contains "$log" "golem-auth." "no token-file path when none was written"
+    assert_equals "" "$log" "tmux is never invoked, so no session starts tokenless"
+    assert_not_contains "$log" "sk-nowhere-1160" "no argv fallback for the token"
+}
+
+# The refusal is keyed on a RESOLVED token, not on TMPDIR alone: with the same
+# unwritable TMPDIR and nothing to deliver, the launch still dispatches.
+test_launch_auth_unwritable_tmpdir_without_token_still_dispatches() {
+    local sb
+    new_sandbox sb
+    run_launch_auth "$sb" OP_SECRETS_CACHE="$sb/no-such-cache" TMPDIR="$sb/no-such-dir"
+    assert_exit 0 "$RUN_RC" "no token + unwritable TMPDIR still dispatches (exit 0)"
+    assert_not_contains "$RUN_OUT" "REFUSING" "nothing resolved, so nothing to refuse over"
+    assert_contains "$(command cat "$sb/tmux-args.log" 2>/dev/null)" "new-session -d -s golem-7" \
+        "the dispatch reaches tmux"
 }
 
 # tmux new-session fails → the session never runs to delete the file, so the
