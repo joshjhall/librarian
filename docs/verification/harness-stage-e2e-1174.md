@@ -75,3 +75,6 @@ test fails.
 **Not fixable in this repo's plugin code:** the devcontainer must be rebuilt
 against a release ≥ v0.15.0 (and the `containers` pin bumped to v0.16.0).
 Until then, a golem in this image reads v0.14.0 prose and hits the same refusal.
+Tracked as
+[joshjhall/containers#1057](https://github.com/joshjhall/containers/issues/1057)
+(bump `LIBRARIAN_REF` v0.15.0 → v0.16.0).
