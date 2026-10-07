@@ -274,6 +274,45 @@ assert_file_exists() {
     return 0
 }
 
+# Assert that an embedded analyzer produced a report at all (#1078, #1082).
+#
+# Usage: assert_analyzer_report_captured <rc> <report>
+#
+# For a gate that builds its whole report from one captured analyzer run:
+#
+#   REPORT_RC=0
+#   REPORT="$(command python3 - ... 2>&1 <<'PY' ...)" || REPORT_RC=$?
+#
+# The `|| REPORT_RC=$?` is what keeps `set -e` from aborting the gate at the
+# capture line, before any run_test and before generate_report — the only call
+# that turns TESTS_FAILED into a verdict. The `2>&1` is what makes the
+# traceback the evidence here rather than a column-0 leak to the terminal.
+#
+# Dispatch the calling test FIRST, so a crash is the first row an operator
+# reads: every assertion after it interrogates a report that was never
+# produced, so their verdicts carry no information.
+#
+# A crash is a FAILURE, not a skip. A gate whose python3 is ABSENT correctly
+# exits the reserved 77 sentinel — an unavailable linter is a different claim
+# from a broken one, and conflating them would let a crashing analyzer render as
+# "[SKIP] ... did not run" and stop failing the suite.
+#
+# The rc and report are plain arguments, not variable names: bash-3.2 has no
+# namerefs. The rc is compared as a STRING so an empty or garbled value fails
+# closed (the row fires) rather than erroring out of `[ -ne ]`.
+# tests/validate-analyzer-guards.sh pins this against every gate that uses it.
+assert_analyzer_report_captured() {
+    local rc="$1"
+    local report="$2"
+    if [ "$rc" = "0" ]; then
+        return 0
+    fi
+    _fail "the python3 analyzer crashed (exit $rc) — this gate checked NOTHING" \
+        "Fix the analyzer, not the subject: the assertions below read a report that was never produced." \
+        "${report:-(no output captured)}"
+    return 0
+}
+
 # Assert that FILE *defines* NAME — i.e. contains an assignment `NAME=...` on a
 # line that is not a comment.
 #

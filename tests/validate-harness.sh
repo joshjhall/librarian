@@ -791,6 +791,58 @@ test_fail_literal_eof_line_does_not_truncate() {
         "_fail: a literal EOF line in the evidence does not truncate the report"
 }
 
+# --- assert_analyzer_report_captured (#1082) --------------------------------
+#
+# The shared crash guard five python3-backed lint gates call first.
+# validate-analyzer-guards.sh drives it end-to-end through each real gate; these
+# pin the helper's own contract directly, including the empty-rc case no real
+# gate can produce.
+
+# A zero rc is silent, even over a non-empty report — the report IS the output
+# the later assertions read, not evidence of a crash.
+test_analyzer_report_captured_zero_rc_is_silent() {
+    local out
+    out="$(capture_assert assert_analyzer_report_captured 0 "LANG python")"
+    assert_output_empty "$out" "assert_analyzer_report_captured: rc 0 emits nothing"
+}
+
+# A non-zero rc names the crash and its exit code, and carries EVERY line of the
+# report as indented evidence — the last traceback line is the one a reader needs.
+test_analyzer_report_captured_crash_reports_evidence() {
+    local out
+    out="$(capture_assert assert_analyzer_report_captured 3 $'Traceback (most recent call last):\nBoomError: x')"
+    assert_contains "$out" "the python3 analyzer crashed (exit 3)" \
+        "assert_analyzer_report_captured: a non-zero rc names the crash and exit code"
+    assert_contains "$out" "        Traceback (most recent call last):" \
+        "assert_analyzer_report_captured: the report's first line is indented evidence"
+    assert_contains "$out" "        BoomError: x" \
+        "assert_analyzer_report_captured: the report's LAST line is indented evidence too"
+    assert_not_contains "$out" "(no output captured)" \
+        "assert_analyzer_report_captured: a real report does not get the placeholder"
+}
+
+# A crash with nothing captured still fires, with a placeholder rather than a
+# blank evidence line.
+test_analyzer_report_captured_empty_report_uses_placeholder() {
+    local out
+    out="$(capture_assert assert_analyzer_report_captured 1 "")"
+    assert_contains "$out" "the python3 analyzer crashed (exit 1)" \
+        "assert_analyzer_report_captured: an empty report still reports the crash"
+    assert_contains "$out" "        (no output captured)" \
+        "assert_analyzer_report_captured: an empty report renders the placeholder"
+}
+
+# An empty rc fails CLOSED: a caller that forgot to preset RC=0 or passed the
+# wrong variable must fire the row, never pass and never error out of `[ -ne ]`.
+test_analyzer_report_captured_empty_rc_fails_closed() {
+    local out
+    out="$(capture_assert assert_analyzer_report_captured "" "report")"
+    assert_contains "$out" "the python3 analyzer crashed" \
+        "assert_analyzer_report_captured: an empty rc fires the crash row"
+    assert_not_contains "$out" "integer expression expected" \
+        "assert_analyzer_report_captured: an empty rc does not error out of a numeric test"
+}
+
 # --- Run all tests ----------------------------------------------------------
 
 run_test test_assert_true_whitespace_is_message "assert_true: whitespace last-arg is the message"
@@ -856,5 +908,10 @@ run_test test_fail_empty_detail_still_prints_one_blank_line "_fail: an empty det
 run_test test_fail_trailing_newlines_do_not_add_blank_lines "_fail: trailing newlines add no blank lines (#1078)"
 run_test test_fail_detail_is_data_not_shell "_fail: evidence is data, not shell (#1078)"
 run_test test_fail_literal_eof_line_does_not_truncate "_fail: a literal EOF line does not truncate the report (#1078)"
+
+run_test test_analyzer_report_captured_zero_rc_is_silent "assert_analyzer_report_captured: rc 0 is silent (#1082)"
+run_test test_analyzer_report_captured_crash_reports_evidence "assert_analyzer_report_captured: a crash carries the report as evidence (#1082)"
+run_test test_analyzer_report_captured_empty_report_uses_placeholder "assert_analyzer_report_captured: an empty report uses the placeholder (#1082)"
+run_test test_analyzer_report_captured_empty_rc_fails_closed "assert_analyzer_report_captured: an empty rc fails closed (#1082)"
 
 generate_report

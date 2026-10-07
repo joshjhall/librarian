@@ -158,20 +158,10 @@ PY
 
 field() { command printf '%s\n' "$SCANNER_REPORT" | command grep "^$1	" | command cut -f2- || true; }
 
-# The analyzer produced a report at all (#1078). Dispatched FIRST so a crash is
-# the first row an operator reads: every assertion after this one interrogates a
-# report that was never produced, so their verdicts carry no information.
-#
-# A crash is a FAILURE, not a skip. The python3-ABSENT branch above correctly
-# exits the reserved 77 sentinel — an unavailable linter is a different claim
-# from a broken one, and conflating them would let a crashing analyzer render as
-# "[SKIP] ... did not run" and stop failing the suite.
+# The analyzer produced a report at all (#1078). Dispatched FIRST; the rationale
+# lives at assert_analyzer_report_captured in tests/lib/harness.sh.
 test_analyzer_ran_to_completion() {
-    if [ "$SCANNER_REPORT_RC" -ne 0 ]; then
-        _fail "the python3 analyzer crashed (exit $SCANNER_REPORT_RC) — this gate checked NOTHING" \
-            "Fix the analyzer, not the subject: the assertions below read a report that was never produced." \
-            "${SCANNER_REPORT:-(no output captured)}"
-    fi
+    assert_analyzer_report_captured "$SCANNER_REPORT_RC" "$SCANNER_REPORT"
 }
 
 # The scan actually found the language table. An empty LANG set would make every
