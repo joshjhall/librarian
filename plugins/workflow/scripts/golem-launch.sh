@@ -472,8 +472,9 @@ EOF
 # does not exercise component discovery.
 #
 # Fail-loud vs skip-silently, matching the version-skew contract above:
-#   claude absent from PATH  → skip silently (undeterminable). The launch line's
-#                              own `claude` invocation fails loudly on its own.
+#   claude absent from PATH  → skip silently (undeterminable) HERE. A detached
+#                              session's own `claude` would die unseen, so the
+#                              PATH half is check_session_claude_path's (#1176).
 #   probe fails / times out  → REFUSE. An unresponsive CLI is not evidence of a
 #                              healthy plugin, so 124 is a refusal, not a skip.
 
@@ -633,6 +634,42 @@ EOF
     exit 3
 }
 
+# check_session_claude_path — WARN (never refuse) when `claude` will not resolve
+# on the PATH the golem session actually gets (#1176). The payload runs as argv
+# `sh -c` (#1159), and a non-interactive sh sources NO init file, so a PATH entry
+# added only in ~/.zshenv or config.fish never reaches the golem: the session
+# inherits the tmux server's GLOBAL env. A running server answers
+# `show-environment -g PATH` with the PATH it was started under, possibly from
+# another environment; with no server, the new-session that starts one copies
+# this launcher's env. If `claude` is missing there, both chained calls fail with
+# `command not found` and the detached pane closes with nothing on screen.
+#
+# Warn-only because this is a prediction: a refusal over a wrong guess would block
+# every dispatch, and CI hosts have no `claude` at all. GOLEM_SKIP_CLAUDE_PATH_CHECK=1
+# silences it. The probe is bounded so a wedged server cannot hang dispatch.
+# `launch` only: `print` stays tmux-free, since tracks-runbook.sh promises never
+# to touch tmux and shells out to `print` per lane.
+check_session_claude_path() {
+    local eff src line
+    [ "${GOLEM_SKIP_CLAUDE_PATH_CHECK:-}" = "1" ] && return 0
+    src="the launcher's env (no tmux server is running, so a new one inherits it)"
+    eff="$PATH"
+    if line="$(bounded_run 5 tmux show-environment -g PATH 2>/dev/null)"; then
+        case "$line" in
+            PATH=*)
+                eff="${line#PATH=}"
+                src="the running tmux server's global env"
+                ;;
+        esac
+    fi
+    (
+        PATH="$eff"
+        command -v claude >/dev/null 2>&1
+    ) && return 0
+    command echo "golem-launch: WARNING \`claude\` is not on the PATH golem-$N will inherit from $src, so the session would exit with \`command not found\` and close unseen (#1176). The payload runs under \`sh -c\`, which reads no shell init file (~/.zshenv, config.fish). Fix: \`tmux set-environment -g PATH \"<dir-of-claude>:\$PATH\"\`, or restart the tmux server (once no golem is running) from a shell whose PATH has claude. GOLEM_SKIP_CLAUDE_PATH_CHECK=1 silences this. Dispatching anyway." >&2
+    return 0
+}
+
 # resolve_level [flag-level] — echo the effective autonomy level (1-4) with
 # precedence: an explicit --level value > $GOLEM_LEVEL env > the built-in
 # default 4. Validates the result as a single digit 1-4; on an out-of-range or
@@ -778,12 +815,17 @@ case "$cmd" in
             # to no warning at all.
             command echo "golem-launch: WARNING no ANTHROPIC_AUTH_TOKEN resolvable though an op-secrets cache is present; golem-$N may start unauthenticated. Dispatching anyway." >&2
         fi
+        # Predict a session that cannot find `claude` (#1176), warn-only. After
+        # every refusal above, so a refused launch still never touches tmux.
+        check_session_claude_path
         # Bare, standalone new-session — matches Bash(tmux new-session:*). The
         # payload goes to tmux as the three words `sh` `-c` `<payload>`, never as
         # one string: tmux runs a one-string command through its default-shell
         # (from $SHELL), and under fish or csh the `.`/`export`/`;` syntax fails,
         # so the golem would start tokenless with no warning (#1159). A multi-word
         # command is exec'd directly, so the payload always runs under POSIX sh.
+        # The trade-off: that sh sources no shell init, so the golem's PATH is the
+        # tmux server's global env only (#1176, check_session_claude_path).
         # The token lives only inside the 0600 file (never echoed, never in argv) so
         # it can't leak to a pane, log, or ps. $(golem_model_flag) splices ` --model "…"` after each
         # `claude` when GOLEM_MODEL is set, and expands to nothing (byte-identical

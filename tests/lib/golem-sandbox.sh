@@ -166,7 +166,8 @@ inbox_in() {
 # Optional knobs: TMUX_STUB_ENV_LOG (dump env, #1125), TMUX_STUB_CMD_LOG (save
 # new-session's LAST arg — the session command — verbatim, so a test can run it,
 # #1153), TMUX_STUB_ARGV_LOG (new-session's args one per line, so a test can
-# assert word BOUNDARIES a joined $* hides, #1159), TMUX_STUB_RC (exit with this
+# assert word BOUNDARIES a joined $* hides, #1159), TMUX_STUB_SHOW_ENV (the line
+# `show-environment` prints; unset = no server, exit 1, #1176), TMUX_STUB_RC (exit with this
 # status instead of 0).
 plant_tmux_stub() {
     local sb="$1"
@@ -183,6 +184,12 @@ if [ "${1:-}" = new-session ] && [ -n "${TMUX_STUB_CMD_LOG:-}" ]; then
     printf '%s' "$last" >"$TMUX_STUB_CMD_LOG"
 fi
 [ "${1:-}" = new-session ] && [ -n "${TMUX_STUB_ARGV_LOG:-}" ] && printf '%s\n' "$@" >"$TMUX_STUB_ARGV_LOG"
+# show-environment: no server (exit 1) unless a test supplies its line (#1176).
+if [ "${1:-}" = show-environment ]; then
+    [ -n "${TMUX_STUB_SHOW_ENV:-}" ] || exit 1
+    printf '%s\n' "$TMUX_STUB_SHOW_ENV"
+    exit 0
+fi
 exit "${TMUX_STUB_RC:-0}"
 EOF
     command chmod +x "$sb/bin/tmux"
@@ -194,6 +201,8 @@ EOF
 # assignments. Captures RUN_RC / RUN_OUT; the tmux argv lands in $sb/tmux-args.log.
 # TMPDIR is the sandbox, so the 0600 token file (#1153) lands at $sb/golem-auth.*
 # — the stub never runs the session command that would delete it.
+# The #1176 claude-PATH warning is off by default (CI hosts have no `claude`);
+# a case that tests it passes GOLEM_SKIP_CLAUDE_PATH_CHECK= to re-enable it.
 run_launch_auth() {
     local sb="$1"
     shift
@@ -220,6 +229,7 @@ run_launch_auth() {
             TMUX= TMUX_TMPDIR="${SANDBOX_TMUX_DIR:-$sb/.tmux}" \
             TMUX_STUB_LOG="$sb/tmux-args.log" \
             TMPDIR="$sb" \
+            GOLEM_SKIP_CLAUDE_PATH_CHECK=1 \
             GOLEM_WORKTREE_DIR=.worktrees \
             GOLEM_STATUS_DIR=.worktrees/.status \
             CLAUDE_PROJECT_SETTINGS=proj-settings.json \

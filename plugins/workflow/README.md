@@ -172,6 +172,14 @@ example the pre-#1056 `CONTEXT_BUDGET_FLOOR=91000`. Check with
 `tmux show-environment -g`, and clear a stale one with
 `tmux set-environment -g -u <VAR>` or restart the server.
 
+A golem's session runs its payload as `sh -c`, which reads no shell init file,
+so its `PATH` is the tmux server's global env, not your `~/.zshenv` or
+`config.fish` (#1176). If a long-lived server was started without `claude` on
+its `PATH`, the golem exits with `command not found` and its pane closes.
+`golem-launch.sh launch` warns before dispatching when it predicts this. Fix it
+with `tmux set-environment -g PATH "<dir-of-claude>:$PATH"`, or restart the
+server from a shell that has `claude`.
+
 `golem-launch.sh` hands a resolved `ANTHROPIC_AUTH_TOKEN` to a golem through an
 owner-only (0600) file. The golem's session sources the file and deletes it
 before `claude` starts, so the token never appears in a process's argv (#1153).

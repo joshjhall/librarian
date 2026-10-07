@@ -305,6 +305,93 @@ sk-shell-1159" "$(command cat "$sb/claude-env.log" 2>/dev/null)" \
         "the operator's default-shell never ran the session payload"
 }
 
+# --- claude on the session PATH (#1176) -------------------------------------
+# The payload's `sh -c` sources no shell init, so the golem's PATH is the tmux
+# server's global env (or, with no server, the launcher's). These cases re-enable
+# the check run_launch_auth turns off, and drive it through the stub's
+# show-environment knob, never a real server.
+
+# _path_without_claude — the caller's PATH minus every dir holding a `claude`, so
+# "missing" holds on a dev host too (CI has none to drop).
+_path_without_claude() {
+    local out="" d rest="$PATH:"
+    while [ -n "$rest" ]; do
+        d="${rest%%:*}"
+        rest="${rest#*:}"
+        [ -n "$d" ] && [ ! -x "$d/claude" ] && out="${out:+$out:}$d"
+    done
+    command printf '%s' "$out"
+}
+
+# _fake_claude_dir <sandbox> <name> — a dir holding an executable fake `claude`.
+_fake_claude_dir() {
+    command mkdir -p "$1/$2"
+    command printf '%s\n' '#!/usr/bin/env sh' 'exit 0' >"$1/$2/claude"
+    command chmod +x "$1/$2/claude"
+}
+
+# A running server whose PATH lacks claude warns, naming that server, even though
+# the launcher's own PATH HAS claude — the server's value is what the golem gets.
+test_launch_claude_path_server_env_missing_warns() {
+    local sb
+    new_sandbox sb
+    _fake_claude_dir "$sb" fakebin
+    command mkdir -p "$sb/srvbin"
+    run_launch_auth "$sb" OP_SECRETS_CACHE="$sb/no-such-cache" GOLEM_SKIP_CLAUDE_PATH_CHECK= \
+        PATH="$sb/bin:$sb/fakebin:$(_path_without_claude)" TMUX_STUB_SHOW_ENV="PATH=$sb/srvbin"
+    assert_exit 0 "$RUN_RC" "warn-only: the launch still dispatches (exit 0)"
+    assert_contains "$(command cat "$sb/tmux-args.log" 2>/dev/null)" "new-session -d -s golem-7" \
+        "and new-session is still reached"
+    assert_contains "$RUN_OUT" "WARNING \`claude\` is not on the PATH golem-7 will inherit" \
+        "a server PATH without claude is announced"
+    assert_contains "$RUN_OUT" "running tmux server's global env" "naming the server env as the source"
+    assert_contains "$RUN_OUT" "tmux set-environment -g PATH" "with the actionable fix"
+}
+
+# Control for the above: the same server shape with claude on its PATH is silent,
+# even when the launcher's own PATH LACKS claude (server wins in both directions).
+test_launch_claude_path_server_env_present_silent() {
+    local sb
+    new_sandbox sb
+    _fake_claude_dir "$sb" srvbin
+    run_launch_auth "$sb" OP_SECRETS_CACHE="$sb/no-such-cache" GOLEM_SKIP_CLAUDE_PATH_CHECK= \
+        PATH="$sb/bin:$(_path_without_claude)" TMUX_STUB_SHOW_ENV="PATH=$sb/srvbin"
+    assert_exit 0 "$RUN_RC" "launch dispatches (exit 0)"
+    assert_contains "$(command cat "$sb/tmux-args.log" 2>/dev/null)" "show-environment -g PATH" \
+        "control: the server PATH was actually probed"
+    assert_not_contains "$RUN_OUT" "is not on the PATH" "a server PATH with claude raises no warning"
+}
+
+# No server (show-environment fails): the new-session would start one from the
+# launcher's env, so the launcher's PATH decides — missing warns, present is silent.
+test_launch_claude_path_no_server_uses_launcher_path() {
+    local sb ctl
+    new_sandbox sb
+    run_launch_auth "$sb" OP_SECRETS_CACHE="$sb/no-such-cache" GOLEM_SKIP_CLAUDE_PATH_CHECK= \
+        PATH="$sb/bin:$(_path_without_claude)"
+    assert_exit 0 "$RUN_RC" "warn-only with no server either (exit 0)"
+    assert_contains "$RUN_OUT" "is not on the PATH golem-7 will inherit from the launcher's env" \
+        "a launcher PATH without claude is announced, naming the launcher env"
+    new_sandbox ctl
+    _fake_claude_dir "$ctl" fakebin
+    run_launch_auth "$ctl" OP_SECRETS_CACHE="$ctl/no-such-cache" GOLEM_SKIP_CLAUDE_PATH_CHECK= \
+        PATH="$ctl/bin:$ctl/fakebin:$(_path_without_claude)"
+    assert_exit 0 "$RUN_RC" "launch with claude on the launcher PATH dispatches"
+    assert_not_contains "$RUN_OUT" "is not on the PATH" "and raises no warning"
+}
+
+# GOLEM_SKIP_CLAUDE_PATH_CHECK=1 silences a case that would otherwise warn.
+test_launch_claude_path_escape_hatch() {
+    local sb
+    new_sandbox sb
+    run_launch_auth "$sb" OP_SECRETS_CACHE="$sb/no-such-cache" GOLEM_SKIP_CLAUDE_PATH_CHECK=1 \
+        PATH="$sb/bin:$(_path_without_claude)" TMUX_STUB_SHOW_ENV="PATH=$sb/nowhere"
+    assert_exit 0 "$RUN_RC" "launch dispatches (exit 0)"
+    assert_not_contains "$RUN_OUT" "is not on the PATH" "the escape hatch silences the warning"
+    assert_not_contains "$(command cat "$sb/tmux-args.log" 2>/dev/null)" "show-environment" \
+        "and skips the server probe entirely"
+}
+
 # A token carrying shell metacharacters round-trips byte-for-byte: the file is
 # sourced by sh, so an unquoted `'` would break it and a `$` would expand.
 test_launch_auth_token_quoting_round_trips() {
