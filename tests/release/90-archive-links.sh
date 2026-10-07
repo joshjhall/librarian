@@ -17,11 +17,11 @@ LINK_GUARD="$REPO_ROOT/bin/check-archive-links.sh"
 
 # al_archive <out.tar.gz> <link>=<target>...
 # Builds a throwaway repo holding README, sub/file and the given symlinks, then
-# archives it under `p/`. Runs in a subshell with git's hook-exported variables
+# archives it under `p/` (or under $AL_PREFIX, which may be empty). Runs in a subshell with git's hook-exported variables
 # unset: under the pre-push hook an inherited GIT_DIR would point every call
 # here at the OUTER repo.
 al_archive() {
-    local out="$1" repo
+    local out="$1" repo prefix="${AL_PREFIX-p/}"
     shift
     repo="$(command mktemp -d "$WORKDIR/al.XXXXXX")" || return 1
     (
@@ -39,7 +39,7 @@ al_archive() {
             git add -A &&
             git -c user.name=t -c user.email=t@t -c commit.gpgsign=false \
                 commit -q -m init &&
-            git -c tar.umask=0022 archive --format=tar.gz --prefix=p/ \
+            git -c tar.umask=0022 archive --format=tar.gz --prefix="$prefix" \
                 -o "$out" HEAD
     )
 }
@@ -83,6 +83,21 @@ test_archive_links_rejects_transient_escape() {
     }
     command bash "$LINK_GUARD" "$tgz" >/dev/null 2>&1 || rc=$?
     assert_exit 1 "$rc" "a target that leaves the tree before re-entering it is rejected"
+}
+
+test_archive_links_rejects_escape_without_prefix() {
+    # With no top directory every top-level link sits at the archive root, so the
+    # floor is the root itself: one `..` already escapes. Every other fixture
+    # uses a prefix, which leaves this floor=0 branch unexercised.
+    local tgz="$WORKDIR/al-noprefix.tar.gz" out rc=0
+    AL_PREFIX="" al_archive "$tgz" "esc=../x" "ok=README" || {
+        assert_true "false" "fixture archive (no prefix) built"
+        return 0
+    }
+    out="$(command bash "$LINK_GUARD" "$tgz" 2>&1)" || rc=$?
+    assert_exit 1 "$rc" "a root-level ..-link in an unprefixed archive is rejected"
+    assert_contains "$out" "esc -> ../x" "the root-level escaping link is named"
+    assert_contains "$out" "1 of 2 symlinks" "the in-tree root-level link is not counted"
 }
 
 test_archive_links_accepts_in_tree() {

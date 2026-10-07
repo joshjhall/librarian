@@ -126,6 +126,7 @@ run_fragment_test test_release_yml_pins_archive_mask "release.yml + README pin t
 run_fragment_test test_archive_links_rejects_absolute "check-archive-links.sh rejects an absolute symlink and names it"
 run_fragment_test test_archive_links_rejects_escaping_relative "check-archive-links.sh rejects ..-escaping links, keeps in-tree ones"
 run_fragment_test test_archive_links_rejects_transient_escape "check-archive-links.sh rejects a target that leaves the tree before re-entering"
+run_fragment_test test_archive_links_rejects_escape_without_prefix "check-archive-links.sh rejects a root-level ..-link in an unprefixed archive"
 run_fragment_test test_archive_links_accepts_in_tree "check-archive-links.sh passes relative in-tree links and scans every one"
 run_fragment_test test_archive_links_fails_loud_on_bad_input "check-archive-links.sh exits 2 on missing/unlistable/empty/absent input"
 run_fragment_test test_archive_links_repo_head_is_clean "the repo's own HEAD archive passes check-archive-links.sh"

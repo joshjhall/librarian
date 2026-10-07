@@ -21,9 +21,11 @@
 # tar and bsdtar. Extraction never follows a link, so an escaping one is safe to
 # materialize. Resolution is LEXICAL: a target is rejected as soon as a `..`
 # would climb above the archive's top directory (the first path component, e.g.
-# `librarian-<version>/`) — consumers strip that component on extract, so
-# escaping it already escapes the install tree. An empty listing is a failure,
-# not a clean pass: a scan of zero entries proves nothing.
+# `librarian-<version>/`), which becomes the install tree once extracted, so
+# leaving it — even transiently, as in `../../librarian-<version>/x` — is
+# treated as escaping. A link with no directory component (an archive built
+# without a prefix) is held to the archive root instead. An empty listing is a
+# failure, not a clean pass: a scan of zero entries proves nothing.
 
 set -euo pipefail
 
