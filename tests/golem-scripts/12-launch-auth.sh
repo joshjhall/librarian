@@ -422,6 +422,86 @@ test_launch_auth_tmux_failure_removes_token_file() {
         "the orphaned token file is removed"
 }
 
+# _plant_chmod_stub <sandbox> <fail|readonly> — write $sb/bin/chmod, which
+# run_launch_auth puts first on PATH. `command chmod` skips functions, not PATH,
+# so write_auth_file runs the stub. It logs its argv to $sb/chmod.log, then:
+# `fail` exits 1 (the chmod-600 arm); `readonly` makes the file 0400 with the
+# REAL chmod and exits 0, so the following `>"$f"` write fails (the write arm).
+_plant_chmod_stub() {
+    local sb="$1" mode="$2" real
+    real="$(command -v chmod)"
+    command mkdir -p "$sb/bin"
+    command printf '%s\n' '#!/usr/bin/env sh' \
+        "printf '%s\\n' \"\$*\" >>'$sb/chmod.log'" >"$sb/bin/chmod"
+    if [ "$mode" = readonly ]; then
+        command printf '%s\n' "for f in \"\$@\"; do :; done" \
+            "'$real' 400 \"\$f\"" 'exit 0' >>"$sb/bin/chmod"
+    else
+        command printf '%s\n' 'exit 1' >>"$sb/bin/chmod"
+    fi
+    command chmod +x "$sb/bin/chmod"
+}
+
+# _assert_refused_without_token_file <sandbox> <token> <arm> — the shared
+# outcome of a write_auth_file failure arm: exit-3 refusal, the partial file
+# removed, tmux never run, the token in neither output nor argv. The chmod.log
+# control proves the stub ran on a real golem-auth.* file, so "no file left"
+# cannot pass because the file was never created.
+_assert_refused_without_token_file() {
+    local sb="$1" token="$2" arm="$3" log
+    assert_exit 3 "$RUN_RC" "$arm: a failed token-file write refuses (exit 3)"
+    assert_contains "$RUN_OUT" "REFUSING golem-7" "$arm: names the refused golem"
+    assert_contains "$(command cat "$sb/chmod.log" 2>/dev/null)" "600 $sb/golem-auth." \
+        "$arm control: the stub ran on the created token file"
+    assert_equals "" "$(command ls "$sb"/golem-auth.* 2>/dev/null)" \
+        "$arm: the partial token file is removed"
+    log="$(command cat "$sb/tmux-args.log" 2>/dev/null || true)"
+    assert_equals "" "$log" "$arm: tmux is never invoked"
+    assert_not_contains "$RUN_OUT" "$token" "$arm: the refusal does not echo the token"
+}
+
+# write_auth_file's chmod-600 arm (#1161): the file exists, chmod fails, and the
+# arm must remove it — the mktemp-failure test above never reaches this arm.
+test_launch_auth_chmod_failure_removes_token_file() {
+    local sb
+    new_sandbox sb
+    _plant_chmod_stub "$sb" fail
+    run_launch_auth "$sb" OP_SECRETS_CACHE="$sb/no-such-cache" \
+        ANTHROPIC_AUTH_TOKEN=sk-chmodfail-1161 # gitleaks:allow (fake fixture token)
+    _assert_refused_without_token_file "$sb" sk-chmodfail-1161 "chmod arm"
+}
+
+# write_auth_file's write arm (#1161): chmod succeeds but the file is left 0400,
+# so the export lines cannot be written; the arm must remove the empty file.
+test_launch_auth_write_failure_removes_token_file() {
+    local sb
+    if [ "$(command id -u)" = "0" ]; then
+        skip_test "running as root — a 0400 file is still writable"
+        return 0
+    fi
+    new_sandbox sb
+    _plant_chmod_stub "$sb" readonly
+    run_launch_auth "$sb" OP_SECRETS_CACHE="$sb/no-such-cache" \
+        ANTHROPIC_AUTH_TOKEN=sk-writefail-1161 # gitleaks:allow (fake fixture token)
+    _assert_refused_without_token_file "$sb" sk-writefail-1161 "write arm"
+}
+
+# tmux new-session fails with NO token file (#1161): the `[ -n "$auth_file" ] &&`
+# guard returns 1 here, and the arm must still report and exit 1 — never fall
+# through to "started".
+test_launch_auth_tmux_failure_without_token_exits_1() {
+    local sb log
+    new_sandbox sb
+    run_launch_auth "$sb" OP_SECRETS_CACHE="$sb/no-such-cache" TMUX_STUB_RC=1
+    assert_exit 1 "$RUN_RC" "a failed tokenless tmux new-session exits 1"
+    assert_contains "$RUN_OUT" "tmux new-session failed for golem-7" "names the failed dispatch"
+    assert_not_contains "$RUN_OUT" "started golem-7" "a failed dispatch does not claim it started"
+    log="$(command cat "$sb/tmux-args.log" 2>/dev/null || true)"
+    assert_contains "$log" "new-session -d -s golem-7" "control: tmux was invoked"
+    assert_not_contains "$log" "golem-auth." "control: no token file was handed to tmux"
+    assert_equals "" "$(command ls "$sb"/golem-auth.* 2>/dev/null)" "no token file is left"
+}
+
 # No cache, no op, no ref → no injection, no warning, exit 0. The dispatch is
 # byte-identical to pre-#244 (only GOLEM_ID in the env args).
 test_launch_auth_no_source_no_injection() {
