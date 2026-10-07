@@ -253,36 +253,9 @@ work_default_golem() {
     return 1
 }
 
-# work_join_status_dir <root> — join GOLEM_STATUS_DIR onto a main-checkout root.
-#
-# THE ONE PLACE THE TWO KNOBS MEET, and therefore the one place worth reading
-# carefully (issue #949). GOLEM_STATUS_DIR is documented as repo-root-relative
-# and defaults to <GOLEM_WORKTREE_DIR>/.status — but an operator may set it to
-# ANY relative path, or to an absolute one, and GOLEM_WORKTREE_DIR may be
-# MULTI-SEGMENT (`nested/worktrees`): config.sh promises no single-segment
-# restriction, so nothing may assume one.
-#
-# Two withdrawn attempts at this got it wrong in ways that each produced a
-# working golem reported `idle` — the exact symptom #890 exists to remove:
-#
-#   1. A hardcoded `<worktree>/../.status` sibling, which silently ignores
-#      GOLEM_STATUS_DIR entirely. Measured: a custom status dir with an open
-#      item classified `idle`.
-#   2. Resolving a relative GOLEM_STATUS_DIR against the worktree's
-#      GRANDPARENT, which is the root only when GOLEM_WORKTREE_DIR is exactly
-#      one segment. Measured with GOLEM_WORKTREE_DIR=nested/worktrees: the root
-#      came out one level too deep, the registry read empty, verdict `idle`.
-#
-# Hence: never count path segments, never assume the default layout. Take the
-# root from git (the caller's job) and join. An ABSOLUTE GOLEM_STATUS_DIR passes
-# through untouched — joining a root onto it would produce a path that exists
-# nowhere, which reads as an empty registry, which reads as idle.
-work_join_status_dir() {
-    case "$GOLEM_STATUS_DIR" in
-        /*) command echo "$GOLEM_STATUS_DIR" ;;
-        *) command echo "$1/$GOLEM_STATUS_DIR" ;;
-    esac
-}
+# The status-dir join itself is golem_join_status_dir in config.sh — the one
+# copy, shared with worktree-rm.sh's teardown (#1179). Read its header before
+# changing how either caller resolves the registry.
 
 # Resolve the MAIN checkout's status dir. The registry lives there even when a
 # subcommand runs from inside a worktree — exactly like the feed and the inbox —
@@ -296,7 +269,7 @@ work_resolve_status_dir() {
     local root
     root="$(repo_root 2>/dev/null || true)"
     [ -z "$root" ] && return 1
-    work_join_status_dir "$root"
+    golem_join_status_dir "$root"
 }
 
 # work_status_dir_for_worktree <worktree> — the status dir of the golem that owns
@@ -324,7 +297,7 @@ work_status_dir_for_worktree() {
     [ -n "$gitdir" ] || return 1
     root="$("$DIRNAME" "$gitdir")"
     [ -n "$root" ] || return 1
-    work_join_status_dir "$root"
+    golem_join_status_dir "$root"
 }
 
 # Print the registry path for a golem, or return 1 if not inside a repo.

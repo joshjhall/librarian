@@ -1023,14 +1023,11 @@ EOF
     # The golem's status cache and background-work registry (#949), which the
     # gate-watch idle check reads — a stale one for a reused id is a wrong
     # input there (#1166). Resolved from the MAIN-checkout root, never the
-    # cwd, by the same join as golem-work.sh's work_join_status_dir: an
-    # absolute GOLEM_STATUS_DIR passes through untouched. Not sourced from
-    # there because that file reassigns SCRIPT_DIR and its tool vars at source
-    # time. Only a regular file is removed; anything else is left with a WARNING.
-    case "$GOLEM_STATUS_DIR" in
-        /*) rm_status_dir="$GOLEM_STATUS_DIR" ;;
-        *) rm_status_dir="$root/$GOLEM_STATUS_DIR" ;;
-    esac
+    # cwd, by config.sh's golem_join_status_dir — the same join golem-work.sh
+    # writes the registry through (#1179), so an absolute GOLEM_STATUS_DIR
+    # passes through untouched. Only a regular file is removed; anything else
+    # is left with a WARNING.
+    rm_status_dir="$(golem_join_status_dir "$root")"
     for status_file in "$rm_status_dir/golem-$N.json" "$rm_status_dir/golem-$N.work.jsonl"; do
         if [ -L "$status_file" ] || { [ -e "$status_file" ] && [ ! -f "$status_file" ]; }; then
             command echo "worktree-rm: WARNING: not removing $status_file (not a regular file)" >&2

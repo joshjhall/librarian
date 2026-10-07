@@ -403,6 +403,40 @@ golem_repo_key() {
     command printf '%s-%s\n' "${root##*/}" "$sum"
 }
 
+# golem_join_status_dir <root> — join GOLEM_STATUS_DIR onto a main-checkout root.
+# The ONE copy (#1179): golem-work.sh's registry resolution and worktree-rm.sh's
+# status-file teardown both call it, so the writer and the remover cannot disagree
+# about where a golem's status files live.
+#
+# THE ONE PLACE THE TWO KNOBS MEET, and therefore the one place worth reading
+# carefully (issue #949). GOLEM_STATUS_DIR is documented as repo-root-relative
+# and defaults to <GOLEM_WORKTREE_DIR>/.status — but an operator may set it to
+# ANY relative path, or to an absolute one, and GOLEM_WORKTREE_DIR may be
+# MULTI-SEGMENT (`nested/worktrees`): config.sh promises no single-segment
+# restriction, so nothing may assume one.
+#
+# Two withdrawn attempts at this got it wrong in ways that each produced a
+# working golem reported `idle` — the exact symptom #890 exists to remove:
+#
+#   1. A hardcoded `<worktree>/../.status` sibling, which silently ignores
+#      GOLEM_STATUS_DIR entirely. Measured: a custom status dir with an open
+#      item classified `idle`.
+#   2. Resolving a relative GOLEM_STATUS_DIR against the worktree's
+#      GRANDPARENT, which is the root only when GOLEM_WORKTREE_DIR is exactly
+#      one segment. Measured with GOLEM_WORKTREE_DIR=nested/worktrees: the root
+#      came out one level too deep, the registry read empty, verdict `idle`.
+#
+# Hence: never count path segments, never assume the default layout. Take the
+# root from git (the caller's job) and join. An ABSOLUTE GOLEM_STATUS_DIR passes
+# through untouched — joining a root onto it would produce a path that exists
+# nowhere, which reads as an empty registry, which reads as idle.
+golem_join_status_dir() {
+    case "$GOLEM_STATUS_DIR" in
+        /*) command echo "$GOLEM_STATUS_DIR" ;;
+        *) command echo "$1/$GOLEM_STATUS_DIR" ;;
+    esac
+}
+
 # golem_model_flag — print ` --model "<GOLEM_MODEL>"` when GOLEM_MODEL is set,
 # else nothing. SINGLE SOURCE OF TRUTH for the model-flag shape: golem-launch.sh
 # (both the `print`/launch_line and the `launch` tmux string) splices its
