@@ -247,12 +247,20 @@ test_launch_auth_payload_is_argv_sh_c() {
 # still start WITH its token, and the stand-in must never run (#1159). Before
 # the fix tmux ran the payload through that shell and the token never arrived.
 test_launch_auth_non_posix_shell_still_delivers_token() {
-    local sb i
+    local sb i sock
     if ! command -v tmux >/dev/null 2>&1; then
         skip_test "tmux not installed (the default-shell path needs a real server)"
         return 0
     fi
     new_sandbox sb
+    # Fail closed on isolation: tmux 3.5a reads a TMUX_TMPDIR that does NOT exist
+    # as unset and falls back to the SHARED default server, where this launch
+    # would land golem-7 and the cleanup below would kill every live golem.
+    if [ -z "${SANDBOX_TMUX_DIR:-}" ] || [ ! -d "$SANDBOX_TMUX_DIR" ]; then
+        assert_equals "an existing dir" "${SANDBOX_TMUX_DIR:-unset} (missing)" \
+            "sandbox tmux dir exists before a real tmux runs"
+        return 0
+    fi
     command mkdir -p "$sb/fakebin"
     command printf '%s\n' '#!/usr/bin/env sh' \
         'printf "%s\n" "${ANTHROPIC_AUTH_TOKEN:-}" >>"$CLAUDE_ENV_LOG"' >"$sb/fakebin/claude"
@@ -270,10 +278,12 @@ test_launch_auth_non_posix_shell_still_delivers_token() {
         command sleep 0.1
         i=$((i + 1))
     done
-    # TMUX='' is load-bearing: inside a golem $TMUX names the SHARED default
-    # server and outranks TMUX_TMPDIR, so an unscoped kill-server kills every
-    # live golem on the host. Same scoping as every sibling tmux call here.
-    TMUX='' TMUX_TMPDIR="${SANDBOX_TMUX_DIR:-$sb/.tmux}" tmux kill-server >/dev/null 2>&1 || true
+    # Clean up by explicit socket PATH (-S), never by TMUX/TMUX_TMPDIR: $TMUX
+    # outranks TMUX_TMPDIR inside a golem, and a missing TMUX_TMPDIR falls back
+    # to the shared server — either way kill-server would kill every live golem.
+    # -S on a path with no socket errors instead of falling back.
+    sock="$SANDBOX_TMUX_DIR/tmux-$(command id -u)/default"
+    [ -S "$sock" ] && TMUX='' tmux -S "$sock" kill-server >/dev/null 2>&1 || true
     assert_equals "sk-shell-1159
 sk-shell-1159" "$(command cat "$sb/claude-env.log" 2>/dev/null)" \
         "both claude calls receive the token despite a non-POSIX default-shell"

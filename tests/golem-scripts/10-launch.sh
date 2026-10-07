@@ -58,7 +58,9 @@ test_launch_print_payload_is_argv_sh_c() {
     run_in "$sb" "$LAUNCH" print 5 --level 3
     assert_exit 0 "$RUN_RC" "print <N> exits 0"
     plant_tmux_stub "$sb"
-    PATH="$sb/bin:$PATH" TMUX_STUB_ARGV_LOG="$sb/argv.log" command sh -c "$RUN_OUT" >/dev/null 2>&1 || true
+    # TMUX='' + TMUX_TMPDIR: if the stub is ever bypassed, a real tmux reaches
+    # only a sandbox server, never the shared default one live golems run on.
+    TMUX='' TMUX_TMPDIR="${SANDBOX_TMUX_DIR:-$sb/.tmux}" PATH="$sb/bin:$PATH" TMUX_STUB_ARGV_LOG="$sb/argv.log" command sh -c "$RUN_OUT" >/dev/null 2>&1 || true
     argv="$(command cat "$sb/argv.log" 2>/dev/null || true)"
     assert_contains "$argv" "golem-5" "control: the printed line reached the stub"
     n="$(command printf '%s\n' "$argv" | command wc -l)"
