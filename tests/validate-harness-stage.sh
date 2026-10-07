@@ -436,6 +436,18 @@ STUB
     local left=0
     [ -e "$dst" ] && left=1
     assert_equals "0" "$left" "the mismatched copy is removed, not left for the next run"
+    assert_contains "$LAST_OUT" "(removed)" "a successful removal is reported as such"
+
+    # A removal that FAILS must not be reported as done. An `rm` stub that does
+    # nothing leaves the bad copy in place; the refusal has to say so.
+    command printf '#!/bin/sh\nexit 1\n' >"$stubdir/rm"
+    command chmod +x "$stubdir/rm"
+    LAST_OUT="$(env -uBASH_ENV PATH="$stubdir:$PATH" \
+        LIBRARIAN_HARNESS_ORCHESTRATE="$src" "$STAGER" stage orchestrate --dir "$dest" 2>&1)" &&
+        LAST_RC=0 || LAST_RC=$?
+    assert_equals "3" "$LAST_RC" "a mismatch whose removal fails still exits 3"
+    assert_contains "$LAST_OUT" "REMOVAL FAILED" "a failed removal is named, never claimed as removed"
+    assert_not_contains "$LAST_OUT" "(removed)" "a failed removal is not reported as removed"
 
     command rm -rf "$dest" "$srcdir" "$stubdir"
 }

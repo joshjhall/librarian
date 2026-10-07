@@ -551,15 +551,17 @@ cmd_stage() {
             "hand a world-readable scriptPath to the Workflow tool."
 
     # Verify the INSTALLED bytes, not the copy's exit status (#1174). A `cp` that
-    # exits 0 over a short write, or a writer racing the rename, would otherwise
-    # hand the Workflow tool a harness nobody audited — the hazard a hand-copied
-    # harness was filed for. Checked last, against the final name, so it covers
-    # every step above; a mismatch removes the file so no later run can pick it up.
+    # exits 0 over a short write would otherwise hand the Workflow tool a harness
+    # nobody audited — the hazard a hand-copied harness was filed for. Compared at
+    # the final name, after the rename. A `cmp` that cannot read either side
+    # (exit 2) refuses the same way: unverified is not verified.
     if ! command cmp -s "$_cs_src" "$_cs_dst"; then
         command rm -f "$_cs_dst" 2>/dev/null
+        _cs_note='(removed)'
+        [ -e "$_cs_dst" ] && _cs_note='(REMOVAL FAILED — delete it by hand; it is NOT verified)'
         _refuse 3 "staged harness is not byte-identical to its source" \
             "source: $_cs_src" \
-            "staged: $_cs_dst (removed)" \
+            "staged: $_cs_dst $_cs_note" \
             "Refusing to hand unverified bytes to the Workflow tool as a scriptPath."
     fi
 
