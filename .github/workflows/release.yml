@@ -152,6 +152,9 @@ jobs:
             --prefix="librarian-${version}/" -o "$tarball" "$GITHUB_REF_NAME"
           # Refuse to sign a tarball carrying a group- or world-writable entry.
           bash bin/check-archive-modes.sh "$tarball" || exit 1
+          # Refuse to sign a tarball carrying a symlink that is absolute or
+          # climbs out of the archive (#1105: .codegraph -> /cache/codegraph).
+          bash bin/check-archive-links.sh "$tarball" || exit 1
           # Keyless: OIDC identity from this workflow, signature + cert emitted as
           # a single Sigstore bundle. cosign 3.x defaults to --new-bundle-format,
           # which deprecated and IGNORES the old --output-signature/-certificate

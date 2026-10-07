@@ -53,7 +53,8 @@ source_fragments "$SCRIPT_DIR/release" \
     50-changelog.sh \
     60-git-cliff-install.sh \
     70-stamp-versions.sh \
-    80-archive-modes.sh
+    80-archive-modes.sh \
+    90-archive-links.sh
 
 # --- Run all tests ----------------------------------------------------------
 
@@ -121,5 +122,14 @@ run_fragment_test test_archive_modes_accepts_pinned_mask "check-archive-modes.sh
 run_fragment_test test_archive_modes_world_writable_only "check-archive-modes.sh rejects other-write even with group-write clear"
 run_fragment_test test_archive_modes_fails_loud_on_bad_input "check-archive-modes.sh exits 2 on missing/unlistable/empty/absent input"
 run_fragment_test test_release_yml_pins_archive_mask "release.yml + README pin tar.umask=0022 and release.yml runs the guard"
+
+run_fragment_test test_archive_links_rejects_absolute "check-archive-links.sh rejects an absolute symlink and names it"
+run_fragment_test test_archive_links_rejects_escaping_relative "check-archive-links.sh rejects ..-escaping links, keeps in-tree ones"
+run_fragment_test test_archive_links_rejects_transient_escape "check-archive-links.sh rejects a target that leaves the tree before re-entering"
+run_fragment_test test_archive_links_accepts_in_tree "check-archive-links.sh passes relative in-tree links and scans every one"
+run_fragment_test test_archive_links_fails_loud_on_bad_input "check-archive-links.sh exits 2 on missing/unlistable/empty/absent input"
+run_fragment_test test_archive_links_repo_head_is_clean "the repo's own HEAD archive passes check-archive-links.sh"
+run_fragment_test test_gitignore_matches_codegraph_symlink ".gitignore ignores .codegraph as a symlink (#1105)"
+run_fragment_test test_release_yml_runs_link_guard "release.yml runs the link guard after archiving and before signing"
 
 generate_report
