@@ -202,11 +202,17 @@ test_bad_run_value_fails_loud() {
 # arg_error <label> <args...> — a helper/usage failure unrelated to provenance:
 # exit 2 with no verdict and NO `refusal=provenance` marker, so the recipes'
 # fallback stays reachable when the helper genuinely cannot decide (#1157).
+# ARG_ENV, when set, is a PATH value to run the helper under (the no-jq case).
+ARG_ENV=""
 arg_error() {
     local label="$1" rc=0 out errf
     shift
     errf="$(command mktemp)"
-    out="$("$RC" check "$@" 2>"$errf")" || rc=$?
+    if [ -n "$ARG_ENV" ]; then
+        out="$(command env BASH_ENV= PATH="$ARG_ENV" "$BASH" "$RC" check "$@" 2>"$errf")" || rc=$?
+    else
+        out="$("$RC" check "$@" 2>"$errf")" || rc=$?
+    fi
     REFUSED_ERR="$(command cat "$errf")"
     command rm -f "$errf"
     assert_exit "2" "$rc" "$label exits 2"
@@ -226,6 +232,45 @@ test_bad_issue_value_fails_loud() {
     done
 }
 
+test_valueless_provenance_flag_is_refused() {
+    # `--run $RUN` with RUN empty yields a bare trailing `--run`; `--issue $N`
+    # with N empty yields `--issue --run X`. Both must be REFUSALS, not the
+    # unmarked usage error `opt` gives every other flag (#1157 review c5).
+    refused "a trailing valueless --run" --cycle 1 --max-cycles 5 --result "$FIXTURES/zero.json" \
+        --delta-lines 40 --issue 1150 --run
+    assert_contains "$REFUSED_ERR" "--run needs a value but was the last argument" "names the trailing flag"
+    refused "a trailing valueless --issue" --cycle 1 --max-cycles 5 --result "$FIXTURES/zero.json" \
+        --delta-lines 40 --run "$T_RUN" --issue
+    refused "--issue followed by a flag" --cycle 1 --max-cycles 5 --result "$FIXTURES/zero.json" \
+        --delta-lines 40 --issue --run "$T_RUN"
+    assert_contains "$REFUSED_ERR" "--issue needs a value, got the flag '--run'" "names the swallowed flag"
+    refused "--run followed by a flag" --cycle 1 --max-cycles 5 --result "$FIXTURES/zero.json" \
+        --issue 1150 --run --delta-lines 40
+}
+
+test_boundary_valid_run_is_accepted() {
+    # Positive side of the cap: 64 chars including . _ - is accepted and
+    # decides (an off-by-one tightening to 63 must fail here).
+    local id f out rc=0
+    id='a.b_c-0123456789012345678901234567890123456789012345678901234567'
+    assert_equals "64" "${#id}" "precondition: the boundary id is 64 chars"
+    f="$(stamped run64 1 1150 "" "\"$id\"")"
+    out="$("$RC" check --cycle 1 --max-cycles 5 --issue 1150 --run "$id" --result "$f" --delta-lines 40)" || rc=$?
+    assert_exit "0" "$rc" "a 64-char run with . _ - is accepted"
+    assert_equals "C4-zero" "$(val rule "$out")" "the boundary run reaches the rule list"
+}
+
+test_unusable_current_result_is_refused() {
+    # --result's own readability/JSON refusals (previously pinned only for
+    # --prev-result): deciding without this cycle's file is the #1145 shape.
+    command printf 'not json\n' >"$FIXTURES/prov-cur-invalid.json"
+    refused "a missing --result" --cycle 1 --max-cycles 5 --issue 1150 --run "$T_RUN" \
+        --result "$FIXTURES/prov-cur-absent.json" --delta-lines 40
+    assert_contains "$REFUSED_ERR" "cannot read result file" "a missing --result names the read failure"
+    refused "an invalid-JSON --result" --cycle 1 --max-cycles 5 --issue 1150 --run "$T_RUN" \
+        --result "$FIXTURES/prov-cur-invalid.json" --delta-lines 40
+}
+
 test_helper_failures_carry_no_refusal_marker() {
     # The negative half of the contract: an ordinary usage error is NOT a
     # refusal, or the documented fallback for a broken helper is unreachable.
@@ -233,6 +278,20 @@ test_helper_failures_carry_no_refusal_marker() {
         --result "$FIXTURES/zero.json" --delta-lines 40
     arg_error "a missing --delta-lines" --cycle 1 --max-cycles 5 --issue 1150 --run "$T_RUN" \
         --result "$FIXTURES/zero.json"
+    # No jq: the "helper cannot run" case the fallback exists for. PATH holds
+    # only a dir with the coreutils the script needs, and no jq.
+    local bin="$FIXTURES/nojq-bin" t
+    command mkdir -p "$bin"
+    for t in cat grep sed awk tr mktemp rm; do
+        if command -v "$t" >/dev/null 2>&1; then
+            command ln -sf "$(command -v "$t")" "$bin/$t"
+        fi
+    done
+    ARG_ENV="$bin"
+    arg_error "a missing jq" --cycle 1 --max-cycles 5 --issue 1150 --run "$T_RUN" \
+        --result "$FIXTURES/zero.json" --delta-lines 40
+    ARG_ENV=""
+    assert_contains "$REFUSED_ERR" "jq is required" "the no-jq failure names jq"
 }
 
 test_string_cycle_does_not_match_the_number() {

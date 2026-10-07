@@ -746,7 +746,30 @@ warn_of() {
     fi
 }
 
+# refuse_valueless_provenance <args...> — refuse (not die) when --issue or --run
+# is present with no usable value: the LAST argument, or followed by a flag.
+# `opt` would die for both, but with no marker, so an empty `{run}` expansion
+# (`--run $RUN`, RUN unset) would reach the caller's fallback, which reads no
+# provenance — fail-open (#1157 review c5). Runs before any `opt` call.
+refuse_valueless_provenance() {
+    _rv_prev=""
+    for _rv_tok in "$@"; do
+        case "$_rv_prev" in
+            --issue | --run)
+                case "$_rv_tok" in
+                    --*) refuse "review-convergence: $_rv_prev needs a value, got the flag '$_rv_tok' — an empty or unsubstituted placeholder? (#1157)" ;;
+                esac
+                ;;
+        esac
+        _rv_prev="$_rv_tok"
+    done
+    case "$_rv_prev" in
+        --issue | --run) refuse "review-convergence: $_rv_prev needs a value but was the last argument — an empty or unsubstituted placeholder? (#1157)" ;;
+    esac
+}
+
 cmd_check() {
+    refuse_valueless_provenance "$@"
     cycle="$(opt --cycle -- "$@" || true)"
     max_cycles="$(opt --max-cycles -- "$@" || true)"
     result="$(opt --result -- "$@" || true)"
