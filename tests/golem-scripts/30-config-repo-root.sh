@@ -761,3 +761,51 @@ test_config_git_env_scrub_vars_single_source() {
     assert_contains "$pairs" "GIT_CONFIG_VALUE_1" \
         "_git_env_scrub_names enumerates the dynamic GIT_CONFIG_VALUE_<n> pairs (#355)"
 }
+
+# --- config.sh golem_join_status_dir() (#1179) --------------------------------
+
+# The status-dir join is defined ONCE, in config.sh, and both golem-work.sh's
+# registry resolution and worktree-rm.sh's status-file teardown call it. Before
+# #1179 worktree-rm.sh carried an inline copy that had to agree by hand. Each
+# arm is exercised directly — sourcing config.sh in a child bash with the knobs
+# set — so a regression names the join, not a teardown or liveness symptom
+# three hops away. The multi-segment case is the #949 shape that a
+# segment-counting join got wrong.
+test_config_golem_join_status_dir() {
+    local out rc
+    _join() {
+        rc=0
+        out="$(/usr/bin/env "$@" "$REAL_BASH" -c '. "$1"; golem_join_status_dir /r' \
+            _ "$CONFIG" 2>&1)" || rc=$?
+    }
+
+    _join -uGOLEM_STATUS_DIR -uGOLEM_WORKTREE_DIR
+    assert_exit 0 "$rc" "golem_join_status_dir runs on the defaults"
+    assert_equals "/r/.worktrees/.status" "$out" \
+        "the default status dir is joined onto the root"
+
+    _join GOLEM_STATUS_DIR=custom/status
+    assert_equals "/r/custom/status" "$out" \
+        "a relative GOLEM_STATUS_DIR is joined onto the root"
+
+    _join -uGOLEM_STATUS_DIR GOLEM_WORKTREE_DIR=nested/worktrees
+    assert_equals "/r/nested/worktrees/.status" "$out" \
+        "a multi-segment GOLEM_WORKTREE_DIR default is joined whole, never segment-counted (#949)"
+
+    _join GOLEM_STATUS_DIR=/abs/status
+    assert_equals "/abs/status" "$out" \
+        "an ABSOLUTE GOLEM_STATUS_DIR passes through untouched, never joined onto the root"
+}
+
+# The "defined once" half: neither caller may re-spell the join. A `case` over
+# GOLEM_STATUS_DIR in either file is a second copy — exactly what #1179 removed.
+test_config_golem_join_status_dir_single_source() {
+    local f hits
+    for f in "$WORK" "$WT_RM"; do
+        hits="$(command grep -n 'case "\$GOLEM_STATUS_DIR"' "$f" || true)"
+        assert_output_empty "$hits" \
+            "${f##*/} re-spells no status-dir join of its own (#1179)"
+        assert_file_contains "$f" 'golem_join_status_dir "$root"' \
+            "${f##*/} resolves the status dir through config.sh's golem_join_status_dir"
+    done
+}

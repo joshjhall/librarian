@@ -334,6 +334,8 @@ run_fragment_test test_config_repo_root_submodule_superproject_scrubs_tainted_gi
 run_fragment_test test_config_repo_root_submodule_superproject_scrubs_readonly_tainted_git_env "config.sh: repo_root scrubs a READONLY tainted GIT_DIR in the super_root probe inside a submodule (#363, #337, #328)"
 run_fragment_test test_config_repo_root_relative_super_root "config.sh: repo_root absolutizes a relative --show-superproject-working-tree via command pwd (#336)"
 run_fragment_test test_config_git_env_scrub_vars_single_source "config.sh: GIT_ENV_SCRUB_VARS is the single source for the git-env scrub list (#356)"
+run_fragment_test test_config_golem_join_status_dir "config.sh: golem_join_status_dir joins relative, multi-segment and absolute status dirs (#1179, #949)"
+run_fragment_test test_config_golem_join_status_dir_single_source "config.sh: golem-work.sh and worktree-rm.sh share golem_join_status_dir, no inline copy (#1179)"
 run_fragment_test test_worktree_rm_non_integer_exits_2 "worktree-rm: an argument that is neither a number nor a name exits 2 (#1005)"
 run_fragment_test test_worktree_rm_absent_is_noop "worktree-rm: absent issue is a clean no-op (exit 0)"
 run_fragment_test test_worktree_rm_round_trip "worktree-rm: round-trip removes worktree + branch"
