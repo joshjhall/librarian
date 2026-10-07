@@ -225,10 +225,11 @@ changing it, re-verify with `claude plugin details <name>@librarian` showing
   point" qualifies; "we chose not to test this" does not — that file is
   *untested*, and an exemption would make the gate assert the opposite of the
   truth, which is the silence-reads-as-a-pass shape (#538/#571) this repo keeps
-  filing issues about. Hence `bin/ruff-version.sh` and the two
-  `.devcontainer/*.sh` lifecycle scripts stay **firing** — the first as the live
-  control that the file is not a blanket mute, the other two because their gap
-  is real and belongs in an issue. Verify a change to that file by A/B: scan
+  filing issues about. Hence `bin/ruff-version.sh` and
+  `.devcontainer/post-start.sh` stay **firing** — the first as the live
+  control that the file is not a blanket mute, the second because its gap is
+  real (#948). (`post-create.sh` stopped firing by gaining a real test,
+  `tests/validate-post-create.sh`, not an entry here.) Verify a change to that file by A/B: scan
   `git ls-files '*.sh'` before and after and confirm only the intended rows
   moved.
 - **The two biggest `workflow.js` harnesses are GENERATED — edit the fragment,

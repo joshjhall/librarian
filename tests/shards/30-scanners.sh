@@ -267,3 +267,7 @@ run_stage "apt-install.sh behavior" bash "$SCRIPT_DIR/validate-apt-install.sh"
 # undisturbed.
 run_stage "Measurement corpus citations" bash "$SCRIPT_DIR/lint-measurement-citations.sh"
 run_stage "fetch-corpora.sh behavior" bash "$SCRIPT_DIR/validate-fetch-corpora.sh"
+# .devcontainer/post-create.sh's `.codegraph -> /cache/codegraph` link (#1173):
+# the real helper sliced out and driven in a sandbox, since the script itself
+# only runs on a container create. ~1s.
+run_stage "devcontainer post-create .codegraph link" bash "$SCRIPT_DIR/validate-post-create.sh"

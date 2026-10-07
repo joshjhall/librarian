@@ -162,12 +162,25 @@ resolved_ruff="$(installed_ruff_version || true)"
 # rebuilds, so only initialize when it's actually missing; an existing index is
 # left as-is (drop the volume to force a clean re-index).
 echo "==> Ensuring codegraph index..."
+# ensure_codegraph_link <project_root> <cache_dir>
+#   Create <project_root>/.codegraph -> <cache_dir> when nothing sits at that
+#   path (not even a dangling link) and the cache volume is mounted.
+#
 # The link is untracked and gitignored (#1105: a tracked copy shipped in the
-# release tarball), so create it here when the cache volume is mounted.
-if [ ! -e "$PROJECT_ROOT/.codegraph" ] && [ ! -L "$PROJECT_ROOT/.codegraph" ] && [ -d /cache/codegraph ]; then
-    ln -s /cache/codegraph "$PROJECT_ROOT/.codegraph"
-    echo "    Linked .codegraph -> /cache/codegraph"
-fi
+# release tarball), so it is recreated here. A function taking the cache path,
+# rather than inline code naming /cache/codegraph, so
+# tests/validate-post-create.sh can slice it out and drive every branch in a
+# sandbox (#1173) — the same idiom as ruff_install_action above.
+ensure_codegraph_link() {
+    _root="$1"
+    _cache="$2"
+    if [ ! -e "$_root/.codegraph" ] && [ ! -L "$_root/.codegraph" ] && [ -d "$_cache" ]; then
+        ln -s "$_cache" "$_root/.codegraph"
+        echo "    Linked .codegraph -> $_cache"
+    fi
+}
+
+ensure_codegraph_link "$PROJECT_ROOT" /cache/codegraph
 if command -v codegraph >/dev/null; then
     # A failed `codegraph status` must NOT fall through to "index already
     # present" — the pipeline's exit status is the signal, so it is kept.
