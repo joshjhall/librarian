@@ -351,6 +351,11 @@ test_remove_deletes_both_ids_for_the_issue() {
 
     rs bash "$RS" remove --issue 031
     assert_exit 2 "$RC" "remove keeps the canonical issue gate"
+
+    RC=0
+    OUT="$(command env -uGOLEM_ID -uHOME bash "$RS" remove --issue 32 2>&1)" || RC=$?
+    assert_exit 2 "$RC" "remove refuses an unset HOME"
+    assert_true "[ -f '$base/golem-32/cycle1.json' ]" "an unset-HOME remove deletes nothing"
 }
 
 # #1166: a link at the leaf (live or dangling) or a non-directory is refused

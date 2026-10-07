@@ -221,3 +221,26 @@ test_worktree_rm_survives_a_failing_scratch_helper() {
     assert_contains "$RUN_OUT" "HOME must be an absolute path" "the helper's refusal is visible"
     _scr_gone "$sb/.worktrees/.status/golem-81.json" "status files are still removed after the helper fails"
 }
+
+# A regular status file `rm` cannot delete (its dir is read-only) warns and
+# stays best-effort: teardown exits 0, the file survives, and it is never
+# reported as removed.
+test_worktree_rm_reports_a_status_file_it_could_not_remove() {
+    local sb
+    if [ "$(command id -u)" = "0" ]; then
+        skip_test "running as root — permission bits cannot make rm fail"
+        return 0
+    fi
+    new_sandbox sb
+    command mkdir -p "$sb/.worktrees/.status"
+    command printf '{}\n' >"$sb/.worktrees/.status/golem-82.json"
+    command chmod 0555 "$sb/.worktrees/.status"
+    run_in "$sb" "$WT_RM" 82
+    command chmod 0755 "$sb/.worktrees/.status"
+    assert_exit 0 "$RUN_RC" "an unremovable status file never fails teardown"
+    assert_contains "$RUN_OUT" "could not remove $sb/.worktrees/.status/golem-82.json" \
+        "the failed rm is announced"
+    assert_not_contains "$RUN_OUT" "removed $sb/.worktrees/.status/golem-82.json" \
+        "an unremoved status file is never reported as removed"
+    assert_file_exists "$sb/.worktrees/.status/golem-82.json" "the status file survives"
+}
