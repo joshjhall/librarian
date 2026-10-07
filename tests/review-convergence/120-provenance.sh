@@ -22,8 +22,11 @@ stamped() {
     command printf '%s' "$FIXTURES/prov-$1.json"
 }
 
-# refused <label> <args...> — run check, assert exit 2 AND that no verdict was
-# printed. Leaves stderr in REFUSED_ERR for the caller's message assertions.
+# refused <label> <args...> — run check, assert exit 2, that no verdict was
+# printed, AND that stderr carries the `refusal=provenance` marker the recipes
+# key on (#1157): a refusal without it reads to the caller as a helper failure,
+# and the documented fallback for that reads no provenance — fail-open.
+# Leaves stderr in REFUSED_ERR for the caller's message assertions.
 # Sets a global rather than echoing, because a caller capturing it with `$(...)`
 # would run these assertions in a subshell and silently lose their counts.
 REFUSED_ERR=""
@@ -36,6 +39,7 @@ refused() {
     command rm -f "$errf"
     assert_exit "2" "$rc" "$label exits 2"
     assert_not_contains "$out" "verdict=" "$label emits no verdict on stdout"
+    assert_contains "$REFUSED_ERR" "refusal=provenance" "$label carries the refusal marker"
 }
 
 test_foreign_issue_result_is_refused_not_stopped() {
@@ -186,20 +190,37 @@ test_bad_run_value_fails_loud() {
     local v
     # The third value is 65 characters: one past the cap.
     for v in 'a/b' 'a b' 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'; do
-        refused "--run '$v'" --cycle 1 --max-cycles 5 --issue 1150 --run "$v" \
+        arg_error "--run '$v'" --cycle 1 --max-cycles 5 --issue 1150 --run "$v" \
             --result "$FIXTURES/zero.json" --delta-lines 40
         assert_contains "$REFUSED_ERR" "--run must" "--run '$v' names the flag"
     done
 }
 
+# arg_error <label> <args...> — a malformed ARGUMENT, not a provenance refusal:
+# exit 2 with no verdict and NO `refusal=provenance` marker, so the recipes'
+# fallback stays reachable for a genuine helper/usage failure (#1157).
+arg_error() {
+    local label="$1" rc=0 out errf
+    shift
+    errf="$(command mktemp)"
+    out="$("$RC" check "$@" 2>"$errf")" || rc=$?
+    REFUSED_ERR="$(command cat "$errf")"
+    command rm -f "$errf"
+    assert_exit "2" "$rc" "$label exits 2"
+    assert_not_contains "$out" "verdict=" "$label emits no verdict on stdout"
+    assert_not_contains "$REFUSED_ERR" "refusal=provenance" "$label is not marked a provenance refusal"
+}
+
 test_bad_issue_value_fails_loud() {
     local v err
     for v in 0 07 x -3; do
-        refused "--issue '$v'" --cycle 1 --max-cycles 5 --issue "$v" --run "$T_RUN" \
+        arg_error "--issue '$v'" --cycle 1 --max-cycles 5 --issue "$v" --run "$T_RUN" \
             --result "$FIXTURES/zero.json" --delta-lines 40
         err="$REFUSED_ERR"
         assert_contains "$err" "--issue must be an integer >= 1" "--issue '$v' names the flag"
     done
+    arg_error "a bad --cycle" --cycle 0 --max-cycles 5 --issue 1150 --run "$T_RUN" \
+        --result "$FIXTURES/zero.json" --delta-lines 40
 }
 
 test_string_cycle_does_not_match_the_number() {
@@ -280,6 +301,20 @@ recipe_check_invocations() {
                 if (cmd != "" && !more) { print path ":" start ":" cmd " "; cmd = "" }
             }
         ' "$f"
+    done
+}
+
+test_recipes_key_the_refusal_exception_on_the_marker() {
+    # The fallback-vs-refusal split lives in prose an agent applies. If a recipe
+    # keyed its exception on message wording again, any refusal whose message
+    # lacked that phrase would fall back fail-open — which is what #1157 cycle 3
+    # found for every run and required-flag refusal. Pin the marker at both
+    # exception paragraphs, and that neither keys on the old phrase.
+    local f body
+    for f in adversarial-review-step.md ci-review-protocol.md; do
+        body="$(command cat "$REPO_ROOT/plugins/workflow/skills/ship-issue/$f")"
+        assert_contains "$body" 'stderr line `refusal=provenance`' "$f keys the exception on the marker"
+        assert_not_contains "$body" 'with `a stale or foreign result file`' "$f no longer keys on message prose"
     done
 }
 

@@ -405,12 +405,12 @@ posture as a missing `workflow-wall-timeout.sh`. The loop
 stays bounded either way; it just loses the early-stop and the narrow-zero
 protection.
 
-**Exception — a provenance refusal is not a fallback case (#1150).** Exit 2 with
-`a stale or foreign result file` on stderr means the `--result` or a
-`--prev-result` belongs to another issue or cycle. That is usually a failed
-extraction that left an older file at the path. Re-extract this cycle's harness
-result into the scratch dir and re-run the check. Do not fall back and do not
-delete `--issue` to silence it.
+**Exception — a provenance refusal is not a fallback case (#1150, #1157).** A
+stderr line `refusal=provenance` means a result file is missing, unreadable, or
+another issue's, cycle's, or run's, or `--issue`/`--run` was omitted. Usually a
+failed extraction left an older file at the path: re-extract this cycle's
+harness result into the scratch dir and re-run the check. Never fall back, and
+never drop `--issue` or `--run` to silence it.
 
 > **Standing rule — `blocking: []` is not a merge signal** (#580). Read every
 > finding on merit, including the deferrables, and fix anything that is a live

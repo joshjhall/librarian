@@ -407,9 +407,9 @@ bound, a fallback that also stops charging crashed cycles would be unbounded. Th
 loop stays bounded either way; it only loses the early-stop, the narrow-zero
 protection, and the `capped_over` disambiguation.
 
-**Exception (#1150):** exit 2 with `a stale or foreign result file` means a
-result file is another issue's or cycle's — re-extract it and re-run the check;
-never fall back or drop `--issue` (`adversarial-review-step.md`).
+**Exception (#1150, #1157):** a stderr line `refusal=provenance` means a result
+file is unusable or another issue's, cycle's, or run's — re-extract it and re-run
+the check; never fall back or drop `--issue`/`--run` (`adversarial-review-step.md`).
 
 Write each trip's harness result to `{dir}/attempt<attempt>.json` (step a's
 scratch dir, #1094) so the next cycle can pass it as
