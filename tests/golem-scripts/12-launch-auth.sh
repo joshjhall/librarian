@@ -380,6 +380,48 @@ test_launch_claude_path_no_server_uses_launcher_path() {
     assert_not_contains "$RUN_OUT" "is not on the PATH" "and raises no warning"
 }
 
+# A server answering without a `PATH=` line (`-PATH`: unset in its global env)
+# falls back to the launcher's PATH, and says so rather than claiming no server.
+test_launch_claude_path_server_without_path_uses_launcher() {
+    local sb
+    new_sandbox sb
+    run_launch_auth "$sb" OP_SECRETS_CACHE="$sb/no-such-cache" GOLEM_SKIP_CLAUDE_PATH_CHECK= \
+        PATH="$sb/bin:$(_path_without_claude)" TMUX_STUB_SHOW_ENV="-PATH"
+    assert_exit 0 "$RUN_RC" "launch dispatches (exit 0)"
+    assert_contains "$RUN_OUT" "the running tmux server has no global PATH" \
+        "names the launcher PATH as the source, not a missing server"
+    assert_not_contains "$RUN_OUT" "no tmux server answered" "and does not claim no server answered"
+}
+
+# The probe touches tmux only on a launch that reaches dispatch: a refused launch
+# and `print` (tracks-runbook.sh's tmux-free contract) never probe, even with the
+# check enabled — run_launch_auth's default skip would hide that. The refusal is
+# the missing-worktree one, NOT the unwritable-TMPDIR auth refusal: there
+# bounded_run cannot make its marker dir, so the probe could never reach tmux
+# whatever the ordering, and the assertion would be vacuous.
+test_launch_claude_path_never_probes_on_refusal_or_print() {
+    local sb
+    new_sandbox sb
+    run_launch_auth "$sb" OP_SECRETS_CACHE="$sb/no-such-cache" GOLEM_SKIP_CLAUDE_PATH_CHECK= \
+        GOLEM_WORKTREE_DIR=no-such-worktrees
+    assert_exit 2 "$RUN_RC" "control: the launch is refused (missing worktree)"
+    assert_equals "" "$(command cat "$sb/tmux-args.log" 2>/dev/null)" \
+        "a refused launch never probes tmux"
+    new_sandbox sb
+    plant_tmux_stub "$sb"
+    RUN_RC=0
+    RUN_OUT="$(cd "$sb" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" -uBASH_ENV HOME="$sb" \
+            GOLEM_PLUGIN_PROBE="$sb/no-plugin-probe" PATH="$sb/bin:$PATH" \
+            TMUX= TMUX_TMPDIR="${SANDBOX_TMUX_DIR:-$sb/.tmux}" TMUX_STUB_LOG="$sb/tmux-args.log" \
+            GOLEM_WORKTREE_DIR=.worktrees GOLEM_SKIP_CLAUDE_PATH_CHECK= \
+            "$REAL_BASH" "$LAUNCH" print 7 2>&1)" || RUN_RC=$?
+    assert_exit 0 "$RUN_RC" "control: print exits 0"
+    assert_contains "$RUN_OUT" "tmux new-session" "control: print emitted the launch line"
+    assert_not_contains "$(command cat "$sb/tmux-args.log" 2>/dev/null)" "show-environment" \
+        "print never probes tmux"
+}
+
 # GOLEM_SKIP_CLAUDE_PATH_CHECK=1 silences a case that would otherwise warn.
 test_launch_claude_path_escape_hatch() {
     local sb
