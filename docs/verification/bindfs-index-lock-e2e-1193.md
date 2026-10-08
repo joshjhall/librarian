@@ -126,9 +126,15 @@ class (a lock visible after rename), not the identical-inode form.
   directive (no `git status` there), and no stale lock occurred during this
   session.
 
+Issue #1193 closes with these three items open, at the operator's direction.
+They are tracked in the
+[containers#1086 thread](https://github.com/joshjhall/containers/issues/1086#issuecomment-6051968718)
+rather than lost with the closed issue.
+
 ## Mitigation shipped here
 
 `plugins/workflow/scripts/main-index-lock-check.sh` (tested by
 `tests/validate-main-index-lock-check.sh`). It runs no git, never deletes, and
-reports `stale identical=yes` for the ghost signature. `orchestrate`'s
+reports `stale identical=yes` for the ghost signature, and `stale` (never
+`none`) for a dangling-symlink lock that git would still refuse on. `orchestrate`'s
 monitor protocol runs it before a main-checkout git write.

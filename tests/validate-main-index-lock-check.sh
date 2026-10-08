@@ -18,7 +18,10 @@
 #   4. UNAVAILABLE IS NEVER NONE — a repo with no `.git` must say `unavailable`
 #      with a reason. `none` would read as "all clear" from a check that never
 #      looked (the #538/#571 inert-gate shape).
-#   5. READ-ONLY — after every verdict, `index` and `index.lock` keep their
+#   5. A DANGLING SYMLINK IS NOT ABSENT — `[ -e ]` follows a symlink, so a
+#      dangling `index.lock` would read `none` while git's O_EXCL create still
+#      refuses on it. It must read `stale`, and the link must survive.
+#   6. READ-ONLY — after every verdict, `index` and `index.lock` keep their
 #      inode and mtime and the lock still exists. The script exists to be run
 #      against a checkout under suspicion; it must not become a second writer.
 #
@@ -113,6 +116,18 @@ test_young_lock_is_inflight() {
     assert_file_exists "$r/.git/index.lock" "inflight lock left in place"
 }
 
+test_dangling_symlink_lock_is_stale_never_none() {
+    local r
+    new_repo r
+    command ln -s "$r/.git/no-such-target" "$r/.git/index.lock"
+    run_check --repo "$r"
+    assert_contains "$OUT" "verdict=stale" "a dangling-symlink lock still blocks git"
+    assert_not_contains "$OUT" "verdict=none" "a dangling symlink is not an absent lock"
+    local kept=no
+    [ -L "$r/.git/index.lock" ] && kept=yes
+    assert_equals "yes" "$kept" "the link is left in place"
+}
+
 test_no_lock_is_none() {
     local r
     new_repo r
@@ -147,6 +162,7 @@ run_test test_identical_old_lock_is_stale_identical "stale: cp -p ghost lock →
 run_test test_same_size_mtime_different_bytes_is_not_identical "stale: same size+mtime, different bytes → identical=no"
 run_test test_old_lock_different_mtime_is_not_identical "stale: same bytes, different mtime → identical=no"
 run_test test_young_lock_is_inflight "inflight: a lock younger than --min-age is left alone"
+run_test test_dangling_symlink_lock_is_stale_never_none "stale: dangling-symlink index.lock → stale, never none"
 run_test test_no_lock_is_none "none: no index.lock"
 run_test test_no_git_dir_is_unavailable_never_none "unavailable: no .git → unavailable + reason, never none"
 run_test test_bad_min_age_fails_loud "usage: non-numeric --min-age → exit 2, no verdict"

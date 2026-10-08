@@ -74,6 +74,14 @@ gitdir="$repo/.git"
 index="$gitdir/index"
 lock="$gitdir/index.lock"
 
+if [ -L "$lock" ] && [ ! -e "$lock" ]; then
+    # A dangling symlink: `-e` follows it and says "absent", but git's O_EXCL
+    # create still refuses on the entry. Reporting none here would be an
+    # all-clear while main is blocked.
+    printf 'verdict=stale\nidentical=no\nage=unknown\nlock=%s\n' "$lock"
+    printf 'recovery=index.lock is a dangling symlink; inspect it (ls -l %s), then rm %s\n' "$lock" "$lock"
+    exit 0
+fi
 [ -e "$lock" ] || {
     printf 'verdict=none\n'
     exit 0
