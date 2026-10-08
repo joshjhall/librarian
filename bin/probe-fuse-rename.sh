@@ -77,6 +77,12 @@ report() { # report <kind> <cycle>
 payload="$work/payload"
 command head -c 150000 /dev/urandom >"$payload" 2>/dev/null ||
     command dd if=/dev/urandom of="$payload" bs=1000 count=150 2>/dev/null
+# Without a payload every cycle's write would fail and be reported as a
+# write-lost-file filesystem fault — the probe's own setup, blamed on the mount.
+[ -s "$payload" ] || {
+    printf 'probe-fuse-rename: cannot create the payload in %s\n' "$work" >&2
+    exit 2
+}
 
 anomalies=0
 i=0
