@@ -102,7 +102,14 @@ root="$("$DIRNAME" "$common_dir")"
 # `:=` assign-default form is safe under the `set -u` active here.
 : "${GOLEM_WORKTREE_DIR:=.worktrees}"
 : "${GOLEM_STATUS_DIR:=${GOLEM_WORKTREE_DIR}/.status}"
-status_dir="$root/$GOLEM_STATUS_DIR"
+# The join is the inline twin of config.sh's golem_join_status_dir, for the same
+# no-source reason: an ABSOLUTE GOLEM_STATUS_DIR passes through untouched, since
+# `$root/<abs>` names a path that exists nowhere and the feed would land where no
+# reader looks (#1188). tests/golem-notify/30-status-dir.sh pins the absolute arm.
+case "$GOLEM_STATUS_DIR" in
+    /*) status_dir="$GOLEM_STATUS_DIR" ;;
+    *) status_dir="$root/$GOLEM_STATUS_DIR" ;; # lint-allow-status-dir-join: inline twin of config.sh's golem_join_status_dir (this hook must not source config.sh)
+esac
 feed="$status_dir/feed.jsonl"
 
 # Multi-sink fan-out config (#406, ADR-0001 Decision 2). One classified event

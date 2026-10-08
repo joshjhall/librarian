@@ -253,6 +253,9 @@ _stamp_feed_traces() {
 # GOLEM_WORKTREE_DIR/GOLEM_STATUS_DIR are pinned so an inherited value cannot
 # redirect the feed path away from the temp repo. Each fixture golem is given a
 # status-cache trace (see _stamp_feed_traces) so the #446 ghost filter keeps it.
+# GW_ABS_STATUS=1 moves the feed to an ABSOLUTE status dir (<tmp>/abs-status) and
+# passes that absolute path as GOLEM_STATUS_DIR, so a resolver that joins the
+# root onto it reads an empty feed (#1188). Unset, the relative default is kept.
 SNAP_RC=0
 SNAP_OUT=""
 _run_once_snapshot() {
@@ -282,12 +285,17 @@ _run_once_snapshot() {
 
     /usr/bin/env "${git_scrub[@]/#/-u}" \
         git -C "$tmp" init -q 2>/dev/null || return 1
-    command mkdir -p "$tmp/.worktrees/.status"
+    local status_env=.worktrees/.status status_path="$tmp/.worktrees/.status"
+    if [ "${GW_ABS_STATUS:-}" = "1" ]; then
+        status_path="$tmp/abs-status"
+        status_env="$status_path"
+    fi
+    command mkdir -p "$status_path"
     local line
     for line in "$@"; do
         command printf '%s\n' "$line"
-    done >"$tmp/.worktrees/.status/feed.jsonl"
-    _stamp_feed_traces "$tmp/.worktrees/.status" "$@"
+    done >"$status_path/feed.jsonl"
+    _stamp_feed_traces "$status_path" "$@"
 
     # Run with cwd inside the temp repo (the script resolves its status dir from
     # the repo root). `&& SNAP_RC=0 || SNAP_RC=$?` records the real exit code
@@ -305,7 +313,7 @@ _run_once_snapshot() {
             bounded_run 30 /usr/bin/env "${git_scrub[@]/#/-u}" -uBASH_ENV \
                 PATH="$tmp/stub-bin:$PATH" \
                 GOLEM_BLOCK_TTL="$ttl" GOLEM_WORKTREE_DIR=.worktrees \
-                GOLEM_STATUS_DIR=.worktrees/.status \
+                GOLEM_STATUS_DIR="$status_env" \
                 bash "$GATE_WATCH" "${mode_args[@]}"
     ) >"$tmp/out" 2>/dev/null && SNAP_RC=0 || SNAP_RC=$?
     SNAP_OUT="$(command cat "$tmp/out")"

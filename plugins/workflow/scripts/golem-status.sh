@@ -79,7 +79,7 @@ SCRIPT_DIR="$(cd "$("$DIRNAME" "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/config.sh"
 
 root="$(repo_root)"
-status_dir="$root/$GOLEM_STATUS_DIR"
+status_dir="$(golem_join_status_dir "$root")"
 feed="$status_dir/feed.jsonl"
 pool="$status_dir/pool.json"
 tracks="$status_dir/tracks.json"

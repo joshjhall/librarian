@@ -63,6 +63,30 @@ test_status_dir_override_honored() {
         "legacy .worktrees/.status/feed.jsonl NOT written — override moved the sink"
 }
 
+# An ABSOLUTE GOLEM_STATUS_DIR passes through untouched (#1188): the hook's
+# inline twin of config.sh's golem_join_status_dir must not prefix the repo root,
+# which would land the feed at <root>/<abs> — a path no reader resolves. The
+# sandbox-relative <root>/<abs> spelling is asserted absent so a regression that
+# still joins (and so creates that nested dir) fails here rather than passing.
+test_status_dir_absolute_passes_through() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (needed to validate the feed line)"
+        return 0
+    fi
+    local sb abs
+    new_sandbox sb
+    abs="$sb/abs-status"
+    run_notify_status_dir "$sb" \
+        '{"message":"Claude needs your permission to run git push"}' \
+        "golem-1" "$abs"
+    assert_exit 0 "$NOTIFY_RC" "hook exits 0 (absolute GOLEM_STATUS_DIR)"
+    assert_valid_json "$NOTIFY_LINE" "feed line under the absolute dir is valid JSON"
+    assert_true "[ -f '$abs/feed.jsonl' ]" \
+        "feed written at the absolute GOLEM_STATUS_DIR itself"
+    assert_true "[ ! -e '$sb/$abs' ]" \
+        "no <root>/<abs> path built — the absolute dir was not joined onto the root"
+}
+
 # With GOLEM_STATUS_DIR unset, the resolution is byte-for-byte unchanged: the
 # feed still lands at .worktrees/.status. new_sandbox + run_notify (which do NOT
 # set GOLEM_STATUS_DIR) already exercise the default path; this pins the

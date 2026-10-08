@@ -64,6 +64,7 @@ source_fragments "$SCRIPT_DIR/gate-watch" \
 # --- Run all tests ----------------------------------------------------------
 
 run_fragment_test test_legacy_line_does_not_drop_golems "Legacy no-ts feed line does not drop all BLOCKED golems"
+run_fragment_test test_absolute_status_dir_resolves "An absolute GOLEM_STATUS_DIR resolves to itself, never joined onto the root (#1188)"
 run_fragment_test test_stale_ts_gate_ages_out "Stale dated gate ages out while no-ts golem stays fresh"
 run_fragment_test test_empty_ts_treated_as_fresh "Empty-string ts is treated as fresh, not a crash"
 run_fragment_test test_escalation_surfaces_labelled "Escalation surfaces in BLOCKED, labelled distinctly; idle excluded"

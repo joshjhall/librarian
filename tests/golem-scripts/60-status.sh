@@ -41,6 +41,47 @@ EOF
     assert_contains "$RUN_OUT" "GOLEM" "prints the table header"
 }
 
+# An ABSOLUTE GOLEM_STATUS_DIR is read where it points (#1188). The relative
+# default dir holds a DIFFERENT golem as a control: the absolute row must render
+# and the control must not, so the test fails both if the resolver joins the
+# root onto the absolute path (empty dir — "No active golems") and if it ignores
+# the override and reads the default. run_in pins the relative default, so this
+# case spells the same scrubbed environment with the absolute dir instead.
+test_status_absolute_status_dir_reads_it() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (golem-status table needs jq)"
+        return 0
+    fi
+    local sb abs
+    new_sandbox sb
+    abs="$sb/abs-status"
+    command mkdir -p "$abs"
+    command cat >"$abs/golem-42.json" <<'EOF'
+{ "golem": "golem-42", "issue": 42, "branch": "feature/issue-42",
+  "state": "impl", "phase": "make-it-work", "blocking": false }
+EOF
+    command cat >"$sb/.worktrees/.status/golem-43.json" <<'EOF'
+{ "golem": "golem-43", "issue": 43, "branch": "feature/issue-43",
+  "state": "impl", "phase": "make-it-work", "blocking": false }
+EOF
+    RUN_RC=0
+    RUN_OUT="$(cd "$sb" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" -uBASH_ENV \
+            HOME="$sb" \
+            GOLEM_PLUGIN_PROBE="$sb/no-plugin-probe" \
+            TMUX= TMUX_TMPDIR="${SANDBOX_TMUX_DIR:-$sb/.tmux}" \
+            GOLEM_WORKTREE_DIR=.worktrees \
+            GOLEM_STATUS_DIR="$abs" \
+            GOLEM_BASE_REF=HEAD \
+            GOLEM_WORKTREE_LOCAL_FILES="" \
+            "$REAL_BASH" "$STATUS" 2>&1)" || RUN_RC=$?
+    assert_exit 0 "$RUN_RC" "golem-status exits 0 with an absolute status dir"
+    assert_contains "$RUN_OUT" "golem-42" \
+        "the row under the absolute GOLEM_STATUS_DIR renders"
+    assert_not_contains "$RUN_OUT" "golem-43" \
+        "the relative default dir is not consulted when the status dir is absolute"
+}
+
 # Gate age (#422): a fresh dated `gate` renders the "(gated Nm ago)" suffix so a
 # stale-vs-fresh gate is visually distinguishable even if a clearing line was
 # missed. Plant a cache row (so the BLOCKED section renders) plus a feed gate

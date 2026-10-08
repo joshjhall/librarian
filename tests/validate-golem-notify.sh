@@ -146,6 +146,7 @@ run_fragment_test test_classifier_dead_end_beats_escalation "classifier: dead-en
 run_fragment_test test_no_jq_escaper_emits_valid_json "no-jq escaper: quote+backslash GOLEM_ID stays valid JSON"
 run_fragment_test test_no_jq_still_writes_gate_line "no-jq: still writes a valid gate feed line, exits 0"
 run_fragment_test test_status_dir_override_honored "status-dir: GOLEM_STATUS_DIR override moves the feed path (#405)"
+run_fragment_test test_status_dir_absolute_passes_through "status-dir: an absolute GOLEM_STATUS_DIR is not joined onto the root (#1188)"
 run_fragment_test test_status_dir_default_unchanged "status-dir: GOLEM_STATUS_DIR unset still lands at .worktrees/.status (#405)"
 run_fragment_test test_status_dir_composed_from_worktree_dir "status-dir: GOLEM_WORKTREE_DIR-only override composes <dir>/.status (#424)"
 run_fragment_test test_defaults_match_config_sh "drift-guard: hook inlined defaults match config.sh (#424)"

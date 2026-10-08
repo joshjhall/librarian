@@ -28,7 +28,7 @@ if tmux has-session -t "golem-$N" 2>/dev/null; then
 fi
 
 root="$(repo_root)"
-status_dir="$root/$GOLEM_STATUS_DIR"
+status_dir="$(golem_join_status_dir "$root")"
 shopt -s nullglob
 for f in "$status_dir"/*.json; do
     if [ "$(jq -r '.issue // empty' "$f" 2>/dev/null)" = "$N" ]; then

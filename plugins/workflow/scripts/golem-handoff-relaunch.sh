@@ -245,7 +245,7 @@ detect() {
         return 0
     fi
 
-    _stamp="$root/$GOLEM_STATUS_DIR/handoff-relaunched-golem-$_n"
+    _stamp="$status_dir/handoff-relaunched-golem-$_n"
     _stamp_body="$(command cat "$_stamp" 2>/dev/null || true)"
     case "$_stamp_body" in
         "cleared "*)
@@ -387,6 +387,10 @@ root="$(repo_root)" || {
     command echo "golem-handoff-relaunch: not inside a git repository" >&2
     exit 2
 }
+# Through config.sh's join, never a hand-built root+status-dir path: an absolute
+# status dir would otherwise name a path that exists nowhere, so the stamp read
+# in detect() would always miss and the mkdir below would build the wrong dir (#1188).
+status_dir="$(golem_join_status_dir "$root")"
 
 detect "$n"
 command printf 'golem=golem-%s\nstate=%s\nreason=%s\n' "$n" "$_state" "$_reason"
@@ -400,9 +404,9 @@ esac
 # `/clear` first, then the resume. Each through verify-text, which refuses an
 # occupied composer and confirms the submit landed (#974) — a relaunch that
 # assumed the keystroke worked would be the silent shape this issue is about.
-stamp="$root/$GOLEM_STATUS_DIR/handoff-relaunched-golem-$n"
-if ! command mkdir -p "$root/$GOLEM_STATUS_DIR" 2>/dev/null; then
-    command echo "golem-handoff-relaunch: cannot create $root/$GOLEM_STATUS_DIR — refusing to /clear without a stamp" >&2
+stamp="$status_dir/handoff-relaunched-golem-$n"
+if ! command mkdir -p "$status_dir" 2>/dev/null; then
+    command echo "golem-handoff-relaunch: cannot create $status_dir — refusing to /clear without a stamp" >&2
     exit 1
 fi
 if [ "$_state" = "due" ]; then

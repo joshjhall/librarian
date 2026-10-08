@@ -809,3 +809,50 @@ test_config_golem_join_status_dir_single_source() {
             "${f##*/} resolves the status dir through config.sh's golem_join_status_dir"
     done
 }
+
+# --- No hand-built status-dir join anywhere in plugins/ (#1188) ----------------
+
+# _status_dir_hand_joins <dir> — print every `<path>:<line>:` in <dir>'s *.sh /
+# *.md that appends GOLEM_STATUS_DIR after a `/` (`$root/$GOLEM_STATUS_DIR`,
+# `/${GOLEM_STATUS_DIR}`) without a `lint-allow-status-dir-join:` marker. Such a
+# spelling names `<root>//abs` when the status dir is ABSOLUTE — a path that
+# exists nowhere, read as an empty registry/feed (#949). The scanner is a
+# function so the vacuity fixture below runs the SAME code as the real scan.
+_status_dir_hand_joins() {
+    command grep -rnE --include='*.sh' --include='*.md' \
+        '/\$\{?GOLEM_STATUS_DIR' "$1" 2>/dev/null |
+        command grep -v 'lint-allow-status-dir-join:' || true
+}
+
+# Every status-dir consumer goes through config.sh's golem_join_status_dir; the
+# only spellings left are the join itself and golem-notify.sh's documented inline
+# twin, each carrying the marker. Three guards keep this from passing vacuously:
+# the corpus must be non-empty, the marked lines must be exactly those two (a
+# marker cannot quietly spread), and the scanner must fire on a planted
+# violation and stay silent on a marked one.
+test_no_hand_built_status_dir_join() {
+    local plugins="$REPO_ROOT/plugins" hits n marked tmp
+    n="$(command find "$plugins" -name '*.sh' -type f | command wc -l)"
+    n="${n//[[:space:]]/}"
+    assert_true "[ '$n' -gt 50 ]" "the scan covers plugins/'s shell corpus (found $n files)"
+
+    hits="$(_status_dir_hand_joins "$plugins")"
+    assert_output_empty "$hits" \
+        "no hand-built \$root/\$GOLEM_STATUS_DIR join in plugins/ — use golem_join_status_dir (#1188)"
+
+    marked="$(command grep -rlE --include='*.sh' --include='*.md' \
+        'lint-allow-status-dir-join:' "$plugins" 2>/dev/null |
+        command sed "s|^$plugins/||" | LC_ALL=C command sort | command tr '\n' ' ' || true)"
+    assert_equals "workflow/hooks/golem-notify.sh workflow/scripts/config.sh " "$marked" \
+        "only the join itself and golem-notify's inline twin carry the exemption marker"
+
+    tmp="$(command mktemp -d)"
+    command printf '%s\n' 'd="$root/$GOLEM_STATUS_DIR"' >"$tmp/bad.sh"
+    command printf '%s\n' 'd="$root/${GOLEM_STATUS_DIR}/x"' >"$tmp/braced.md"
+    command printf '%s\n' 'd="$root/$GOLEM_STATUS_DIR" # lint-allow-status-dir-join: fixture' >"$tmp/ok.sh"
+    hits="$(_status_dir_hand_joins "$tmp")"
+    command rm -rf "$tmp"
+    assert_contains "$hits" "bad.sh:1:" "the scanner fires on a planted \$root/\$GOLEM_STATUS_DIR"
+    assert_contains "$hits" "braced.md:1:" "the scanner fires on the braced spelling in a .md recipe"
+    assert_not_contains "$hits" "ok.sh" "a marked line is exempt"
+}
