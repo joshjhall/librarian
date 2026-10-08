@@ -662,7 +662,13 @@ case "$cmd" in
         # ANTHROPIC_BASE_URL rides along in the same file whenever one is known,
         # the launcher's winning over the cache's (#244, #1163) — and a launcher
         # URL with NO token still gets a URL-only file (#1170), else it would
-        # ride the server env exactly as #1163 fixed for the token path.
+        # ride the server env exactly as #1163 fixed for the token path. That
+        # file deliberately decouples the two: the golem pairs the launcher's
+        # URL with whatever token its session env holds (OAuth, shell init, a
+        # server-env token from outside this launcher, which never freezes one
+        # since #1153). An operator-set URL is the explicit intent; a URL and
+        # token frozen together by some earlier launch is the stale state #1163
+        # exists to beat, not a pairing worth preserving.
         #
         # Never argv: `tmux -e VAR=…` lands in the server's argv for its whole
         # lifetime, readable by every local user via ps. Never inherited env
