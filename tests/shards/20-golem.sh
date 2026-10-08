@@ -93,3 +93,8 @@ run_stage "status-label transition ordering" bash "$SCRIPT_DIR/validate-label-tr
 # Its fixtures stub `gh` rather than querying the live backlog, so the closed-hit
 # case (#860) stays a fixed reproduction instead of drifting with the tracker.
 run_stage "escalation premise checker" bash "$SCRIPT_DIR/validate-premise-check.sh"
+# The main-checkout stale index.lock detector (#1193): a ghost lock the
+# bindfs mount leaves behind must read stale+identical, and a check that could
+# not look must say unavailable, never none. Read-only by assertion.
+run_stage "main index.lock stale detector" bash "$SCRIPT_DIR/validate-main-index-lock-check.sh"
+run_stage "fuse rename probe" bash "$SCRIPT_DIR/validate-probe-fuse-rename.sh"

@@ -290,6 +290,14 @@ the decision→kill window). See `mode-protocol.md` § *Slow-review takeover
 contract* for the exact per-mode command, rationale, benign-state evidence, and
 the takeover recipe.
 
+**Stale main `index.lock` (#1193).** Before any git write in the **main**
+checkout (a `git pull` after a merge), run
+`${CLAUDE_PLUGIN_ROOT}/scripts/main-index-lock-check.sh`. It is read-only and
+never deletes the lock. `verdict=stale identical=yes` is the ghost entry the
+devcontainer's bindfs mount leaves behind after a rename; relay its `recovery=`
+line to the operator instead of letting the pull fail later. `unavailable` means
+the check could not run — it is not an all-clear.
+
 **Proactive gate-watch (PUSH, not just PULL).** `${CLAUDE_PLUGIN_ROOT}/scripts/golem-status.sh` is a **pull**
 check — the operator must run it to discover a golem parked at a permission gate
 (`git push` / `gh pr create` / `gh pr merge` `ask` rules) or a plan-gate
