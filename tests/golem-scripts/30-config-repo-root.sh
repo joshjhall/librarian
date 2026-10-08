@@ -818,6 +818,12 @@ test_config_golem_join_status_dir_single_source() {
 # spelling names `<root>//abs` when the status dir is ABSOLUTE — a path that
 # exists nowhere, read as an empty registry/feed (#949). The scanner is a
 # function so the vacuity fixture below runs the SAME code as the real scan.
+#
+# SCOPE: it matches the slash-prefixed spelling only. An aliased join
+# (`sd=$GOLEM_STATUS_DIR; "$root/$sd"`) or a split literal evades it. Measured
+# when written: every non-slash GOLEM_STATUS_DIR use in plugins/ sits inside the
+# join itself or golem-notify's twin, so the narrow pattern loses no real site —
+# a broader one would have to tell those two apart from a new alias.
 _status_dir_hand_joins() {
     command grep -rnE --include='*.sh' --include='*.md' --include='*.js' --include='*.mjs' \
         '/\$\{?GOLEM_STATUS_DIR' "$1" 2>/dev/null |
