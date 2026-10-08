@@ -179,6 +179,10 @@ test_launch_auth_base_url_quoting_and_no_token_boundary() {
     assert_not_contains "$log" "launcher.example" "the URL rides the file, never argv"
     local authf
     authf="$(command ls "$sb"/golem-auth.* 2>/dev/null | command head -n 1)"
+    # Control: assert_file_not_contains passes on a MISSING file, so pin that the
+    # file exists and carries the URL before asserting what it lacks.
+    assert_file_contains "$authf" "export ANTHROPIC_BASE_URL='https://launcher.example'" \
+        "control: the URL-only file exists and carries the launcher URL"
     assert_file_not_contains "$authf" "ANTHROPIC_AUTH_TOKEN" "a URL-only file carries no token line"
     _run_session_cmd "$sb" ANTHROPIC_BASE_URL=https://stale.example \
         ANTHROPIC_AUTH_TOKEN=sk-session-1170 # gitleaks:allow (fake fixture token)
