@@ -278,10 +278,10 @@ tmux new-session -d -s golem-{N} -c .worktrees/issue-{N} -e GOLEM_ID=golem-{N} \
   sh -c "claude --permission-mode auto '/workflow:next-issue {N} --level {L}' ; claude --permission-mode auto '/workflow:ship-issue'"
 ```
 
-`GOLEM_MODEL` (e.g. `sonnet`) runs the golem's whole pipeline on that model;
-unset, it inherits the operator default. `sh -c` reads no shell init, so `claude`
-must be on the tmux server's global `PATH`, not just `~/.zshenv`; the launcher
-warns when it is not (#1176, fix in the workflow `README.md`).
+`GOLEM_MODEL` (e.g. `sonnet`) splices `--model "…"` after each `claude` above;
+unset, none is emitted and the golem inherits the operator default. `sh -c` reads
+no shell init, so `claude` must be on the tmux server's global `PATH`, not only
+`~/.zshenv`; the launcher warns if not (#1176; fix in the workflow `README.md`).
 
 **Permission preflight + one-per-golem (#29).** This bare `tmux new-session` is
 denied by the auto-mode classifier (`[Create Unsafe Agents]`) unless the host
