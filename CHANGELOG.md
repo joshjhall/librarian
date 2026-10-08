@@ -5,6 +5,49 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.17.0] - 2026-10-08
+
+### Added
+
+- Reap review scratch and work registry on teardown (#1178)
+
+### CI/CD
+
+- Bump actions/setup-node to v7.1.0 and typos to 1.51.1 (#1199)
+
+### Changed
+
+- Collapse the five analyzer-crash guards into a harness helper (#1167)
+- Share the status-dir join between golem-work.sh and worktree-rm.sh (#1186)
+- Extract golem-launch auth helpers into golem-auth.sh (#1189)
+
+### Documentation
+
+- A private tmux server must be addressed by socket path (#1183)
+
+### Fixed
+
+- Refuse a golem launch whose resolved token cannot be delivered (#1168)
+- Deliver the golem base URL through the token file (#1171)
+- Stop shipping the .codegraph cache symlink in the tarball (#1169)
+- Harden review-result provenance — run nonce, scratch-dir stamp, required flags (#1172)
+- Verify a staged review harness is byte-identical before use (#1181)
+- Run the golem payload as argv sh -c, never via tmux's default-shell (#1175)
+- Warn when claude is missing from the golem session's PATH (#1187)
+- Route every hand-built status-dir path through golem_join_status_dir (#1190)
+- Deliver the launcher base URL to a golem when no token resolves (#1194)
+- Detect the bindfs ghost index.lock in the main checkout (#1195)
+- Refuse a golem launch on tmux older than 3.2 (#1200)
+
+### Testing
+
+- Cover post-create.sh's .codegraph link creation (#1180)
+- Cover write_auth_file cleanup and tokenless tmux-failure branches (#1184)
+- Cover harness-stage.sh's mv-failure refusal with a PATH stub (#1185)
+- Cover URL-only auth-file chmod/write failure arms (#1198)
+- Split the claude-PATH tests into their own fragment (#1202)
+- Pin the tmux -V hang fail-open path; split tmux-version tests out (#1204)
+
 ## [0.16.0] - 2026-10-06
 
 ### Added
@@ -1029,6 +1072,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Relocate skill/agent quality gates + fixtures (#12)
 
+[0.17.0]: https://github.com/joshjhall/librarian/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/joshjhall/librarian/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/joshjhall/librarian/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/joshjhall/librarian/compare/v0.13.0...v0.14.0
