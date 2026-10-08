@@ -493,6 +493,70 @@ test_launch_claude_path_escape_hatch() {
         "and skips the server probe entirely"
 }
 
+# --- minimum tmux version (#1177) -------------------------------------------
+# The launch line passes `new-session -e`, which tmux added in 3.2 (2.9a and 3.1c,
+# built from source, die with `unknown option -- e`). Driven through the stub's
+# TMUX_STUB_VERSION knob; the default stub reports a supported 3.5a.
+
+# Below the floor: refuse (exit 3) with the version, the floor and the fix — and
+# before both new-session and the token file. The token makes the no-file
+# assertion discriminating: without the refusal the file WOULD be written.
+test_launch_tmux_version_below_floor_refuses() {
+    local sb
+    new_sandbox sb
+    run_launch_auth "$sb" OP_SECRETS_CACHE="$sb/no-such-cache" TMUX_STUB_VERSION=3.1c \
+        ANTHROPIC_AUTH_TOKEN=sk-floor-1177 # gitleaks:allow (fake fixture token)
+    assert_exit 3 "$RUN_RC" "tmux 3.1c is refused (exit 3)"
+    assert_contains "$RUN_OUT" "REFUSING golem-7" "the refusal names the golem"
+    assert_contains "$RUN_OUT" "reports 'tmux 3.1c'" "and the version it found"
+    assert_contains "$RUN_OUT" "needs tmux >= 3.2" "and the floor"
+    assert_contains "$RUN_OUT" "Upgrade tmux" "with the remediation"
+    assert_contains "$(command cat "$sb/tmux-args.log" 2>/dev/null)" "-V" \
+        "control: the version was actually probed"
+    assert_not_contains "$(command cat "$sb/tmux-args.log" 2>/dev/null)" "new-session" \
+        "new-session is never reached"
+    assert_equals "" "$(command ls "$sb" | command grep '^golem-auth\.' || true)" \
+        "no token file is left behind"
+}
+
+# A MAJOR below 3 refuses too, whatever its minor: 2.9a must not pass on 9 >= 2.
+test_launch_tmux_version_major_below_floor_refuses() {
+    local sb
+    new_sandbox sb
+    run_launch_auth "$sb" OP_SECRETS_CACHE="$sb/no-such-cache" TMUX_STUB_VERSION=2.9a
+    assert_exit 3 "$RUN_RC" "tmux 2.9a is refused (exit 3)"
+    assert_contains "$RUN_OUT" "needs tmux >= 3.2" "naming the floor"
+}
+
+# The boundary itself and the `next-` dev spelling both dispatch.
+test_launch_tmux_version_at_floor_dispatches() {
+    local sb v
+    for v in 3.2 next-3.6 4.0; do
+        new_sandbox sb
+        run_launch_auth "$sb" OP_SECRETS_CACHE="$sb/no-such-cache" TMUX_STUB_VERSION="$v"
+        assert_exit 0 "$RUN_RC" "tmux $v dispatches (exit 0)"
+        assert_contains "$(command cat "$sb/tmux-args.log" 2>/dev/null)" "new-session -d -s golem-7" \
+            "tmux $v reaches new-session"
+        assert_not_contains "$RUN_OUT" "REFUSING" "tmux $v raises no refusal"
+    done
+}
+
+# An unreadable version fails OPEN: an OpenBSD base tmux prints `openbsd-7.4`,
+# and a `-V` that errors learned nothing. Both still dispatch.
+test_launch_tmux_version_unreadable_fails_open() {
+    local sb
+    new_sandbox sb
+    run_launch_auth "$sb" OP_SECRETS_CACHE="$sb/no-such-cache" TMUX_STUB_VERSION=openbsd-7.4
+    assert_exit 0 "$RUN_RC" "an unparseable version dispatches (exit 0)"
+    assert_contains "$(command cat "$sb/tmux-args.log" 2>/dev/null)" "new-session -d -s golem-7" \
+        "and reaches new-session"
+    new_sandbox sb
+    run_launch_auth "$sb" OP_SECRETS_CACHE="$sb/no-such-cache" TMUX_STUB_VERSION_RC=1
+    assert_exit 0 "$RUN_RC" "a failing tmux -V dispatches (exit 0)"
+    assert_contains "$(command cat "$sb/tmux-args.log" 2>/dev/null)" "new-session -d -s golem-7" \
+        "and reaches new-session"
+}
+
 # A token carrying shell metacharacters round-trips byte-for-byte: the file is
 # sourced by sh, so an unquoted `'` would break it and a `$` would expand.
 test_launch_auth_token_quoting_round_trips() {
@@ -661,8 +725,9 @@ _assert_refused_without_token_file() {
         "$arm control: the stub ran on the created token file"
     assert_equals "" "$(command ls "$sb"/golem-auth.* 2>/dev/null)" \
         "$arm: the partial token file is removed"
-    log="$(command cat "$sb/tmux-args.log" 2>/dev/null || true)"
-    assert_equals "" "$log" "$arm: tmux is never invoked"
+    # The read-only `-V` probe (#1177) starts no server; anything else would.
+    log="$(command grep -v -x -e '-V' "$sb/tmux-args.log" 2>/dev/null || true)"
+    assert_equals "" "$log" "$arm: tmux is never invoked beyond the -V probe"
     assert_not_contains "$RUN_OUT" "$token" "$arm: the refusal does not echo the token"
 }
 
