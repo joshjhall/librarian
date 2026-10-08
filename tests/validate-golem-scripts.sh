@@ -48,6 +48,7 @@ SCRIPTS="$REPO_ROOT/plugins/workflow/scripts"
 # shellcheck disable=SC2034  # consumed by the sourced fragments, not by this file
 {
     LAUNCH="$SCRIPTS/golem-launch.sh"
+    AUTH="$SCRIPTS/golem-auth.sh"
     WT_NEW="$SCRIPTS/worktree-new.sh"
     WT_RM="$SCRIPTS/worktree-rm.sh"
     WT_RM_LEFTOVER="$SCRIPTS/worktree-rm-leftover.sh"
@@ -183,6 +184,7 @@ run_fragment_test test_launch_auth_launcher_base_url_not_overridden "golem-launc
 run_fragment_test test_launch_auth_inherited_base_url_survives_stale_server_env "golem-launch: an inherited base URL beats a running server's stale global env (#1163)"
 run_fragment_test test_launch_auth_base_url_cache_only_and_absent "golem-launch: a cache-only URL beats a stale one; no URL known writes no base-URL line (#1163)"
 run_fragment_test test_launch_auth_base_url_quoting_and_no_token_boundary "golem-launch: a metachar base URL round-trips; no token still writes no file (#1163, #1170)"
+run_fragment_test test_launch_sources_golem_auth "golem-launch: sources golem-auth.sh and defines none of its auth helpers itself (#1162)"
 run_fragment_test test_launch_sh_quote_round_trips_edge_shapes "golem-launch: _sh_quote round-trips quote/empty edge shapes and uses no patsub replacement (#1153)"
 run_fragment_test test_launch_auth_missing_token_file_still_starts_claude "golem-launch: a vanished token file degrades to a tokenless start, never a dead session (#1153)"
 run_fragment_test test_launch_auth_payload_is_argv_sh_c "golem-launch: the payload reaches tmux as argv sh -c, never via its default-shell (#1159)"
