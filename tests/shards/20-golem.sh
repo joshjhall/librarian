@@ -97,3 +97,4 @@ run_stage "escalation premise checker" bash "$SCRIPT_DIR/validate-premise-check.
 # bindfs mount leaves behind must read stale+identical, and a check that could
 # not look must say unavailable, never none. Read-only by assertion.
 run_stage "main index.lock stale detector" bash "$SCRIPT_DIR/validate-main-index-lock-check.sh"
+run_stage "fuse rename probe" bash "$SCRIPT_DIR/validate-probe-fuse-rename.sh"
