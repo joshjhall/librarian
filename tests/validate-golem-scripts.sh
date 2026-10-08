@@ -198,7 +198,7 @@ run_fragment_test test_launch_claude_path_probe_precedes_token_file "golem-launc
 run_fragment_test test_launch_claude_path_escape_hatch "golem-launch: GOLEM_SKIP_CLAUDE_PATH_CHECK=1 silences the claude-PATH warning (#1176)"
 run_fragment_test test_launch_tmux_version_below_floor_refuses "golem-launch: tmux below 3.2 refuses before new-session and the token file (#1177)"
 run_fragment_test test_launch_tmux_version_major_below_floor_refuses "golem-launch: tmux 2.x refuses whatever its minor (#1177)"
-run_fragment_test test_launch_tmux_version_at_floor_dispatches "golem-launch: tmux 3.2, next-3.6 and 4.0 dispatch (#1177)"
+run_fragment_test test_launch_tmux_version_at_floor_dispatches "golem-launch: tmux 3.2, 3.10, next-3.6 and 4.0 dispatch (#1177)"
 run_fragment_test test_launch_tmux_version_unreadable_fails_open "golem-launch: an unreadable tmux -V fails open (#1177)"
 run_fragment_test test_launch_auth_token_quoting_round_trips "golem-launch: a metachar token round-trips through the token file (#1153)"
 run_fragment_test test_launch_auth_inherited_token_not_in_tmux_env "golem-launch: an inherited token never reaches tmux's env or argv (#1153)"

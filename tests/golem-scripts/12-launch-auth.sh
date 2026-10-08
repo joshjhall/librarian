@@ -515,6 +515,8 @@ test_launch_tmux_version_below_floor_refuses() {
         "control: the version was actually probed"
     assert_not_contains "$(command cat "$sb/tmux-args.log" 2>/dev/null)" "new-session" \
         "new-session is never reached"
+    assert_not_contains "$(command cat "$sb/tmux-args.log" 2>/dev/null)" "show-environment" \
+        "nor the PATH probe, which runs after the version check"
     assert_equals "" "$(command ls "$sb" | command grep '^golem-auth\.' || true)" \
         "no token file is left behind"
 }
@@ -528,10 +530,11 @@ test_launch_tmux_version_major_below_floor_refuses() {
     assert_contains "$RUN_OUT" "needs tmux >= 3.2" "naming the floor"
 }
 
-# The boundary itself and the `next-` dev spelling both dispatch.
+# The boundary itself, the `next-` dev spelling, and a two-digit minor (3.10
+# must compare numerically, not as a string that sorts before 3.2) all dispatch.
 test_launch_tmux_version_at_floor_dispatches() {
     local sb v
-    for v in 3.2 next-3.6 4.0; do
+    for v in 3.2 3.10 next-3.6 4.0; do
         new_sandbox sb
         run_launch_auth "$sb" OP_SECRETS_CACHE="$sb/no-such-cache" TMUX_STUB_VERSION="$v"
         assert_exit 0 "$RUN_RC" "tmux $v dispatches (exit 0)"
