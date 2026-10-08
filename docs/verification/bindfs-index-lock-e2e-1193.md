@@ -42,14 +42,28 @@ write — exclusive-create `index.lock`, write it, rename it over `index` — in
 scratch subdirectory, with **one** process and no concurrent reader. After each
 cycle it checks three guarantees a correct filesystem makes.
 
-| Run location                    | Cycles | Anomalies |
-| ------------------------------- | -----: | --------: |
-| bindfs mount (this worktree)    | 16,000 |        10 |
-| overlay `/tmp` (control)        | 12,000 |         0 |
+| Run location                 | Cycles | Anomaly rows | Fault episodes |
+| ---------------------------- | -----: | -----------: | -------------: |
+| bindfs mount (this worktree) | 20,000 |           16 |        9 (+1) |
+| overlay `/tmp` (control)     | 12,000 |            0 |              0 |
 
-These totals combine the ad-hoc first probe (8,000 / 4) with the committed
-script (8,000 / 6 on bindfs, 6,000 / 0 on `/tmp`); the control was run twice.
-The rate is bursty: some 2,000-cycle runs were clean.
+**Count episodes, not rows.** A `rename-lost-source` row is usually followed
+on the next cycle by an `exclusive-create-refused` row, because the
+filesystem still reports the lost entry. The final probe removes the lock in
+every anomaly branch (a review finding: the first version did not, which could
+manufacture that second row itself). The pairing **persists after that
+cleanup**: `rm -f` finds nothing to remove, but an exclusive create still
+reports the file as existing, so each pair is one fault seen twice. Of the 9
+episodes, 7 were such pairs and 2 were single rows. The "+1" is a third symptom
+that version of the probe did not yet count: a write to a lock that the same
+cycle had just created exclusively failed with ENOENT. It is now reported as
+`write-lost-file`.
+
+The rate is bursty: several 2,000-cycle runs were clean. Earlier, superseded
+figures (10 rows in 16,000, from the probe before the cleanup fix) were quoted
+in the #1193 thread and in joshjhall/containers#1086. Those rows are
+over-counted relative to episodes; the conclusion does not change, since the
+control stays at 0.
 
 Observed anomaly kinds (raw rows, `inode size mtime`):
 

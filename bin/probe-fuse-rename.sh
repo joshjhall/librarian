@@ -16,8 +16,12 @@
 # — and after each cycle checks the three things a correct filesystem
 # guarantees: the exclusive create succeeds (no lock is left over), the rename
 # finds the file it was just handed, and `index.lock` is gone afterwards.
-# Measured on 2026-10-07: 4 anomalies in 8,000 cycles on the bindfs mount, 0 in
-# 6,000 on the container's overlay /tmp. Evidence and the full analysis:
+# Every anomaly branch removes the lock before the next cycle, so a refused
+# exclusive create on the cycle after a fault is the filesystem's doing, not a
+# leftover of the probe's own. Measured on 2026-10-07 (after that cleanup was
+# added): 16 anomaly rows forming 9 fault episodes, plus one write to a
+# just-created lock failing ENOENT (now counted as write-lost-file), in 20,000
+# cycles on the bindfs mount; 0 in 12,000 on the container's overlay /tmp. Evidence and the full analysis:
 # docs/verification/bindfs-index-lock-e2e-1193.md.
 #
 # Usage: bin/probe-fuse-rename.sh <existing-dir> [cycles]   (default 2000)
@@ -88,12 +92,23 @@ while [ "$i" -lt "$cycles" ]; do
         command rm -f -- "$work/index.lock"
         continue
     fi
-    command cat "$payload" >"$work/index.lock"
-    if ! command mv -f -- "$work/index.lock" "$work/index" 2>/dev/null; then
-        report rename-lost-source "$i"
+    if ! command cat "$payload" >"$work/index.lock" 2>/dev/null; then
+        # The lock this cycle just created exclusively has vanished.
+        report write-lost-file "$i"
+        command rm -f -- "$work/index.lock"
         continue
     fi
-    [ -e "$work/index.lock" ] && report lock-visible-after-rename "$i"
+    if ! command mv -f -- "$work/index.lock" "$work/index" 2>/dev/null; then
+        report rename-lost-source "$i"
+        # Clear whatever is left so the NEXT cycle's exclusive create is not
+        # refused by this cycle's leftover — that would count one fault twice.
+        command rm -f -- "$work/index.lock"
+        continue
+    fi
+    if [ -e "$work/index.lock" ]; then
+        report lock-visible-after-rename "$i"
+        command rm -f -- "$work/index.lock"
+    fi
 done
 
 fs="$(command stat -f -c %T "$work" 2>/dev/null || printf 'unknown')"
