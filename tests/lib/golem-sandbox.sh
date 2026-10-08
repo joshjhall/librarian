@@ -168,7 +168,9 @@ inbox_in() {
 # #1153), TMUX_STUB_ARGV_LOG (new-session's args one per line, so a test can
 # assert word BOUNDARIES a joined $* hides, #1159), TMUX_STUB_SHOW_ENV (the line
 # `show-environment` prints; unset = no server, exit 1, #1176), TMUX_STUB_PROBE_TMP_LOG
-# (TMPDIR listing at show-environment time, #1176), TMUX_STUB_VERSION (what
+# (TMPDIR listing at show-environment time, #1176), TMUX_STUB_SHOW_ENV_MODE
+# (`silent` = a server that answers exit 0 with no output; `hang` = a probe that
+# never returns, for the time bound, #1192), TMUX_STUB_VERSION (what
 # `tmux -V` reports after `tmux `; default 3.5a, #1177), TMUX_STUB_VERSION_RC
 # (`-V` exits with this status, printing nothing), TMUX_STUB_RC (exit with this
 # status instead of 0).
@@ -197,6 +199,10 @@ fi
 if [ "${1:-}" = show-environment ]; then
     # Snapshot TMPDIR's token files AT probe time, so a test can pin the order.
     [ -n "${TMUX_STUB_PROBE_TMP_LOG:-}" ] && ls "${TMPDIR:-/tmp}" >"$TMUX_STUB_PROBE_TMP_LOG" 2>/dev/null
+    case "${TMUX_STUB_SHOW_ENV_MODE:-}" in
+        silent) exit 0 ;;
+        hang) exec sleep 30 ;;
+    esac
     [ -n "${TMUX_STUB_SHOW_ENV:-}" ] || exit 1
     printf '%s\n' "$TMUX_STUB_SHOW_ENV"
     exit 0

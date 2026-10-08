@@ -105,6 +105,7 @@ source "$SCRIPT_DIR/lib/golem-sandbox.sh"
 source_fragments "$SCRIPT_DIR/golem-scripts" \
     10-launch.sh \
     12-launch-auth.sh \
+    13-launch-claude-path.sh \
     20-worktree-new.sh \
     25-worktree-new-cargo.sh \
     26-worktree-uv-venv.sh \
@@ -196,6 +197,9 @@ run_fragment_test test_launch_claude_path_server_without_path_uses_launcher "gol
 run_fragment_test test_launch_claude_path_never_probes_on_refusal_or_print "golem-launch: a refused launch and print never probe tmux for PATH (#1176)"
 run_fragment_test test_launch_claude_path_probe_precedes_token_file "golem-launch: the PATH probe runs before the token file is written (#1176)"
 run_fragment_test test_launch_claude_path_escape_hatch "golem-launch: GOLEM_SKIP_CLAUDE_PATH_CHECK=1 silences the claude-PATH warning (#1176)"
+run_fragment_test test_launch_claude_path_probe_hang_is_bounded "golem-launch: a hanging show-environment probe is cut off by its bound, still dispatches (#1192)"
+run_fragment_test test_launch_claude_path_server_empty_path_warns "golem-launch: a server answering an empty PATH= warns, naming the server env (#1192)"
+run_fragment_test test_launch_claude_path_server_silent_uses_launcher "golem-launch: a server answering nothing defers to the launcher PATH, labelled so (#1192)"
 run_fragment_test test_launch_tmux_version_below_floor_refuses "golem-launch: tmux below 3.2 refuses before new-session and the token file (#1177)"
 run_fragment_test test_launch_tmux_version_major_below_floor_refuses "golem-launch: tmux 2.x refuses whatever its minor (#1177)"
 run_fragment_test test_launch_tmux_version_at_floor_dispatches "golem-launch: tmux 3.2, 3.10, next-3.6 and 4.0 dispatch (#1177)"
