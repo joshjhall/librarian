@@ -98,20 +98,20 @@ _sh_quote() {
     command printf "'%s'" "$out"
 }
 
-# write_auth_file — write the resolved token (and the base URL, whenever one is
-# known) as `export` lines into a fresh owner-only (0600) file under
-# ${TMPDIR:-/tmp}, and print its path. The base URL is the launcher's own when
-# set (it wins over the cache's, #244), else the cache's. It is written even
-# when the launcher has one: an already-running tmux server hands a new session
-# its GLOBAL env, not this client's, so the golem would otherwise run with no
-# base URL or a stale one and send a proxy-issued token to the wrong endpoint
-# (#1163). With no resolved token no file is written at all, so that launch's
-# URL still rides the server env (#1170). The golem's session command sources
-# then deletes it
-# (#1153), so the token never appears in any argv. Fails (non-zero, no path)
-# when the file cannot be created or written; a partial file is removed. A
-# session killed before its first command runs leaves the file behind — still
-# 0600, readable only by this uid.
+# write_auth_file — write the resolved token and/or the base URL as `export`
+# lines into a fresh owner-only (0600) file under ${TMPDIR:-/tmp}, and print its
+# path. The base URL is the launcher's own when set (it wins over the cache's,
+# #244), else the cache's. It is written even when the launcher has one: an
+# already-running tmux server hands a new session its GLOBAL env, not this
+# client's, so the golem would otherwise run with no base URL or a stale one
+# and send a proxy-issued token to the wrong endpoint (#1163). The token line is
+# written only when a token resolved: a URL-only file (#1170) must never export
+# an empty token over one the golem's session env would supply. The caller
+# decides whether there is anything to write. The golem's session command
+# sources then deletes it (#1153), so the token never appears in any argv.
+# Fails (non-zero, no path) when the file cannot be created or written; a
+# partial file is removed. A session killed before its first command runs
+# leaves the file behind — still 0600, readable only by this uid.
 write_auth_file() {
     local f url="${ANTHROPIC_BASE_URL:-$RESOLVED_BASE_URL}"
     f="$(umask 077 && command mktemp "${TMPDIR:-/tmp}/golem-auth.XXXXXX" 2>/dev/null)" || return 1
@@ -128,7 +128,9 @@ write_auth_file() {
         return 1
     }
     {
-        command printf 'export ANTHROPIC_AUTH_TOKEN=%s\n' "$(_sh_quote "$RESOLVED_AUTH_TOKEN")"
+        if [ -n "$RESOLVED_AUTH_TOKEN" ]; then
+            command printf 'export ANTHROPIC_AUTH_TOKEN=%s\n' "$(_sh_quote "$RESOLVED_AUTH_TOKEN")"
+        fi
         if [ -n "$url" ]; then
             command printf 'export ANTHROPIC_BASE_URL=%s\n' "$(_sh_quote "$url")"
         fi
