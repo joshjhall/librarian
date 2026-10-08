@@ -184,11 +184,15 @@ test_launch_auth_base_url_quoting_and_no_token_boundary() {
     assert_file_contains "$authf" "export ANTHROPIC_BASE_URL='https://launcher.example'" \
         "control: the URL-only file exists and carries the launcher URL"
     assert_file_not_contains "$authf" "ANTHROPIC_AUTH_TOKEN" "a URL-only file carries no token line"
+    assert_equals "-rw-------" "$(command ls -l "$authf" 2>/dev/null | command cut -c1-10)" \
+        "the URL-only file is owner-only (0600), like the token file"
     _run_session_cmd "$sb" ANTHROPIC_BASE_URL=https://stale.example \
         ANTHROPIC_AUTH_TOKEN=sk-session-1170 # gitleaks:allow (fake fixture token)
     assert_equals "sk-session-1170|https://launcher.example" \
         "$(command head -n 1 "$sb/claude-env.log" 2>/dev/null)" \
         "the launcher URL beats a stale server-env URL and the session's own token survives (#1170)"
+    assert_equals "" "$(command ls "$sb"/golem-auth.* 2>/dev/null)" \
+        "the session deletes the URL-only file after sourcing it"
 }
 
 # The auth helpers live in golem-auth.sh, which the launcher sources (#1162).
