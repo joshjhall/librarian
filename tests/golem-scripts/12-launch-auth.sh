@@ -393,8 +393,8 @@ test_launch_claude_path_server_without_path_uses_launcher() {
     assert_not_contains "$RUN_OUT" "no tmux server answered" "and does not claim no server answered"
 }
 
-# The probe touches tmux only on a launch that reaches dispatch: a refused launch
-# and `print` (tracks-runbook.sh's tmux-free contract) never probe, even with the
+# The probe touches tmux only once the worktree refusal has passed: a refused
+# launch and `print` (tracks-runbook.sh's tmux-free contract) never probe, even with the
 # check enabled — run_launch_auth's default skip would hide that. The refusal is
 # the missing-worktree one, NOT the unwritable-TMPDIR auth refusal: there
 # bounded_run cannot make its marker dir, so the probe could never reach tmux

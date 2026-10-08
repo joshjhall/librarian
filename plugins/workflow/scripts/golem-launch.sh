@@ -792,6 +792,11 @@ case "$cmd" in
         # `sh` sources it and deletes it before `claude` starts.
         # A token that resolved but cannot be written REFUSES the launch (exit
         # 3, #1160); only an unresolved token still warns and dispatches.
+        # Predict a session that cannot find `claude` (#1176), warn-only. After
+        # the worktree refusal, and BEFORE the token file exists so the bounded
+        # probe never widens its on-disk window. A later auth refusal (exit 3)
+        # has then only run a read-only show-environment, which starts no server.
+        check_session_claude_path
         resolve_auth_token
         env_args=(-e "GOLEM_ID=golem-$N")
         auth_file=""
@@ -818,9 +823,6 @@ case "$cmd" in
             # to no warning at all.
             command echo "golem-launch: WARNING no ANTHROPIC_AUTH_TOKEN resolvable though an op-secrets cache is present; golem-$N may start unauthenticated. Dispatching anyway." >&2
         fi
-        # Predict a session that cannot find `claude` (#1176), warn-only. After
-        # every refusal above, so a refused launch still never touches tmux.
-        check_session_claude_path
         # Bare, standalone new-session — matches Bash(tmux new-session:*). The
         # payload goes to tmux as the three words `sh` `-c` `<payload>`, never as
         # one string: tmux runs a one-string command through its default-shell
