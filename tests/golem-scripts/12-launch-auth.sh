@@ -460,8 +460,10 @@ test_launch_claude_path_never_probes_on_refusal_or_print() {
             "$REAL_BASH" "$LAUNCH" print 7 2>&1)" || RUN_RC=$?
     assert_exit 0 "$RUN_RC" "control: print exits 0"
     assert_contains "$RUN_OUT" "tmux new-session" "control: print emitted the launch line"
-    assert_not_contains "$(command cat "$sb/tmux-args.log" 2>/dev/null)" "show-environment" \
-        "print never probes tmux"
+    # Empty, not merely free of show-environment: the -V version probe (#1177)
+    # belongs to launch too, so print must not run it either.
+    assert_equals "" "$(command cat "$sb/tmux-args.log" 2>/dev/null)" \
+        "print never probes tmux (no show-environment, no -V)"
 }
 
 # The probe runs BEFORE the 0600 token file is written, so its bounded window
