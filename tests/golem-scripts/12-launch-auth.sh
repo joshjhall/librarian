@@ -692,6 +692,50 @@ test_launch_auth_write_failure_removes_token_file() {
     _assert_refused_without_token_file "$sb" sk-writefail-1161 "write arm"
 }
 
+# _assert_url_only_warned_without_file <sandbox> <arm> — the URL-only twin of
+# _assert_refused_without_token_file (#1196): a write_auth_file failure arm with
+# no token WARNS and dispatches (#1170), but still leaves no partial file and
+# sources none. The chmod.log control proves the arm ran on a real file.
+_assert_url_only_warned_without_file() {
+    local sb="$1" arm="$2" log
+    assert_exit 0 "$RUN_RC" "$arm: a failed URL-only file write still dispatches (exit 0)"
+    assert_contains "$RUN_OUT" "WARNING" "$arm: the unwritten URL-only file is announced"
+    assert_contains "$RUN_OUT" "ANTHROPIC_BASE_URL" "$arm: the warning names what was not delivered"
+    assert_not_contains "$RUN_OUT" "REFUSING" "$arm: a URL-only write failure never refuses"
+    assert_contains "$(command cat "$sb/chmod.log" 2>/dev/null)" "600 $sb/golem-auth." \
+        "$arm control: the stub ran on the created URL-only file"
+    assert_equals "" "$(command ls "$sb"/golem-auth.* 2>/dev/null)" \
+        "$arm: the partial URL-only file is removed"
+    log="$(command cat "$sb/tmux-args.log" 2>/dev/null || true)"
+    assert_contains "$log" "new-session -d -s golem-7" "$arm: the dispatch reaches tmux"
+    assert_not_contains "$log" "golem-auth." "$arm: no file was written, so none is sourced"
+    assert_not_contains "$log" "launcher.example" "$arm: no argv fallback for the URL"
+}
+
+# write_auth_file's chmod-600 arm on a URL-only launch (#1196).
+test_launch_auth_url_only_chmod_failure_warns_and_dispatches() {
+    local sb
+    new_sandbox sb
+    _plant_chmod_stub "$sb" fail
+    run_launch_auth "$sb" OP_SECRETS_CACHE="$sb/no-such-cache" \
+        ANTHROPIC_BASE_URL=https://launcher.example
+    _assert_url_only_warned_without_file "$sb" "URL-only chmod arm"
+}
+
+# write_auth_file's write arm on a URL-only launch (#1196).
+test_launch_auth_url_only_write_failure_warns_and_dispatches() {
+    local sb
+    if [ "$(command id -u)" = "0" ]; then
+        skip_test "running as root — a 0400 file is still writable"
+        return 0
+    fi
+    new_sandbox sb
+    _plant_chmod_stub "$sb" readonly
+    run_launch_auth "$sb" OP_SECRETS_CACHE="$sb/no-such-cache" \
+        ANTHROPIC_BASE_URL=https://launcher.example
+    _assert_url_only_warned_without_file "$sb" "URL-only write arm"
+}
+
 # tmux new-session fails with NO token file (#1161): the `[ -n "$auth_file" ] &&`
 # guard returns 1 here, and the arm must still report and exit 1 — never fall
 # through to "started".
