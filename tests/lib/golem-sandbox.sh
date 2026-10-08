@@ -206,6 +206,8 @@ EOF
 # — the stub never runs the session command that would delete it.
 # The #1176 claude-PATH warning is off by default (CI hosts have no `claude`);
 # a case that tests it passes GOLEM_SKIP_CLAUDE_PATH_CHECK= to re-enable it.
+# RUN_LAUNCH_STDERR=<file> sends stderr there instead of merging it, so RUN_OUT
+# holds stdout alone (#1176: proving a warning stays off stdout).
 run_launch_auth() {
     local sb="$1"
     shift
@@ -238,7 +240,7 @@ run_launch_auth() {
             CLAUDE_PROJECT_SETTINGS=proj-settings.json \
             CLAUDE_GLOBAL_SETTINGS="$sb/global-settings.json" \
             "$@" \
-            "$REAL_BASH" "$LAUNCH" launch 7 2>&1)" || RUN_RC=$?
+            "$REAL_BASH" "$LAUNCH" launch 7 2>"${RUN_LAUNCH_STDERR:-/dev/stdout}")" || RUN_RC=$?
 }
 
 # _seed_failing_ref_hook <sandbox> <out-hooksdir-var>

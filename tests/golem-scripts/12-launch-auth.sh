@@ -347,18 +347,14 @@ test_launch_claude_path_server_env_missing_warns() {
     assert_contains "$RUN_OUT" "running tmux server's global env" "naming the server env as the source"
     assert_contains "$RUN_OUT" "tmux set-environment -g PATH" "with the actionable fix"
     # stdout carries `started golem-N` for callers; the warning must stay off it.
-    # Same launch, stdout only: stderr is discarded, so the warning must vanish.
-    local out
-    out="$(cd "$sb" && /usr/bin/env "${GIT_SCRUB[@]/#/-u}" -uANTHROPIC_AUTH_TOKEN -uBASH_ENV \
-        HOME="$sb" GOLEM_PLUGIN_PROBE="$sb/no-plugin-probe" \
-        PATH="$sb/bin:$sb/fakebin:$(_path_without_claude)" \
-        TMUX= TMUX_TMPDIR="${SANDBOX_TMUX_DIR:-$sb/.tmux}" TMUX_STUB_LOG="$sb/tmux-args.log" \
-        TMUX_STUB_SHOW_ENV="PATH=$sb/srvbin" TMPDIR="$sb" OP_SECRETS_CACHE="$sb/no-such-cache" \
-        GOLEM_WORKTREE_DIR=.worktrees GOLEM_STATUS_DIR=.worktrees/.status \
-        CLAUDE_PROJECT_SETTINGS=proj-settings.json CLAUDE_GLOBAL_SETTINGS="$sb/global-settings.json" \
-        "$REAL_BASH" "$LAUNCH" launch 7 2>/dev/null)" || true
-    assert_contains "$out" "started golem-7" "control: stdout still reports the start"
-    assert_not_contains "$out" "is not on the PATH" "the warning goes to stderr, never stdout"
+    command rm -f "$sb/tmux-args.log"
+    RUN_LAUNCH_STDERR="$sb/stderr.log" run_launch_auth "$sb" OP_SECRETS_CACHE="$sb/no-such-cache" \
+        GOLEM_SKIP_CLAUDE_PATH_CHECK= TMUX_STUB_SHOW_ENV="PATH=$sb/srvbin" \
+        PATH="$sb/bin:$sb/fakebin:$(_path_without_claude)"
+    assert_contains "$RUN_OUT" "started golem-7" "control: stdout still reports the start"
+    assert_not_contains "$RUN_OUT" "is not on the PATH" "the warning never reaches stdout"
+    assert_contains "$(command cat "$sb/stderr.log" 2>/dev/null)" "is not on the PATH" \
+        "it goes to stderr instead"
 }
 
 # Control for the above: the same server shape with claude on its PATH is silent,
@@ -385,6 +381,8 @@ test_launch_claude_path_no_server_uses_launcher_path() {
     assert_exit 0 "$RUN_RC" "warn-only with no server either (exit 0)"
     assert_contains "$RUN_OUT" "is not on the PATH golem-7 will inherit from the launcher's env" \
         "a launcher PATH without claude is announced, naming the launcher env"
+    assert_contains "$RUN_OUT" "no tmux server answered" "labelled as no server, the exit-1 branch"
+    assert_not_contains "$RUN_OUT" "has no global PATH" "not as a server lacking a global PATH"
     new_sandbox ctl
     _fake_claude_dir "$ctl" fakebin
     run_launch_auth "$ctl" OP_SECRETS_CACHE="$ctl/no-such-cache" GOLEM_SKIP_CLAUDE_PATH_CHECK= \

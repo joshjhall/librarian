@@ -654,8 +654,8 @@ check_session_claude_path() {
     [ "${GOLEM_SKIP_CLAUDE_PATH_CHECK:-}" = "1" ] && return 0
     src="the launcher's env (no tmux server answered, so a new one inherits it)"
     eff="$PATH"
-    # A server whose global env has no PATH answers `-PATH` (unset) or nothing;
-    # either way the session gets no server PATH, so the launcher's decides.
+    # A server whose global env has no PATH answers `-PATH` (unset): the session
+    # gets no server PATH, so the launcher's decides.
     if line="$(bounded_run 5 tmux show-environment -g PATH 2>/dev/null)"; then
         case "$line" in
             PATH=*)
