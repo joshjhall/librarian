@@ -168,7 +168,9 @@ inbox_in() {
 # #1153), TMUX_STUB_ARGV_LOG (new-session's args one per line, so a test can
 # assert word BOUNDARIES a joined $* hides, #1159), TMUX_STUB_SHOW_ENV (the line
 # `show-environment` prints; unset = no server, exit 1, #1176), TMUX_STUB_PROBE_TMP_LOG
-# (TMPDIR listing at show-environment time, #1176), TMUX_STUB_RC (exit with this
+# (TMPDIR listing at show-environment time, #1176), TMUX_STUB_VERSION (what
+# `tmux -V` reports after `tmux `; default 3.5a, #1177), TMUX_STUB_VERSION_RC
+# (`-V` exits with this status, printing nothing), TMUX_STUB_RC (exit with this
 # status instead of 0).
 plant_tmux_stub() {
     local sb="$1"
@@ -185,6 +187,12 @@ if [ "${1:-}" = new-session ] && [ -n "${TMUX_STUB_CMD_LOG:-}" ]; then
     printf '%s' "$last" >"$TMUX_STUB_CMD_LOG"
 fi
 [ "${1:-}" = new-session ] && [ -n "${TMUX_STUB_ARGV_LOG:-}" ] && printf '%s\n' "$@" >"$TMUX_STUB_ARGV_LOG"
+# -V: a supported version unless a test supplies one or a failure (#1177).
+if [ "${1:-}" = -V ]; then
+    [ -n "${TMUX_STUB_VERSION_RC:-}" ] && exit "$TMUX_STUB_VERSION_RC"
+    printf 'tmux %s\n' "${TMUX_STUB_VERSION:-3.5a}"
+    exit 0
+fi
 # show-environment: no server (exit 1) unless a test supplies its line (#1176).
 if [ "${1:-}" = show-environment ]; then
     # Snapshot TMPDIR's token files AT probe time, so a test can pin the order.

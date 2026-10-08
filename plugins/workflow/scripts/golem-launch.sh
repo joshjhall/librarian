@@ -133,7 +133,8 @@
 #   3  preflight: launch rules MISSING in both scopes (actionable, not opaque);
 #      launch: plugin version skew detected (running helper != active install),
 #      or the plugin is not resolvable / reports zero skills (#946), or a
-#      token resolved but its 0600 token file could not be written (#1160)
+#      token resolved but its 0600 token file could not be written (#1160),
+#      or `tmux -V` reports a version below 3.2 (#1177)
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(command dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -551,6 +552,34 @@ check_session_claude_path() {
     return 0
 }
 
+# check_tmux_version — REFUSE (exit 3) when `tmux -V` reports a version below
+# 3.2 (#1177). The floor is set by `new-session -e`, which `launch` always passes
+# (`-e GOLEM_ID=…`) and tmux added in 3.2 — NOT by the argv `sh -c` payload
+# (#1159), which tmux has exec'd directly since 2.0. Measured
+# on tmux built from source: 2.9a and 3.1c both run argv `sh -c` but die on the
+# launch line with `unknown option -- e`, which names neither the version nor a
+# fix; 3.2 runs it. Refusing here turns that into an actionable message, before
+# any token file exists.
+#
+# Fails OPEN on a `tmux -V` that errors or prints no MAJOR.MINOR (an OpenBSD
+# base tmux reports `openbsd-7.4`, a source build `master`): a guard that could
+# not read the version learned nothing, and a tmux that is truly absent still
+# fails loudly at new-session (exit 1). Pure-bash parse: no sed, no GNU regex.
+check_tmux_version() {
+    local line ver major minor
+    line="$(bounded_run 5 tmux -V 2>/dev/null)" || return 0
+    ver="${line#tmux }"
+    ver="${ver#next-}"
+    [[ "$ver" =~ ^([0-9]+)\.([0-9]+) ]] || return 0
+    major="${BASH_REMATCH[1]}"
+    minor="${BASH_REMATCH[2]}"
+    if [ "$major" -gt 3 ] || { [ "$major" -eq 3 ] && [ "$minor" -ge 2 ]; }; then
+        return 0
+    fi
+    command echo "golem-launch: REFUSING golem-$N — \`tmux -V\` reports '$line', but the launch line needs tmux >= 3.2: it passes \`new-session -e\`, which older tmux rejects with \`unknown option -- e\` (#1177). Upgrade tmux to 3.2 or later (e.g. \`brew install tmux\`, a distro backport, or a source build) and retry." >&2
+    exit 3
+}
+
 # resolve_level [flag-level] — echo the effective autonomy level (1-4) with
 # precedence: an explicit --level value > $GOLEM_LEVEL env > the built-in
 # default 4. Validates the result as a single digit 1-4; on an out-of-range or
@@ -683,6 +712,10 @@ case "$cmd" in
         # the worktree refusal, and BEFORE the token file exists so the bounded
         # probe never widens its on-disk window. A later auth refusal (exit 3)
         # has then only run a read-only show-environment, which starts no server.
+        # Refuse a tmux too old for `new-session -e` (#1177) — after the
+        # worktree refusal (a refused launch never touches tmux) and before the
+        # token file exists, so a refusal leaves nothing on disk.
+        check_tmux_version
         check_session_claude_path
         resolve_auth_token
         auth_url="${ANTHROPIC_BASE_URL:-$RESOLVED_BASE_URL}"
@@ -722,6 +755,8 @@ case "$cmd" in
         # command is exec'd directly, so the payload always runs under POSIX sh.
         # The trade-off: that sh sources no shell init, so the golem's PATH is the
         # tmux server's global env only (#1176, check_session_claude_path).
+        # Argv commands work since tmux 2.0; `-e` is what needs 3.2 (#1177,
+        # check_tmux_version).
         # The token lives only inside the 0600 file (never echoed, never in argv) so
         # it can't leak to a pane, log, or ps. $(golem_model_flag) splices ` --model "…"` after each
         # `claude` when GOLEM_MODEL is set, and expands to nothing (byte-identical
