@@ -23,10 +23,11 @@
 #      refuses on it. It must read `stale`, and the link must survive.
 #   6. THE RECOVERY LINE IS SAFE TO PASTE — the printed `rm`/`fuser`/`ls -l`
 #      commands are meant to be copied and run, so the lock path is shell-quoted.
-#      The fixture's checkout path holds a space, a `'`, AND `;` / `$(...)`: the `rm`
-#      command, evaluated with `rm` replaced by an argv recorder, must hand the
-#      recorder exactly ONE argument equal to the real lock path. Unquoted, the
-#      space splits it and the `;` starts a second command.
+#      The fixture's checkout path holds a space, a `'`, AND `;` / `$(...)`.
+#      EVERY printed command, on BOTH recovery lines (stale and dangling
+#      symlink), is evaluated with fuser/ls/rm replaced by argv recorders, and
+#      each must receive exactly ONE path argument equal to the real lock path.
+#      Unquoted, the space splits it and the `;` starts a second command.
 #   7. READ-ONLY — after every verdict, `index` and `index.lock` keep their
 #      inode and mtime and the lock still exists. The script exists to be run
 #      against a checkout under suspicion; it must not become a second writer.
@@ -134,40 +135,76 @@ test_dangling_symlink_lock_is_stale_never_none() {
     assert_equals "yes" "$kept" "the link is left in place"
 }
 
-# rm_args_of_recovery <output> <recorder-file> — evaluate the `rm ...` command
-# from a stale verdict's recovery line with `rm` defined as a function that
-# writes one argument per line to <recorder-file>. Nothing is ever removed.
-rm_args_of_recovery() {
-    local out="$1" rec="$2" line cmd
+# argv_of_recovery <output> <recorder-file> — evaluate EVERY command a stale
+# verdict's recovery line prints (the `fuser -v` / `ls -l` in the parentheses
+# and the trailing `rm`) with each of fuser, ls and rm defined as a function that
+# records `<cmd>|<arg>` per argument. Nothing is ever run or removed.
+argv_of_recovery() {
+    local out="$1" rec="$2" line inner tail
     line="$(printf '%s\n' "$out" | command grep '^recovery=' || true)"
-    cmd="rm ${line##*, then rm }"
+    inner="${line#*(}"
+    inner="${inner%%), then rm *}"
+    tail="rm ${line##*), then rm }"
     : >"$rec"
     (
-        rm() { printf '%s\n' "$@" >>"$rec"; }
-        eval "$cmd"
+        rec_args() {
+            local c="$1"
+            shift
+            for a in "$@"; do printf '%s|%s\n' "$c" "$a" >>"$rec"; done
+        }
+        fuser() { rec_args fuser "$@"; }
+        ls() { rec_args ls "$@"; }
+        rm() { rec_args rm "$@"; }
+        eval "$inner"
+        eval "$tail"
     ) 2>/dev/null || true
 }
 
-test_recovery_rm_line_is_safe_to_paste() {
-    local parent r rec got n
-    parent="$(command mktemp -d "$WORKDIR/hostile.XXXXXX")"
-    r="$parent/it's my repo; touch PWNED \$(echo x)"
-    command mkdir -p "$r/.git"
-    command head -c 512 /dev/urandom >"$r/.git/index"
+# assert_paste_safe <label> <recorder-file> <lock> <inner-cmd> <inner-flag>
+# The recovery line yields exactly: <inner-cmd> <inner-flag> <lock>, rm <lock>.
+assert_paste_safe() {
+    local label="$1" rec="$2" lock="$3" cmd="$4" flag="$5" expected got
+    expected="$(printf '%s|%s\n%s|%s\n%s|%s' "$cmd" "$flag" "$cmd" "$lock" rm "$lock")"
+    got="$(command cat "$rec")"
+    assert_equals "$expected" "$got" "$label: each printed command gets the real lock path as ONE argument"
+}
+
+# hostile_repo <varname> — a checkout path holding a space, a ', a ; and $(...).
+hostile_repo() {
+    local __out="$1" parent dir
+    parent="$(command mktemp -d "$WORKDIR/hostile.XXXXXX")" || return 1
+    dir="$parent/it's my repo; touch PWNED \$(echo x)"
+    command mkdir -p "$dir/.git"
+    command head -c 512 /dev/urandom >"$dir/.git/index"
+    printf -v "$__out" '%s' "$dir"
+}
+
+test_recovery_line_is_safe_to_paste_stale() {
+    local r rec pwned=no
+    hostile_repo r
     command cp -p "$r/.git/index" "$r/.git/index.lock"
     command touch -t "$OLD_STAMP" "$r/.git/index" "$r/.git/index.lock"
-    rec="$WORKDIR/rm-args.$$"
+    rec="$WORKDIR/argv-stale.$$"
     run_check --repo "$r"
     assert_contains "$OUT" "verdict=stale" "the hostile-path lock is reported"
-    (cd "$parent" && rm_args_of_recovery "$OUT" "$rec")
-    n="$(command wc -l <"$rec" | command tr -d ' ')"
-    got="$(command head -n 1 "$rec")"
-    assert_equals "1" "$n" "the pasted rm receives exactly one argument"
-    assert_equals "$r/.git/index.lock" "$got" "that argument is the real lock path"
-    local pwned=no
-    [ -e "$parent/PWNED" ] && pwned=yes
+    (cd "${r%/*}" && argv_of_recovery "$OUT" "$rec")
+    assert_paste_safe "stale" "$rec" "$r/.git/index.lock" fuser -v
+    [ -e "${r%/*}/PWNED" ] && pwned=yes
     assert_equals "no" "$pwned" "the ; in the path did not start a second command"
     assert_file_exists "$r/.git/index.lock" "nothing was removed"
+}
+
+test_recovery_line_is_safe_to_paste_dangling_symlink() {
+    local r rec pwned=no
+    hostile_repo r
+    command ln -s "$r/.git/no-such-target" "$r/.git/index.lock"
+    rec="$WORKDIR/argv-dangling.$$"
+    run_check --repo "$r"
+    assert_contains "$OUT" "verdict=stale" "the hostile-path dangling lock is reported"
+    (cd "${r%/*}" && argv_of_recovery "$OUT" "$rec")
+    assert_paste_safe "dangling symlink" "$rec" "$r/.git/index.lock" ls -l
+    [ -e "${r%/*}/PWNED" ] && pwned=yes
+    assert_equals "no" "$pwned" "the ; in the path did not start a second command"
 }
 
 test_no_lock_is_none() {
@@ -205,7 +242,8 @@ run_test test_same_size_mtime_different_bytes_is_not_identical "stale: same size
 run_test test_old_lock_different_mtime_is_not_identical "stale: same bytes, different mtime → identical=no"
 run_test test_young_lock_is_inflight "inflight: a lock younger than --min-age is left alone"
 run_test test_dangling_symlink_lock_is_stale_never_none "stale: dangling-symlink index.lock → stale, never none"
-run_test test_recovery_rm_line_is_safe_to_paste "recovery: path with space + ' + ; + \$(…) → rm gets one arg, the real path"
+run_test test_recovery_line_is_safe_to_paste_stale "recovery (stale): space + ' + ; + \$(…) path → fuser -v and rm each get one arg, the real path"
+run_test test_recovery_line_is_safe_to_paste_dangling_symlink "recovery (dangling): same hostile path → ls -l and rm each get one arg, the real path"
 run_test test_no_lock_is_none "none: no index.lock"
 run_test test_no_git_dir_is_unavailable_never_none "unavailable: no .git → unavailable + reason, never none"
 run_test test_bad_min_age_fails_loud "usage: non-numeric --min-age → exit 2, no verdict"
