@@ -21,8 +21,8 @@
 # leftover of the probe's own. Measured on 2026-10-07 (after that cleanup was
 # added): 16 anomaly rows forming 9 fault episodes, plus one write to a
 # just-created lock failing ENOENT (now counted as write-lost-file), in 20,000
-# cycles on the bindfs mount; 0 in 12,000 on the container's overlay /tmp. Evidence and the full analysis:
-# docs/verification/bindfs-index-lock-e2e-1193.md.
+# cycles on the bindfs mount; 0 in 12,000 on the container's overlay /tmp.
+# Evidence and the full analysis: docs/verification/bindfs-index-lock-e2e-1193.md.
 #
 # Usage: bin/probe-fuse-rename.sh <existing-dir> [cycles]   (default 2000)
 #
