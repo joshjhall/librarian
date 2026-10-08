@@ -172,8 +172,9 @@ inbox_in() {
 # (`silent` = a server that answers exit 0 with no output; `hang` = a probe that
 # never returns, for the time bound, #1192), TMUX_STUB_VERSION (what
 # `tmux -V` reports after `tmux `; default 3.5a, #1177), TMUX_STUB_VERSION_RC
-# (`-V` exits with this status, printing nothing), TMUX_STUB_RC (exit with this
-# status instead of 0).
+# (`-V` exits with this status, printing nothing), TMUX_STUB_VERSION_MODE
+# (`hang` = a `-V` that never returns, for the time bound, #1201), TMUX_STUB_RC
+# (exit with this status instead of 0).
 plant_tmux_stub() {
     local sb="$1"
     command mkdir -p "$sb/bin"
@@ -191,6 +192,7 @@ fi
 [ "${1:-}" = new-session ] && [ -n "${TMUX_STUB_ARGV_LOG:-}" ] && printf '%s\n' "$@" >"$TMUX_STUB_ARGV_LOG"
 # -V: a supported version unless a test supplies one or a failure (#1177).
 if [ "${1:-}" = -V ]; then
+    [ "${TMUX_STUB_VERSION_MODE:-}" = hang ] && exec sleep 30
     [ -n "${TMUX_STUB_VERSION_RC:-}" ] && exit "$TMUX_STUB_VERSION_RC"
     printf 'tmux %s\n' "${TMUX_STUB_VERSION:-3.5a}"
     exit 0

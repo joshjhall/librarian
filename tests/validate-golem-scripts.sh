@@ -106,6 +106,7 @@ source_fragments "$SCRIPT_DIR/golem-scripts" \
     10-launch.sh \
     12-launch-auth.sh \
     13-launch-claude-path.sh \
+    14-launch-tmux-version.sh \
     20-worktree-new.sh \
     25-worktree-new-cargo.sh \
     26-worktree-uv-venv.sh \
@@ -204,6 +205,7 @@ run_fragment_test test_launch_tmux_version_below_floor_refuses "golem-launch: tm
 run_fragment_test test_launch_tmux_version_major_below_floor_refuses "golem-launch: tmux 2.x refuses whatever its minor (#1177)"
 run_fragment_test test_launch_tmux_version_at_floor_dispatches "golem-launch: tmux 3.2, 3.10, next-3.6 and 4.0 dispatch (#1177)"
 run_fragment_test test_launch_tmux_version_unreadable_fails_open "golem-launch: an unreadable tmux -V fails open (#1177)"
+run_fragment_test test_launch_tmux_version_hang_is_bounded "golem-launch: a hanging tmux -V is bounded and fails open (#1201)"
 run_fragment_test test_launch_auth_token_quoting_round_trips "golem-launch: a metachar token round-trips through the token file (#1153)"
 run_fragment_test test_launch_auth_inherited_token_not_in_tmux_env "golem-launch: an inherited token never reaches tmux's env or argv (#1153)"
 run_fragment_test test_launch_auth_relative_tmpdir_path_is_absolute "golem-launch: a relative TMPDIR still yields an absolute token-file path (#1153)"
