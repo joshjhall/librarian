@@ -3,7 +3,7 @@
 # leak (#1125) tests, split out of 10-launch.sh (which outgrew its size budget).
 #
 # Sourced by tests/validate-golem-scripts.sh, which defines the path consts
-# (LAUNCH / ...) and sources tests/lib/golem-sandbox.sh (new_sandbox /
+# (LAUNCH / AUTH / ...) and sources tests/lib/golem-sandbox.sh (new_sandbox /
 # run_launch_auth / plant_tmux_stub) BEFORE this file. This fragment only
 # DEFINES test functions; the entry point dispatches them.
 
@@ -177,6 +177,19 @@ test_launch_auth_base_url_quoting_and_no_token_boundary() {
     assert_equals "" "$(command ls "$sb"/golem-auth.* 2>/dev/null)" "no token → no auth file written"
 }
 
+# The auth helpers live in golem-auth.sh, which the launcher sources (#1162).
+# Every behavioural case above drives them THROUGH the launcher, so they would
+# still pass if a copy were re-inlined into golem-launch.sh and silently shadowed
+# the sourced one — two copies free to drift. Pin the single home instead.
+test_launch_sources_golem_auth() {
+    local fn
+    assert_file_contains "$LAUNCH" '^\. "\$SCRIPT_DIR/golem-auth\.sh"$' "golem-launch.sh sources golem-auth.sh"
+    for fn in _bounded_op_read resolve_auth_token _sh_quote write_auth_file; do
+        assert_not_empty "$(command grep -n "^$fn() {" "$AUTH")" "golem-auth.sh defines $fn (control)"
+        assert_equals "" "$(command grep -n "^$fn() {" "$LAUNCH")" "golem-launch.sh does not redefine $fn"
+    done
+}
+
 # _sh_quote itself, sliced out and driven directly over the shapes that break a
 # naive quoter: leading/trailing/adjacent quotes, and an empty value. Each must
 # round-trip through `sh` byte-for-byte — on the bash running this suite only.
@@ -186,8 +199,8 @@ test_launch_auth_base_url_quoting_and_no_token_boundary() {
 # structural assertion pins the replacement-free shape instead.
 test_launch_sh_quote_round_trips_edge_shapes() {
     local fn v q back
-    fn="$(command sed -n '/^_sh_quote() {/,/^}/p' "$LAUNCH")"
-    assert_not_empty "$fn" "_sh_quote could be sliced out of golem-launch.sh (guards a vacuous pass)"
+    fn="$(command sed -n '/^_sh_quote() {/,/^}/p' "$AUTH")"
+    assert_not_empty "$fn" "_sh_quote could be sliced out of golem-auth.sh (guards a vacuous pass)"
     # Comment lines precede the function, so the slice holds only its body.
     assert_not_contains "$fn" '//' "_sh_quote uses no \${v//…/…} replacement (bash-version-sensitive)"
     eval "$fn"
