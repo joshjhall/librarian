@@ -434,7 +434,7 @@ if [ -z "$STATUS_DIR" ]; then
         command echo "tracks-runbook: not inside a git repository (and no --status-dir given)" >&2
         exit 3
     fi
-    STATUS_DIR="$root/$GOLEM_STATUS_DIR"
+    STATUS_DIR="$(golem_join_status_dir "$root")"
 fi
 TRACKS="$STATUS_DIR/tracks.json"
 

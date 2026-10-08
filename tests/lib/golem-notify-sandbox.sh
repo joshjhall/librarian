@@ -89,10 +89,12 @@ run_notify() {
 # child so the hook resolves its feed under <sandbox>/<override>/feed.jsonl
 # instead of the hardcoded .worktrees/.status. Reads the feed back at the
 # OVERRIDE path (not the fixed one) and captures the last line in NOTIFY_LINE.
-# GIT_* scrubbed, HOME + GOLEM_ID pinned, mirroring run_notify (#405).
+# GIT_* scrubbed, HOME + GOLEM_ID pinned, mirroring run_notify (#405). An
+# ABSOLUTE override is read back where it points, not under <sandbox> (#1188).
 run_notify_status_dir() {
     local dir="$1" payload="$2" gid="$3" override="$4"
     local feed="$dir/$override/feed.jsonl"
+    case "$override" in /*) feed="$override/feed.jsonl" ;; esac
     command rm -f "$feed"
     NOTIFY_RC=0
     (

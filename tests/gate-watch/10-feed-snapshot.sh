@@ -28,6 +28,24 @@ test_legacy_line_does_not_drop_golems() {
     assert_contains "$SNAP_OUT" "golem-2" "Valid dated gate golem still appears"
 }
 
+# An ABSOLUTE GOLEM_STATUS_DIR resolves to itself (#1188). The feed exists ONLY
+# under the absolute dir, so a resolver that hand-joins `$root/$GOLEM_STATUS_DIR`
+# reads <root>/<abs>/feed.jsonl — a path that exists nowhere — and the gated
+# golem silently drops out of the snapshot.
+test_absolute_status_dir_resolves() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (feed_snapshot no-ops without jq)"
+        return 0
+    fi
+
+    GW_ABS_STATUS=1 _run_once_snapshot 999999999999 \
+        '{"golem":"golem-7","event":"gate","message":"push gate","ts":"2026-06-27T10:00:00Z"}'
+
+    assert_equals "0" "$SNAP_RC" "Snapshot exits 0 with an absolute status dir"
+    assert_contains "$SNAP_OUT" "golem-7" \
+        "the gate written under the absolute GOLEM_STATUS_DIR surfaces"
+}
+
 # Symmetry: the positive TTL branch still works. A gate whose `.ts` IS present
 # but is far older than the TTL window must age out (be excluded), while a fresh
 # gate in the same feed survives — guarding against a refactor that drops the

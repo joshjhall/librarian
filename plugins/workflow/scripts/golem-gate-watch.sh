@@ -299,7 +299,7 @@ resolve_status_dir() {
     local root
     root="$(repo_root 2>/dev/null || true)"
     [ -z "$root" ] && return 1
-    command echo "$root/$GOLEM_STATUS_DIR"
+    golem_join_status_dir "$root"
 }
 
 # ---------------------------------------------------------------------------

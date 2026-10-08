@@ -809,3 +809,62 @@ test_config_golem_join_status_dir_single_source() {
             "${f##*/} resolves the status dir through config.sh's golem_join_status_dir"
     done
 }
+
+# --- No hand-built status-dir join anywhere in plugins/ (#1188) ----------------
+
+# _status_dir_hand_joins <dir> — print every `<path>:<line>:` in <dir>'s *.sh /
+# *.md / *.js / *.mjs that appends GOLEM_STATUS_DIR after a `/` (`$root/$GOLEM_STATUS_DIR`,
+# `/${GOLEM_STATUS_DIR}`) without a `lint-allow-status-dir-join:` marker. Such a
+# spelling names `<root>//abs` when the status dir is ABSOLUTE — a path that
+# exists nowhere, read as an empty registry/feed (#949). The scanner is a
+# function so the vacuity fixture below runs the SAME code as the real scan.
+#
+# SCOPE: it matches the slash-prefixed spelling only. An aliased join
+# (`sd=$GOLEM_STATUS_DIR; "$root/$sd"`) or a split literal evades it. Measured
+# when written: every non-slash GOLEM_STATUS_DIR use in plugins/ sits inside the
+# join itself or golem-notify's twin, so the narrow pattern loses no real site —
+# a broader one would have to tell those two apart from a new alias.
+_status_dir_hand_joins() {
+    command grep -rnE --include='*.sh' --include='*.md' --include='*.js' --include='*.mjs' \
+        '/\$\{?GOLEM_STATUS_DIR' "$1" 2>/dev/null |
+        command grep -v 'lint-allow-status-dir-join:' || true
+}
+
+# Every status-dir consumer goes through config.sh's golem_join_status_dir; the
+# only spellings left are the join itself and golem-notify.sh's documented inline
+# twin, each carrying the marker. Three guards keep this from passing vacuously:
+# the corpus must be non-empty, the marked LINES must be exactly those two —
+# one per file, so a second marked hand-join inside either file fails too, not
+# just a marker in a third file — and the scanner must fire on a planted
+# violation and stay silent on a marked one.
+test_no_hand_built_status_dir_join() {
+    local plugins="$REPO_ROOT/plugins" hits n marked tmp
+    n="$(command find "$plugins" -name '*.sh' -type f | command wc -l)"
+    n="${n//[[:space:]]/}"
+    assert_true "[ '$n' -gt 50 ]" "the scan covers plugins/'s shell corpus (found $n files)"
+
+    hits="$(_status_dir_hand_joins "$plugins")"
+    assert_output_empty "$hits" \
+        "no hand-built \$root/\$GOLEM_STATUS_DIR join in plugins/ — use golem_join_status_dir (#1188)"
+
+    # One `<path>` per marked LINE (grep -n, then the line number stripped), so a
+    # file appears once per marker it carries.
+    marked="$(command grep -rnE --include='*.sh' --include='*.md' --include='*.js' --include='*.mjs' \
+        'lint-allow-status-dir-join:' "$plugins" 2>/dev/null |
+        command sed -e "s|^$plugins/||" -e 's|:[0-9][0-9]*:.*||' |
+        LC_ALL=C command sort | command tr '\n' ' ' || true)"
+    assert_equals "workflow/hooks/golem-notify.sh workflow/scripts/config.sh " "$marked" \
+        "exactly one marked line each in the join itself and golem-notify's inline twin, nowhere else"
+
+    tmp="$(command mktemp -d)"
+    command printf '%s\n' 'd="$root/$GOLEM_STATUS_DIR"' >"$tmp/bad.sh"
+    command printf '%s\n' 'd="$root/${GOLEM_STATUS_DIR}/x"' >"$tmp/braced.md"
+    command printf '%s\n' 'd="$root/$GOLEM_STATUS_DIR" # lint-allow-status-dir-join: fixture' >"$tmp/ok.sh"
+    command printf '%s\n' 'const d = `${root}/${GOLEM_STATUS_DIR}`' >"$tmp/harness.mjs"
+    hits="$(_status_dir_hand_joins "$tmp")"
+    command rm -rf "$tmp"
+    assert_contains "$hits" "bad.sh:1:" "the scanner fires on a planted \$root/\$GOLEM_STATUS_DIR"
+    assert_contains "$hits" "braced.md:1:" "the scanner fires on the braced spelling in a .md recipe"
+    assert_contains "$hits" "harness.mjs:1:" "the scanner covers .js/.mjs harnesses too"
+    assert_not_contains "$hits" "ok.sh" "a marked line is exempt"
+}

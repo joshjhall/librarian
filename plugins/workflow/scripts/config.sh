@@ -404,9 +404,13 @@ golem_repo_key() {
 }
 
 # golem_join_status_dir <root> — join GOLEM_STATUS_DIR onto a main-checkout root.
-# The ONE copy (#1179): golem-work.sh's registry resolution and worktree-rm.sh's
-# status-file teardown both call it, so the writer and the remover cannot disagree
-# about where a golem's status files live.
+# The ONE copy (#1179): every script that sources config.sh and needs the status
+# dir calls it (#1188) — golem-work.sh's registry, worktree-rm.sh's teardown, and
+# the readers golem-status / gate-watch / inbox / attach / tracks-runbook /
+# handoff-relaunch — so the writers and readers cannot disagree about where a
+# golem's status files live. hooks/golem-notify.sh is the one inline twin (it must
+# not source this file). tests/golem-scripts/30-config-repo-root.sh fails on any
+# new hand-built join lacking a `lint-allow-status-dir-join` marker.
 #
 # THE ONE PLACE THE TWO KNOBS MEET, and therefore the one place worth reading
 # carefully (issue #949). GOLEM_STATUS_DIR is documented as repo-root-relative
@@ -433,7 +437,7 @@ golem_repo_key() {
 golem_join_status_dir() {
     case "$GOLEM_STATUS_DIR" in
         /*) command echo "$GOLEM_STATUS_DIR" ;;
-        *) command echo "$1/$GOLEM_STATUS_DIR" ;;
+        *) command echo "$1/$GOLEM_STATUS_DIR" ;; # lint-allow-status-dir-join: the join itself
     esac
 }
 
