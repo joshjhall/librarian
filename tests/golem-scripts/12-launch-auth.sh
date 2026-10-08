@@ -720,6 +720,16 @@ test_launch_auth_no_source_no_injection() {
     assert_contains "$log" "new-session -d -s golem-7" "control: the tmux argv was logged"
     assert_not_contains "$log" "golem-auth." "no token file is handed to tmux when none resolves"
     assert_not_contains "$RUN_OUT" "WARNING" "no warning when there is no cache marker"
+
+    # A SET-but-empty launcher URL is no URL (#1170): the `:-` test must not read
+    # it as one, or a tokenless launch would write an empty-URL file.
+    new_sandbox sb
+    run_launch_auth "$sb" OP_SECRETS_CACHE="$sb/no-such-cache" ANTHROPIC_BASE_URL=
+    assert_exit 0 "$RUN_RC" "an empty launcher URL with no token dispatches (exit 0)"
+    log="$(command cat "$sb/tmux-args.log" 2>/dev/null || true)"
+    assert_contains "$log" "new-session -d -s golem-7" "control: the tmux argv was logged"
+    assert_not_contains "$log" "golem-auth." "an empty launcher URL writes no file"
+    assert_not_contains "$RUN_OUT" "WARNING" "an empty launcher URL warns about nothing"
 }
 
 # `op read` hangs → the time-bounded wrapper kills it and dispatch still
