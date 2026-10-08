@@ -57,6 +57,28 @@ while [ $# -gt 0 ]; do
 done
 case "$min_age" in '' | *[!0-9]*) usage ;; esac
 
+# shq <string> — single-quote a value for pasting into any POSIX shell: wrap it
+# in '...' and spell each embedded ' as '\''. Every path in a printed command
+# goes through this, because the recovery line is meant to be copied and run,
+# and a checkout path may hold spaces or `;`, `$(...)`, backticks.
+shq() {
+    local s="$1" out="" head
+    while :; do
+        case "$s" in
+            *\'*)
+                head="${s%%\'*}"
+                out="$out$head'\\''"
+                s="${s#*\'}"
+                ;;
+            *)
+                out="$out$s"
+                break
+                ;;
+        esac
+    done
+    printf "'%s'" "$out"
+}
+
 unavailable() {
     printf 'verdict=unavailable\nreason=%s\n' "$1"
     exit 0
@@ -79,7 +101,7 @@ if [ -L "$lock" ] && [ ! -e "$lock" ]; then
     # create still refuses on the entry. Reporting none here would be an
     # all-clear while main is blocked.
     printf 'verdict=stale\nidentical=no\nage=unknown\nlock=%s\n' "$lock"
-    printf 'recovery=index.lock is a dangling symlink; inspect it (ls -l %s), then rm %s\n' "$lock" "$lock"
+    printf 'recovery=index.lock is a dangling symlink; inspect it (ls -l %s), then rm %s\n' "$(shq "$lock")" "$(shq "$lock")"
     exit 0
 fi
 [ -e "$lock" ] || {
@@ -111,4 +133,4 @@ if [ -e "$index" ]; then
 fi
 
 printf 'verdict=stale\nidentical=%s\nage=%s\nlock=%s\n' "$identical" "$age" "$lock"
-printf 'recovery=confirm no git process holds it (fuser -v %s), then rm %s\n' "$lock" "$lock"
+printf 'recovery=confirm no git process holds it (fuser -v %s), then rm %s\n' "$(shq "$lock")" "$(shq "$lock")"

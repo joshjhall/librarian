@@ -21,7 +21,13 @@
 #   5. A DANGLING SYMLINK IS NOT ABSENT — `[ -e ]` follows a symlink, so a
 #      dangling `index.lock` would read `none` while git's O_EXCL create still
 #      refuses on it. It must read `stale`, and the link must survive.
-#   6. READ-ONLY — after every verdict, `index` and `index.lock` keep their
+#   6. THE RECOVERY LINE IS SAFE TO PASTE — the printed `rm`/`fuser`/`ls -l`
+#      commands are meant to be copied and run, so the lock path is shell-quoted.
+#      The fixture's checkout path holds a space, a `'`, AND `;` / `$(...)`: the `rm`
+#      command, evaluated with `rm` replaced by an argv recorder, must hand the
+#      recorder exactly ONE argument equal to the real lock path. Unquoted, the
+#      space splits it and the `;` starts a second command.
+#   7. READ-ONLY — after every verdict, `index` and `index.lock` keep their
 #      inode and mtime and the lock still exists. The script exists to be run
 #      against a checkout under suspicion; it must not become a second writer.
 #
@@ -128,6 +134,42 @@ test_dangling_symlink_lock_is_stale_never_none() {
     assert_equals "yes" "$kept" "the link is left in place"
 }
 
+# rm_args_of_recovery <output> <recorder-file> — evaluate the `rm ...` command
+# from a stale verdict's recovery line with `rm` defined as a function that
+# writes one argument per line to <recorder-file>. Nothing is ever removed.
+rm_args_of_recovery() {
+    local out="$1" rec="$2" line cmd
+    line="$(printf '%s\n' "$out" | command grep '^recovery=' || true)"
+    cmd="rm ${line##*, then rm }"
+    : >"$rec"
+    (
+        rm() { printf '%s\n' "$@" >>"$rec"; }
+        eval "$cmd"
+    ) 2>/dev/null || true
+}
+
+test_recovery_rm_line_is_safe_to_paste() {
+    local parent r rec got n
+    parent="$(command mktemp -d "$WORKDIR/hostile.XXXXXX")"
+    r="$parent/it's my repo; touch PWNED \$(echo x)"
+    command mkdir -p "$r/.git"
+    command head -c 512 /dev/urandom >"$r/.git/index"
+    command cp -p "$r/.git/index" "$r/.git/index.lock"
+    command touch -t "$OLD_STAMP" "$r/.git/index" "$r/.git/index.lock"
+    rec="$WORKDIR/rm-args.$$"
+    run_check --repo "$r"
+    assert_contains "$OUT" "verdict=stale" "the hostile-path lock is reported"
+    (cd "$parent" && rm_args_of_recovery "$OUT" "$rec")
+    n="$(command wc -l <"$rec" | command tr -d ' ')"
+    got="$(command head -n 1 "$rec")"
+    assert_equals "1" "$n" "the pasted rm receives exactly one argument"
+    assert_equals "$r/.git/index.lock" "$got" "that argument is the real lock path"
+    local pwned=no
+    [ -e "$parent/PWNED" ] && pwned=yes
+    assert_equals "no" "$pwned" "the ; in the path did not start a second command"
+    assert_file_exists "$r/.git/index.lock" "nothing was removed"
+}
+
 test_no_lock_is_none() {
     local r
     new_repo r
@@ -163,6 +205,7 @@ run_test test_same_size_mtime_different_bytes_is_not_identical "stale: same size
 run_test test_old_lock_different_mtime_is_not_identical "stale: same bytes, different mtime → identical=no"
 run_test test_young_lock_is_inflight "inflight: a lock younger than --min-age is left alone"
 run_test test_dangling_symlink_lock_is_stale_never_none "stale: dangling-symlink index.lock → stale, never none"
+run_test test_recovery_rm_line_is_safe_to_paste "recovery: path with space + ' + ; + \$(…) → rm gets one arg, the real path"
 run_test test_no_lock_is_none "none: no index.lock"
 run_test test_no_git_dir_is_unavailable_never_none "unavailable: no .git → unavailable + reason, never none"
 run_test test_bad_min_age_fails_loud "usage: non-numeric --min-age → exit 2, no verdict"
