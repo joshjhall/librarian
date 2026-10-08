@@ -776,6 +776,17 @@ test_launch_auth_cache_marker_no_token_warns() {
     assert_contains "$RUN_OUT" "no ANTHROPIC_AUTH_TOKEN resolvable" "the token warning survives a URL-only file"
     assert_contains "$(command cat "$sb/tmux-args.log" 2>/dev/null)" "golem-auth." \
         "the URL-only file is still sourced"
+
+    # A cache URL with NO cache token is dropped by resolve_auth_token, so only a
+    # LAUNCHER URL can ride a tokenless file (#1170): no launcher URL → no file.
+    new_sandbox sb
+    command printf 'export ANTHROPIC_BASE_URL=https://cache.example\n' >"$sb/op-cache"
+    run_launch_auth "$sb" OP_SECRETS_CACHE="$sb/op-cache"
+    assert_exit 0 "$RUN_RC" "a URL-only cache still dispatches (exit 0)"
+    assert_contains "$RUN_OUT" "no ANTHROPIC_AUTH_TOKEN resolvable" "control: the cache was read and yielded no token"
+    log="$(command cat "$sb/tmux-args.log" 2>/dev/null || true)"
+    assert_contains "$log" "new-session -d -s golem-7" "control: the tmux argv was logged"
+    assert_not_contains "$log" "golem-auth." "a tokenless cache's URL never produces a file"
 }
 
 # --- golem-launch.sh config-default env leak (#1125) -----------------------
