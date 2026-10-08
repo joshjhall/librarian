@@ -422,6 +422,23 @@ test_launch_claude_path_never_probes_on_refusal_or_print() {
         "print never probes tmux"
 }
 
+# The probe runs BEFORE the 0600 token file is written, so its bounded window
+# never extends the token's time on disk. The control proves the file IS written
+# later in the same launch, so an empty snapshot is not just "no token".
+test_launch_claude_path_probe_precedes_token_file() {
+    local sb
+    new_sandbox sb
+    run_launch_auth "$sb" OP_SECRETS_CACHE="$sb/no-such-cache" GOLEM_SKIP_CLAUDE_PATH_CHECK= \
+        TMUX_STUB_SHOW_ENV="PATH=$sb/srvbin" TMUX_STUB_PROBE_TMP_LOG="$sb/probe-tmp.log" \
+        ANTHROPIC_AUTH_TOKEN=sk-order-1176 # gitleaks:allow (fake fixture token)
+    assert_exit 0 "$RUN_RC" "launch with a token dispatches (exit 0)"
+    assert_true "[ -f '$sb/probe-tmp.log' ]" "control: the probe ran and snapshotted TMPDIR"
+    assert_contains "$(command cat "$sb/tmux-args.log" 2>/dev/null)" "golem-auth." \
+        "control: the token file was written later in this launch"
+    assert_not_contains "$(command cat "$sb/probe-tmp.log" 2>/dev/null)" "golem-auth." \
+        "no token file exists yet when the tmux probe runs"
+}
+
 # GOLEM_SKIP_CLAUDE_PATH_CHECK=1 silences a case that would otherwise warn.
 test_launch_claude_path_escape_hatch() {
     local sb

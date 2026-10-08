@@ -167,7 +167,8 @@ inbox_in() {
 # new-session's LAST arg — the session command — verbatim, so a test can run it,
 # #1153), TMUX_STUB_ARGV_LOG (new-session's args one per line, so a test can
 # assert word BOUNDARIES a joined $* hides, #1159), TMUX_STUB_SHOW_ENV (the line
-# `show-environment` prints; unset = no server, exit 1, #1176), TMUX_STUB_RC (exit with this
+# `show-environment` prints; unset = no server, exit 1, #1176), TMUX_STUB_PROBE_TMP_LOG
+# (TMPDIR listing at show-environment time, #1176), TMUX_STUB_RC (exit with this
 # status instead of 0).
 plant_tmux_stub() {
     local sb="$1"
@@ -186,6 +187,8 @@ fi
 [ "${1:-}" = new-session ] && [ -n "${TMUX_STUB_ARGV_LOG:-}" ] && printf '%s\n' "$@" >"$TMUX_STUB_ARGV_LOG"
 # show-environment: no server (exit 1) unless a test supplies its line (#1176).
 if [ "${1:-}" = show-environment ]; then
+    # Snapshot TMPDIR's token files AT probe time, so a test can pin the order.
+    [ -n "${TMUX_STUB_PROBE_TMP_LOG:-}" ] && ls "${TMPDIR:-/tmp}" >"$TMUX_STUB_PROBE_TMP_LOG" 2>/dev/null
     [ -n "${TMUX_STUB_SHOW_ENV:-}" ] || exit 1
     printf '%s\n' "$TMUX_STUB_SHOW_ENV"
     exit 0

@@ -192,6 +192,7 @@ run_fragment_test test_launch_claude_path_server_env_present_silent "golem-launc
 run_fragment_test test_launch_claude_path_no_server_uses_launcher_path "golem-launch: with no server the launcher PATH decides the claude warning (#1176)"
 run_fragment_test test_launch_claude_path_server_without_path_uses_launcher "golem-launch: a server with no global PATH defers to the launcher PATH, labelled so (#1176)"
 run_fragment_test test_launch_claude_path_never_probes_on_refusal_or_print "golem-launch: a refused launch and print never probe tmux for PATH (#1176)"
+run_fragment_test test_launch_claude_path_probe_precedes_token_file "golem-launch: the PATH probe runs before the token file is written (#1176)"
 run_fragment_test test_launch_claude_path_escape_hatch "golem-launch: GOLEM_SKIP_CLAUDE_PATH_CHECK=1 silences the claude-PATH warning (#1176)"
 run_fragment_test test_launch_auth_token_quoting_round_trips "golem-launch: a metachar token round-trips through the token file (#1153)"
 run_fragment_test test_launch_auth_inherited_token_not_in_tmux_env "golem-launch: an inherited token never reaches tmux's env or argv (#1153)"
