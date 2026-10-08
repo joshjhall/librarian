@@ -121,7 +121,8 @@ EOF
 
 # run_relaunch <sandbox> <args...> — invoke the script inside the sandbox with
 # the fake projects base and the stub tmux on PATH. GOLEM_ID is scrubbed so a
-# suite running inside a live golem cannot leak its identity in.
+# suite running inside a live golem cannot leak its identity in. HR_STATUS_DIR
+# overrides the pinned relative status dir (the absolute-dir case, #1188).
 run_relaunch() {
     local sb="$1"
     shift
@@ -132,7 +133,7 @@ run_relaunch() {
             PATH="$sb/bin:$PATH" \
             CLAUDE_PROJECTS_DIR="$sb/projects" \
             GOLEM_WORKTREE_DIR=.worktrees \
-            GOLEM_STATUS_DIR=.worktrees/.status \
+            GOLEM_STATUS_DIR="${HR_STATUS_DIR:-.worktrees/.status}" \
             "$REAL_BASH" "$HANDOFF_RELAUNCH" "$@" 2>&1)" || RUN_RC=$?
 }
 
@@ -267,6 +268,27 @@ test_relaunch_is_idempotent_per_handoff() {
     assert_exit 1 "$RUN_RC" "a second relaunch for the same handoff is refused"
     assert_contains "$RUN_OUT" "already relaunched" "and says why"
     assert_true "[ ! -s \"$sb/send-keys.log\" ]" "nothing was sent the second time"
+}
+
+# An ABSOLUTE GOLEM_STATUS_DIR (#1188): the stamp is written there, never under
+# <root>/<abs>, AND detect() reads it back from there — so the second relaunch is
+# refused. A hand-built join would write <root>/<abs>/... and, reading the same
+# wrong path, still pass idempotence; the location assertions are what pin it.
+test_relaunch_stamps_an_absolute_status_dir() {
+    _hr_need_jq || return 0
+    local sb abs
+    new_sandbox sb
+    abs="$sb/abs-status"
+    _hr_golem "$sb" 42 "$_HR_IDLE_HANDOFF" "$(_hr_state_open 42)"
+    plant_relaunch_tmux "$sb"
+    HR_STATUS_DIR="$abs" run_relaunch "$sb" relaunch 42
+    assert_exit 0 "$RUN_RC" "a due golem relaunches with an absolute status dir"
+    assert_true "[ -f \"$abs/handoff-relaunched-golem-42\" ]" "the stamp lands in the absolute status dir"
+    assert_true "[ ! -e \"$sb/$abs\" ]" "no <root>/<abs> path was built"
+    command rm -f "$sb/send-keys.log"
+    HR_STATUS_DIR="$abs" run_relaunch "$sb" relaunch 42
+    assert_exit 1 "$RUN_RC" "detect() reads the absolute-dir stamp back and refuses a repeat"
+    assert_contains "$RUN_OUT" "already relaunched" "and says why"
 }
 
 # A not-due golem is never typed into.

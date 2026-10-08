@@ -534,6 +534,7 @@ run_fragment_test test_relaunch_unknown_when_no_worktree "golem-handoff-relaunch
 run_fragment_test test_relaunch_rejects_bad_args "golem-handoff-relaunch: bad args are usage errors (#1057)"
 run_fragment_test test_relaunch_sends_clear_then_resume "golem-handoff-relaunch: /clear then the resume, as separate confirmed sends (#1057)"
 run_fragment_test test_relaunch_is_idempotent_per_handoff "golem-handoff-relaunch: never re-sent for the same handoff (#1057)"
+run_fragment_test test_relaunch_stamps_an_absolute_status_dir "handoff-relaunch: an absolute GOLEM_STATUS_DIR is stamped and read back where it points (#1188)"
 run_fragment_test test_relaunch_sends_nothing_when_not_due "golem-handoff-relaunch: a not-due golem is never typed into (#1057)"
 run_fragment_test test_relaunch_due_on_real_handoff_tail_ending_in_write "golem-handoff-relaunch: a real handoff tail ending in Write is due via the marker (#1057)"
 run_fragment_test test_relaunch_unknown_on_write_tail_without_marker "golem-handoff-relaunch: the Write tail without a marker is never due (#1057)"
