@@ -49,7 +49,9 @@
 #                    wedge the launch, on any host); the token is only
 #                    injected when actually resolved (never an empty value that
 #                    could override what the golem's own shell init would supply)
-#                    and is NEVER echoed to a pane or log.
+#                    and is NEVER echoed to a pane or log. A launcher base URL
+#                    with no token still gets a URL-only file (#1170), whose
+#                    write failure warns rather than refuses.
 #
 # Required launch permission rules (all three — dispatch, list, teardown):
 #   Bash(tmux new-session:*)   Bash(tmux ls:*)   Bash(tmux kill-session:*)
@@ -658,7 +660,15 @@ case "$cmd" in
         # actually resolved — an empty value is NEVER passed (it could override a
         # token the golem's own shell init would otherwise supply on a host).
         # ANTHROPIC_BASE_URL rides along in the same file whenever one is known,
-        # the launcher's winning over the cache's (#244, #1163).
+        # the launcher's winning over the cache's (#244, #1163) — and a launcher
+        # URL with NO token still gets a URL-only file (#1170), else it would
+        # ride the server env exactly as #1163 fixed for the token path. That
+        # file deliberately decouples the two: the golem pairs the launcher's
+        # URL with whatever token its session env holds (OAuth, shell init, a
+        # server-env token from outside this launcher, which never freezes one
+        # since #1153). An operator-set URL is the explicit intent; a URL and
+        # token frozen together by some earlier launch is the stale state #1163
+        # exists to beat, not a pairing worth preserving.
         #
         # Never argv: `tmux -e VAR=…` lands in the server's argv for its whole
         # lifetime, readable by every local user via ps. Never inherited env
@@ -667,32 +677,37 @@ case "$cmd" in
         # client env anyway. Only the file's PATH reaches argv; the session's
         # `sh` sources it and deletes it before `claude` starts.
         # A token that resolved but cannot be written REFUSES the launch (exit
-        # 3, #1160); only an unresolved token still warns and dispatches.
+        # 3, #1160); a URL-only file that cannot be written only warns, since
+        # that golem merely falls back to the server env, as before #1170.
         # Predict a session that cannot find `claude` (#1176), warn-only. After
         # the worktree refusal, and BEFORE the token file exists so the bounded
         # probe never widens its on-disk window. A later auth refusal (exit 3)
         # has then only run a read-only show-environment, which starts no server.
         check_session_claude_path
         resolve_auth_token
+        auth_url="${ANTHROPIC_BASE_URL:-$RESOLVED_BASE_URL}"
         env_args=(-e "GOLEM_ID=golem-$N")
         auth_file=""
         auth_prefix=""
-        if [ -n "$RESOLVED_AUTH_TOKEN" ]; then
+        if [ -n "$RESOLVED_AUTH_TOKEN" ] || [ -n "$auth_url" ]; then
             if auth_file="$(write_auth_file)"; then
                 # Guard the `.`: a POSIX sh (dash, bash --posix) EXITS the whole
                 # command when `.` cannot read its file, so a token file gone
                 # before the session starts would skip both `claude` calls.
                 # Guarded, a missing file degrades to a tokenless start.
                 auth_prefix="[ -r $(_sh_quote "$auth_file") ] && . $(_sh_quote "$auth_file"); rm -f $(_sh_quote "$auth_file"); "
-            else
+            elif [ -n "$RESOLVED_AUTH_TOKEN" ]; then
                 # Refuse rather than dispatch a golem KNOWN to lack auth (#1160):
                 # it would die at its first network call, the #244 failure. Before
                 # tmux runs, so no session starts and no server env is frozen. The
                 # token is never echoed, and never falls back to argv.
                 command echo "golem-launch: REFUSING golem-$N — an ANTHROPIC_AUTH_TOKEN resolved but no private 0600 token file could be written under ${TMPDIR:-/tmp}; a golem started now would have no auth (#244). Point TMPDIR at a writable directory and retry." >&2
                 exit 3
+            else
+                command echo "golem-launch: WARNING no private 0600 file could be written under ${TMPDIR:-/tmp} for golem-$N's ANTHROPIC_BASE_URL; it will use whatever base URL the tmux server env carries (#1170). Dispatching anyway." >&2
             fi
-        elif [ -e "${OP_SECRETS_CACHE:-/dev/shm/op-secrets-cache}" ]; then
+        fi
+        if [ -z "$RESOLVED_AUTH_TOKEN" ] && [ -e "${OP_SECRETS_CACHE:-/dev/shm/op-secrets-cache}" ]; then
             # A cache marker exists but nothing resolved — this env looks like it
             # NEEDS a token, so warn (don't fail) rather than silently dispatch a
             # golem that will die at ship time. Bare host / no cache falls through
