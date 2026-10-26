@@ -250,6 +250,12 @@ test_fixture_ini_block_outside_section() {
     command printf '# S\n\n## Tools\n\n```ini\nshell=bash\n```\n\n## Config files\n\nnone\n' >"$slice"
     assert_output_empty "$(slice_ini_settings "$slice")" \
         "An ini block under another heading is not read as the Config files block"
+    command printf '# S\n\n## Config files\n\nnone\n\n## Hook entries\n\n```ini\nshell=bash\n```\n' >"$slice"
+    assert_output_empty "$(slice_ini_settings "$slice")" \
+        "The Config files section ends at the next heading; a later section's ini block is not read"
+    command printf '# S\n\n## Config files\n\n```ini\nshell=bash\n```\n\n```ini\nshell=sh\n```\n' >"$slice"
+    assert_equals "shell=bash" "$(slice_ini_settings "$slice")" \
+        "Only the FIRST ini fence under Config files is read"
 }
 
 test_fixture_ini_block_unterminated() {
