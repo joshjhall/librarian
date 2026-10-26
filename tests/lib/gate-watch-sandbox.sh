@@ -803,7 +803,9 @@ PANES_RC=""
 # Activity knobs (#1203): the activity gate is OFF unless the caller exports
 # GOLEM_IDLE_ACTIVITY_WINDOW, because a just-built worktree's index is always
 # fresh. $REG_TRANSCRIPT_AGE (seconds) plants a transcript at the worktree's
-# project slug, aged that much; $REG_INDEX_AGE ages the worktree's real index.
+# project slug, aged that much (negative = future-dated); $REG_INDEX_AGE ages the
+# worktree's real index; $REG_GITDIR_RELATIVE=1 rewrites the worktree's `.git`
+# pointer to the relative `gitdir:` form (git writes it absolute).
 #
 # PATH carries real sleep + mktemp + cat (bounded_run's output relay) so
 # bounded_run is genuinely armed — except in --stream-panes, whose `sleep` must
@@ -847,6 +849,9 @@ _run_panes_registry() {
         # A linked worktree's index sits under the gitdir its `.git` FILE names.
         idx="$(command sed -n 's/^gitdir: //p' "$wt/.git")/index"
         _gw_backdate "$REG_INDEX_AGE" "$idx"
+    fi
+    if [ "${REG_GITDIR_RELATIVE:-}" = 1 ]; then
+        command printf '%s\n' "gitdir: ../../.git/worktrees/issue-9" >"$wt/.git"
     fi
 
     local stub_bin="$tmp/stub-bin" mode_args b

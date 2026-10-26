@@ -805,13 +805,21 @@ _golem_last_activity() {
 # ago is not idle whatever its footer says, so this covers the whole class at a
 # turn boundary rather than one more regex arm.
 #
-# Signals, deliberately only ones the GOLEM writes:
+# Signals, chosen so no gate-watch observer refreshes them:
 #   - its Claude Code transcript (newest `*.jsonl` under the worktree's project
 #     dir; slug rule as golem-transcript-liveness.sh), written every record;
 #   - its worktree's git index, touched by every add/commit/checkout. A linked
 #     worktree's `.git` is a FILE (`gitdir: <path>`), so the index lives under
 #     that path, not `<wt>/.git/index` — read the pointer.
-# NOT the status-cache JSON: observers rewrite it, so it would mute the alarm.
+# The index is NOT golem-exclusive: a read-only `git status` in that worktree
+# (an operator, an IDE) rewrites it too (measured). No observer script runs git
+# there, so the residual cost is a human-inspected golem staying muted for one
+# window. NOT the status-cache JSON: observers rewrite it on every tick, so it
+# would mute the alarm permanently.
+#
+# A FUTURE mtime (clock skew between a container and the host, a bad touch) is
+# not "recent": a negative age would satisfy `-le $win` forever, so it is
+# rejected and the idle verdict stands.
 #
 # The window cannot cover a long SILENT background job (a 7-minute pre-push writes
 # nothing) — that is the registry's job (pane_registry_has_work). No evidence, a
@@ -842,9 +850,10 @@ _golem_recent_activity() {
         fi
     done
     [ -n "$best" ] || return 1
-    local now
+    local now age
     now="$("$DATE" +%s)" || return 1
-    [ $((now - best)) -le "$win" ]
+    age=$((now - best))
+    [ "$age" -ge 0 ] && [ "$age" -le "$win" ]
 }
 
 # Human-friendly "Nm" / "Ns" for a non-negative second count.

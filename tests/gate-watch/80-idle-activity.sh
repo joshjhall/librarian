@@ -75,6 +75,29 @@ test_idle_activity_fresh_index_suppresses_push() {
         "An index touched 5s ago (via the worktree's gitdir pointer) suppresses the idle push"
 }
 
+# git writes the pointer absolute, so the relative `gitdir:` branch needs its own
+# case: resolved against the wrong base it finds no index, fails open, and the
+# fresh-index golem would alert. The aged control proves the pointer is what is read.
+test_idle_activity_relative_gitdir_index() {
+    GOLEM_IDLE_ACTIVITY_WINDOW=120 REG_INDEX_AGE=5 REG_GITDIR_RELATIVE=1 \
+        _run_panes_registry "$_ACT_PANE" ""
+    assert_not_contains "$REG_OUT" "idle at prompt" \
+        "A fresh index behind a RELATIVE gitdir pointer suppresses the idle push"
+    GOLEM_IDLE_ACTIVITY_WINDOW=120 REG_INDEX_AGE=600 REG_GITDIR_RELATIVE=1 \
+        _run_panes_registry "$_ACT_PANE" ""
+    assert_contains "$REG_OUT" "idle at prompt" \
+        "Control: the same relative pointer to an aged index still alerts"
+}
+
+# A future-dated mtime (container/host clock skew) has a negative age, which a
+# bare `-le window` reads as recent forever — a permanent mute. It must not count.
+test_idle_activity_future_mtime_is_not_recent() {
+    GOLEM_IDLE_ACTIVITY_WINDOW=120 REG_TRANSCRIPT_AGE=-600 REG_INDEX_AGE=600 \
+        _run_panes_registry "$_ACT_PANE" ""
+    assert_contains "$REG_OUT" "golem-9"$'\t'"⚠ idle at prompt" \
+        "A transcript dated 10 min in the future does not mute the idle push"
+}
+
 # AC4 — no regression. Nothing running, nothing moving: still alerts.
 test_idle_activity_stale_golem_still_alerts() {
     GOLEM_IDLE_ACTIVITY_WINDOW=120 REG_TRANSCRIPT_AGE=600 REG_INDEX_AGE=600 \
