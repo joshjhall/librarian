@@ -145,8 +145,8 @@ function trigger_on(t) {
     # waits minutes - both outlive a turn as often as the harness does.
     if (t ~ /^[[:space:]]*git[[:space:]]+push/ && t !~ /--delete/) return 1
     if (t ~ /`git push`,/) return 1
-    if (t ~ /[Pp]oll[[:space:]]+(for[[:space:]]+[^`]*)?`gh pr checks/) return 1
-    if (t ~ /[Pp]oll[[:space:]]+for[[:space:]]+check[[:space:]]+completion/) return 1
+    if (tolower(t) ~ /poll[[:space:]]+(for[[:space:]]+[^`]*)?`gh pr checks/) return 1
+    if (tolower(t) ~ /poll[[:space:]]+for[[:space:]]+check[[:space:]]+completion/) return 1
     return 0
 }
 function flush(   i, two, hit, named, hitline) {
