@@ -295,9 +295,11 @@ changing it, re-verify with `claude plugin details <name>@librarian` showing
   it. A slash-run the config should already cover: suspect a gitleaks older than
   8.25, which ignores `[[allowlists]]`. Any other prose: mark that line
   `# gitleaks:allow (<reason>)`, or widen the config consciously, with the reason
-  in its header and `tests/validate-gitleaks-config.sh` green. Never reword the
-  label to dodge the scanner, never allowlist by path (`tests/` holds the
-  fake-token fixtures), and never `--no-verify`.
+  in its header and `tests/validate-gitleaks-config.sh` green. Keep the label
+  worded for its reader rather than for the scanner, widen by secret shape rather
+  than by path (`tests/` holds the fake-token fixtures), and let the hook run to
+  completion: the fix belongs in the config or at the line, never in a
+  `--no-verify` bypass.
 - **GitHub Actions are SHA-pinned with a version comment.** Every `uses:` in
   `.github/workflows/*.yml` pins a full 40-char commit SHA followed by a
   `# vX.Y.Z` comment (`actions/checkout@<sha> # v4.3.1`). The SHA and the
