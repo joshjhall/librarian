@@ -52,6 +52,10 @@ exit 1
 
 ## Testing (Arrange-Act-Assert)
 
+A new repo tests its shell with **bats-core** and lints at
+`shellcheck --severity=warning` + `shfmt -i 4 -ci`; the decision, its criteria
+and the `.shellcheckrc` baseline are in `test-framework.md`.
+
 ```bash
 test_function_basic_usage() {
     # Arrange

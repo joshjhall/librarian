@@ -1,14 +1,24 @@
 # ShellCheck configuration for librarian (bundled workflow scripts).
 # See https://github.com/koalaman/shellcheck/wiki/Directive for details.
 
-# Minimum severity level to report (error, warning, info, style).
-severity=info
+# No severity key: .shellcheckrc cannot set one. shellcheck (0.10.0) silently
+# ignores a `severity=` line here — `severity=error` still prints notes — so the
+# floor lives on the command line, and every gate passes --severity=warning
+# (lefthook, tests/lint-shellcheck.sh, actionlint). This file used to say
+# `severity=info`, which therefore never applied; at info this tree reports 141
+# rows (mostly SC2015/SC2317, 16 SC2086) against 0 at warning (#1212). A bare
+# `shellcheck` reports every level — pass --severity=warning to match the gates.
 
 # Shell dialect
 shell=bash
 
-# SC1090/SC1091: Can't follow non-constant source paths — the bundled scripts
-# source helpers via ${CLAUDE_PLUGIN_ROOT}, resolved at runtime.
+# Resolve `source` paths relative to the sourcing script and follow them, so
+# SC1091 needs no global disable: with these two keys it reports 0 rows here.
+source-path=SCRIPTDIR
+external-sources=true
+
+# SC1090: Can't follow non-constant source paths — the bundled scripts source
+# helpers via ${CLAUDE_PLUGIN_ROOT} and other runtime-resolved paths, by design.
 # SC2016: Expressions don't expand in single quotes — intentional when we emit
 # shell to files or defer expansion to execution time.
-disable=SC1090,SC1091,SC2016
+disable=SC1090,SC2016
