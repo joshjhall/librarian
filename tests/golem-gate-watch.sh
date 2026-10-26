@@ -59,7 +59,8 @@ source_fragments "$SCRIPT_DIR/gate-watch" \
     40-stream-dedup.sh \
     50-prompt-line.sh \
     60-pane-registry.sh \
-    70-classifiers-load.sh
+    70-classifiers-load.sh \
+    80-idle-activity.sh
 
 # --- Run all tests ----------------------------------------------------------
 
@@ -171,5 +172,13 @@ run_fragment_test test_pane_registry_mutation_removes_guard "pane registry (#109
 run_fragment_test test_pane_registry_bounded_read_fails_open "pane registry (#1097): a hung registry read is bounded and fails open"
 run_fragment_test test_pane_registry_garbage_answer_fails_open "pane registry (#1097): a non-numeric or failing registry answer fails open"
 run_fragment_test test_missing_classifiers_fails_loud "Missing classifiers fragment fails loud; handoff-relaunch refuses (#1109)"
+run_fragment_test test_idle_activity_issue_footers_are_own_work "idle activity (#1203): every footer from the issue reads own work, not idle"
+run_fragment_test test_idle_activity_shell_arm_is_anchored "idle activity (#1203): shell prose without the footer bullet stays idle"
+run_fragment_test test_idle_activity_fresh_transcript_suppresses_push "idle activity (#1203): a fresh transcript suppresses the idle push"
+run_fragment_test test_idle_activity_fresh_index_suppresses_push "idle activity (#1203): a fresh worktree index suppresses the idle push"
+run_fragment_test test_idle_activity_stale_golem_still_alerts "idle activity (#1203): a stale golem still alerts (no regression)"
+run_fragment_test test_idle_activity_window_off_or_malformed_alerts "idle activity (#1203): window 0 or malformed fails open to the alert"
+run_fragment_test test_idle_activity_liveness_pane_arm "idle activity (#1203): liveness pane-idle arm honors the gate"
+run_fragment_test test_idle_activity_liveness_transcript_arms "idle activity (#1203): liveness transcript idle/errored arms honor the gate"
 
 generate_report

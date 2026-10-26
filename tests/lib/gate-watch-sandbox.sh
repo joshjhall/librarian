@@ -602,6 +602,13 @@ _run_liveness_snapshot_transcript() {
     if [ -n "$transcript" ]; then
         command mkdir -p "$fake_projects/$slug"
         command printf '%s\n' "$transcript" >"$fake_projects/$slug/session.jsonl"
+        # A just-written transcript is itself "recent activity", which the #1203
+        # gate (GOLEM_IDLE_ACTIVITY_WINDOW, default 120s) reads as NOT idle. Age it
+        # past the window so the idle cases model a genuinely idle golem;
+        # LIVE_TRANSCRIPT_FRESH=1 keeps it fresh for the cases that pin the gate.
+        if [ "${LIVE_TRANSCRIPT_FRESH:-0}" != 1 ]; then
+            _gw_backdate 600 "$fake_projects/$slug/session.jsonl"
+        fi
     fi
 
     # Background-work registry fixture (#949). Two things here are load-bearing:
@@ -780,3 +787,104 @@ TMUX_STUB
 
 PANES_OUT=""
 PANES_RC=""
+
+# _run_panes_registry <pane> <registry> [gate-watch] — run the pane channel
+# against ONE tmux session (golem-9) whose worktree is a REAL linked worktree
+# (`count --worktree` derives the golem id and status dir through `git rev-parse
+# --git-common-dir`; a mkdir-ed path would read an empty registry and every case
+# would pass while exercising nothing — the #949 fixture lesson).
+#
+# <registry>: empty = no file; the literal DIR = a directory at the registry path
+# (unreadable as a file — tests may run as root, where chmod 000 reads fine);
+# anything else = the file's contents. [gate-watch] defaults to $GATE_WATCH; the
+# mutation and bound cases pass a copy. Mode comes from $GW_MODE (default
+# --once-panes). Sets REG_OUT / REG_RC.
+#
+# Activity knobs (#1203): the activity gate is OFF unless the caller exports
+# GOLEM_IDLE_ACTIVITY_WINDOW, because a just-built worktree's index is always
+# fresh. $REG_TRANSCRIPT_AGE (seconds) plants a transcript at the worktree's
+# project slug, aged that much; $REG_INDEX_AGE ages the worktree's real index.
+#
+# PATH carries real sleep + mktemp + cat (bounded_run's output relay) so
+# bounded_run is genuinely armed — except in --stream-panes, whose `sleep` must
+# be the poll stub; there mktemp is withheld so bounded_run_available is false and
+# the unbounded (still correct) path runs, rather than the watcher calling the
+# poll stub.
+_run_panes_registry() {
+    local pane="$1" registry="$2" gw="${3:-$GATE_WATCH}"
+    local tmp
+    tmp="$(command mktemp -d)" || return 1
+    tmp="$(cd "$tmp" && command pwd -P)" || return 1
+    # shellcheck disable=SC2064
+    trap "command rm -rf '$tmp'" RETURN
+
+    local git_scrub=(GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE GIT_COMMON_DIR
+        GIT_PREFIX GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES)
+    local g=(/usr/bin/env "${git_scrub[@]/#/-u}" git -C "$tmp")
+    "${g[@]}" init -q 2>/dev/null || return 1
+    "${g[@]}" config user.email "test@example.com" 2>/dev/null
+    "${g[@]}" config user.name "Test" 2>/dev/null
+    command printf 'seed\n' >"$tmp/seed.txt"
+    "${g[@]}" add seed.txt 2>/dev/null
+    "${g[@]}" -c commit.gpgsign=false commit -qm seed 2>/dev/null || return 1
+    "${g[@]}" worktree add -q "$tmp/.worktrees/issue-9" -b issue-9 >/dev/null 2>&1 || return 1
+    command mkdir -p "$tmp/.worktrees/.status"
+    # Status cache so the liveness sweep enumerates golem-9.
+    command printf '%s\n' '{"golem":"golem-9","issue":9}' >"$tmp/.worktrees/.status/golem-9.json"
+    case "$registry" in
+        '') ;;
+        DIR) command mkdir -p "$tmp/.worktrees/.status/golem-9.work.jsonl" ;;
+        *) command printf '%s\n' "$registry" >"$tmp/.worktrees/.status/golem-9.work.jsonl" ;;
+    esac
+    local wt="$tmp/.worktrees/issue-9" slug idx
+    if [ -n "${REG_TRANSCRIPT_AGE:-}" ]; then
+        slug="${wt//[\/.]/-}"
+        command mkdir -p "$tmp/projects/$slug"
+        command printf '%s\n' '{"type":"user"}' >"$tmp/projects/$slug/s.jsonl"
+        _gw_backdate "$REG_TRANSCRIPT_AGE" "$tmp/projects/$slug/s.jsonl"
+    fi
+    if [ -n "${REG_INDEX_AGE:-}" ]; then
+        # A linked worktree's index sits under the gitdir its `.git` FILE names.
+        idx="$(command sed -n 's/^gitdir: //p' "$wt/.git")/index"
+        _gw_backdate "$REG_INDEX_AGE" "$idx"
+    fi
+
+    local stub_bin="$tmp/stub-bin" mode_args b
+    command mkdir -p "$stub_bin"
+    for b in bash git jq; do
+        command -v "$b" >/dev/null 2>&1 && command ln -s "$(command -v "$b")" "$stub_bin/$b"
+    done
+    read -r -a mode_args <<<"${GW_MODE:---once-panes}"
+    if [ "${mode_args[0]}" = "--stream-panes" ]; then
+        _write_poll_stub "$stub_bin" "$tmp/polls"
+    else
+        for b in sleep mktemp cat; do
+            command ln -s "$(command -v "$b")" "$stub_bin/$b"
+        done
+    fi
+    command cat >"$stub_bin/tmux" <<'TMUX_STUB'
+#!/usr/bin/env bash
+case "$1" in
+    ls) command printf '%s\n' "golem-9: 1 windows" ;;
+    capture-pane) command printf '%s\n' "$FAKE_PANE_TEXT" ;;
+    *) exit 0 ;;
+esac
+TMUX_STUB
+    command chmod +x "$stub_bin/tmux"
+
+    REG_RC=0
+    (
+        cd "$tmp" &&
+            bounded_run 60 /usr/bin/env "${git_scrub[@]/#/-u}" -uBASH_ENV \
+                PATH="$stub_bin" FAKE_PANE_TEXT="$pane" \
+                GOLEM_WORKTREE_DIR=.worktrees GOLEM_STATUS_DIR=.worktrees/.status \
+                GOLEM_BLOCK_TTL=3600 GOLEM_STALL_THRESHOLD=1200 \
+                GOLEM_IDLE_ACTIVITY_WINDOW="${GOLEM_IDLE_ACTIVITY_WINDOW:-0}" \
+                CLAUDE_PROJECTS_DIR="${CLAUDE_PROJECTS_DIR:-$tmp/projects}" \
+                GOLEM_PANE_REGISTRY_TIMEOUT="${GOLEM_PANE_REGISTRY_TIMEOUT:-3}" \
+                "$(command -v bash)" "$gw" "${mode_args[@]}"
+    ) >"$tmp/out" 2>/dev/null && REG_RC=0 || REG_RC=$?
+    REG_OUT="$(command cat "$tmp/out")"
+}
+REG_OUT=""
+REG_RC=""
