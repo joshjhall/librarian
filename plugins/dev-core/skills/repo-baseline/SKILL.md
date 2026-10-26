@@ -24,6 +24,7 @@ layers:
 | Setting up hooks / CI / tool pins for a repo     | `core.md`, then the slice per language |
 | Writing or reviewing a language slice            | `slice-contract.md`                   |
 | Working in a shell-heavy repo                    | `languages/shell.md`                  |
+| Working in a Python repo (scripts or package)    | `languages/python.md`                 |
 | Checking a repo against the baseline             | `core.md` § Checklist, each slice      |
 
 ## The rules that matter most

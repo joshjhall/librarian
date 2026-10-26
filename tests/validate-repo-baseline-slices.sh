@@ -181,17 +181,20 @@ rc_settings() {
     done <"$1"
 }
 
-# slice_ini_settings <slice-file>
-# Prints the settings lines (as rc_settings) of the FIRST ```ini fence under the
-# slice's `## Config files` heading — the slice's copy of the .shellcheckrc.
+# slice_fence_settings <lang> <slice-file>
+# Prints the settings lines (as rc_settings) of the FIRST ```<lang> fence under
+# the slice's `## Config files` heading — the slice's copy of a repo config file
+# (`ini` for shell's .shellcheckrc, `toml` for python's ruff.toml). TOML section
+# headers like `[lint]` are kept, so a setting moved between tables is drift.
 # Prints nothing when the heading or the fence is absent or the fence is
 # unterminated, which the caller treats as a failure, never as a match.
-slice_ini_settings() {
+slice_fence_settings() {
     # Fences go through fence_run/fence_closes, so a `## ` line inside any
-    # fence is example content, never a heading. `capture` is set only on an
-    # ini opener inside the section, and its close is the only successful
+    # fence is example content, never a heading. `capture` is set only on a
+    # <lang> opener inside the section, and its close is the only successful
     # return.
-    local line in_section=0 fence="" capture=0 block="$WORKDIR/ini.$$"
+    local lang="$1" line in_section=0 fence="" capture=0 block="$WORKDIR/fence.$$"
+    shift
     : >"$block"
     while IFS= read -r line || [ -n "$line" ]; do
         if [ -n "$fence" ]; then
@@ -211,7 +214,7 @@ slice_ini_settings() {
         if [ -n "$FENCE_RUN" ]; then
             fence="$FENCE_RUN"
             case "$FENCE_REST" in
-                ini | 'ini '*) [ "$in_section" -eq 1 ] && capture=1 ;;
+                "$lang" | "$lang "*) [ "$in_section" -eq 1 ] && capture=1 ;;
             esac
             continue
         fi
@@ -272,7 +275,7 @@ test_every_slice_conforms() {
 
 test_shell_slice_rc_matches_repo() {
     local slice_set rc_set
-    slice_set="$(slice_ini_settings "$SLICES_DIR/shell.md")"
+    slice_set="$(slice_fence_settings ini "$SLICES_DIR/shell.md")"
     rc_set="$(rc_settings "$REPO_ROOT/.shellcheckrc")"
     assert_not_empty "$slice_set" \
         "shell.md's Config files section carries a non-empty \`\`\`ini block"
@@ -282,51 +285,76 @@ test_shell_slice_rc_matches_repo() {
         "shell.md's .shellcheckrc block has the same settings lines as the repo's .shellcheckrc"
 }
 
+test_python_slice_ruff_matches_repo() {
+    local slice_set rc_set
+    slice_set="$(slice_fence_settings toml "$SLICES_DIR/python.md")"
+    rc_set="$(rc_settings "$REPO_ROOT/ruff.toml")"
+    assert_not_empty "$slice_set" \
+        "python.md's Config files section carries a non-empty \`\`\`toml block"
+    assert_contains "$rc_set" "required-version" \
+        "The repo's ruff.toml carries its required-version pin"
+    assert_equals "$rc_set" "$slice_set" \
+        "python.md's ruff.toml block has the same settings lines as the repo's ruff.toml"
+}
+
 # --- Negative fixtures: the checker must fire --------------------------------
+
+test_fixture_fence_lang_selects() {
+    local slice="$WORKDIR/lang.md"
+    command printf '# S\n\n## Config files\n\n```ini\nshell=bash\n```\n\n```toml\n[lint]\nselect = ["F"]\n```\n' >"$slice"
+    assert_equals '[lint]
+select = ["F"]' "$(slice_fence_settings toml "$slice")" \
+        "The toml reader skips an earlier ini fence and keeps TOML table headers"
+    assert_equals "shell=bash" "$(slice_fence_settings ini "$slice")" \
+        "The ini reader is unaffected by a later toml fence"
+    command printf '# S\n\n## Config files\n\n```tomlx\nx=1\n```\n' >"$slice"
+    assert_output_empty "$(slice_fence_settings toml "$slice")" \
+        "A fence whose info string merely starts with the language is not captured"
+}
 
 test_fixture_ini_drift() {
     local slice="$WORKDIR/drift.md" rc="$WORKDIR/rc"
     command printf 'shell=bash\ndisable=SC1090\n' >"$rc"
     command printf '# S\n\n## Config files\n\n```ini\n# c\nseverity=info\nshell=bash\ndisable=SC1090\n```\n' >"$slice"
     local got
-    got="$(slice_ini_settings "$slice")"
+    got="$(slice_fence_settings ini "$slice")"
     assert_contains "$got" "severity=info" \
         "The drifted line is read out of the slice block"
     assert_true "[ \"\$got\" != \"\$(rc_settings \"\$rc\")\" ]" \
         "A slice block carrying severity=info differs from an rc without it"
     command printf '# S\n\n## Config files\n\n```ini\n  # c\n\n shell=bash \ndisable=SC1090\n```\n' >"$slice"
-    assert_equals "$(rc_settings "$rc")" "$(slice_ini_settings "$slice")" \
+    assert_equals "$(rc_settings "$rc")" "$(slice_fence_settings ini "$slice")" \
         "Comments, blank lines and surrounding whitespace do not count as drift"
 }
 
 test_fixture_ini_block_outside_section() {
     local slice="$WORKDIR/elsewhere.md"
     command printf '# S\n\n## Tools\n\n```ini\nshell=bash\n```\n\n## Config files\n\nnone\n' >"$slice"
-    assert_output_empty "$(slice_ini_settings "$slice")" \
+    assert_output_empty "$(slice_fence_settings ini "$slice")" \
         "An ini block under another heading is not read as the Config files block"
     command printf '# S\n\n## Config files\n\nnone\n\n## Hook entries\n\n```ini\nshell=bash\n```\n' >"$slice"
-    assert_output_empty "$(slice_ini_settings "$slice")" \
+    assert_output_empty "$(slice_fence_settings ini "$slice")" \
         "The Config files section ends at the next heading; a later section's ini block is not read"
     command printf '# S\n\n## Config files\n\n```ini\nshell=bash\n```\n\n```ini\nshell=sh\n```\n' >"$slice"
-    assert_equals "shell=bash" "$(slice_ini_settings "$slice")" \
+    assert_equals "shell=bash" "$(slice_fence_settings ini "$slice")" \
         "Only the FIRST ini fence under Config files is read"
     command printf '# S\n\n## Config files\n\n```bash\n## not a heading\n```\n\n```ini\nshell=bash\n```\n' >"$slice"
-    assert_equals "shell=bash" "$(slice_ini_settings "$slice")" \
+    assert_equals "shell=bash" "$(slice_fence_settings ini "$slice")" \
         "A '## ' line inside an earlier non-ini fence does not end the Config files section"
     command printf '# S\n\n## Config filesystem\n\n```ini\nshell=bash\n```\n' >"$slice"
-    assert_output_empty "$(slice_ini_settings "$slice")" \
+    assert_output_empty "$(slice_fence_settings ini "$slice")" \
         "A heading that merely starts with 'Config files' is not the Config files section"
     command printf '# S\n\n## Tools\n\n```ini\n## not a heading\nx=1\n```\n\n## Config files\n\n```ini\nshell=bash\n```\n' >"$slice"
-    assert_equals "shell=bash" "$(slice_ini_settings "$slice")" \
+    assert_equals "shell=bash" "$(slice_fence_settings ini "$slice")" \
         "An ini fence in an earlier section is skipped as a fence, not read or inverted"
     command printf '# S\n\n## Config files\n\n~~~md\n## not a heading\n```\n~~~\n\n```ini title\nshell=bash\n```\n' >"$slice"
-    assert_equals "shell=bash" "$(slice_ini_settings "$slice")" \
+    assert_equals "shell=bash" "$(slice_fence_settings ini "$slice")" \
         "A ~~~ fence closes only on ~~~, and an ini opener may carry an info string"
     command printf '# S\n\n## Config files (copy me)\n\n```ini\nshell=bash\n```\n' >"$slice"
-    assert_equals "shell=bash" "$(slice_ini_settings "$slice")" \
+    assert_equals "shell=bash" "$(slice_fence_settings ini "$slice")" \
         "The Config files heading may carry trailing text after a space"
     command printf '# S\n\n## Config files\n\n```md\n```ini\nx=1\n```\n\n```ini\nshell=bash\n```\n' >"$slice"
-    assert_equals "shell=bash" "$(slice_ini_settings "$slice")" \
+    assert_equals "shell=bash" "$(slice_fence_settings ini "$slice")" \
         "A fence opener with an info string inside an open fence is content, not a close"
 }
 
@@ -364,10 +392,10 @@ EOF
 test_fixture_ini_fence_variants() {
     local slice="$WORKDIR/variants.md"
     command printf '# S\n\n## Config files\n\n```md\n``` bash\n## Hook entries\n```\n\n```ini\nshell=bash\n```\n' >"$slice"
-    assert_equals "shell=bash" "$(slice_ini_settings "$slice")" \
+    assert_equals "shell=bash" "$(slice_fence_settings ini "$slice")" \
         "'\`\`\` bash' inside an open fence is content, so the fenced '## ' stays fenced"
     command printf '# S\n\n## Config files\n\n````md\n```\n## x\n````\n\n~~~ini\nshell=bash\n~~~\n' >"$slice"
-    assert_equals "shell=bash" "$(slice_ini_settings "$slice")" \
+    assert_equals "shell=bash" "$(slice_fence_settings ini "$slice")" \
         "A 4-backtick fence is not closed by 3, and a ~~~ini fence is captured"
 }
 
@@ -382,10 +410,10 @@ test_fixture_headings_nested_fence() {
 test_fixture_ini_block_unterminated() {
     local slice="$WORKDIR/unterminated-ini.md"
     command printf '# S\n\n## Config files\n\n```ini\nshell=bash\n\n## Later\n' >"$slice"
-    assert_output_empty "$(slice_ini_settings "$slice")" \
+    assert_output_empty "$(slice_fence_settings ini "$slice")" \
         "An ini fence with no closing fence parses empty, not to everything after it"
     command printf '# S\n\n## Tools\n\ntext\n' >"$slice"
-    assert_output_empty "$(slice_ini_settings "$slice")" \
+    assert_output_empty "$(slice_fence_settings ini "$slice")" \
         "A slice with no Config files heading parses empty"
 }
 
@@ -451,6 +479,8 @@ run_test test_contract_parses "slice-contract.md's required-heading list parses 
 run_test test_slices_exist "At least one language slice exists"
 run_test test_every_slice_conforms "Every language slice carries the required headings in order"
 run_test test_shell_slice_rc_matches_repo "The shell slice's .shellcheckrc block matches the repo's .shellcheckrc"
+run_test test_python_slice_ruff_matches_repo "The python slice's ruff.toml block matches the repo's ruff.toml"
+run_test test_fixture_fence_lang_selects "Fixture: the fence reader captures only the requested language"
 run_test test_fixture_conforming "Fixture: a conforming slice passes"
 run_test test_fixture_missing_heading "Fixture: a missing heading is reported"
 run_test test_fixture_out_of_order "Fixture: an out-of-order heading is reported"
