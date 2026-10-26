@@ -10,9 +10,12 @@
 #
 # SCOPE — keyed on the captured SECRET'S SHAPE, never on a path:
 #   - one rule only (`targetRules`), and only when the whole captured value is
-#     lowercase letters joined by `/`. A real key carries digits or mixed case,
-#     so it cannot match; tests/validate-gitleaks-config.sh plants one in the
-#     same file as the prose and asserts it is still caught.
+#     lowercase letters joined by `/`. A key with any digit or uppercase letter
+#     cannot match; tests/validate-gitleaks-config.sh plants two (one plain,
+#     one slash-joined) beside the prose and asserts both are still caught.
+#     ACCEPTED BLIND SPOT: a secret that is genuinely all-lowercase letters
+#     joined by `/` would pass. That shape has too little entropy per character
+#     to be a credential format worth the false positives it costs here.
 #   - NOT a path allowlist. tests/ holds the fake-token fixtures and is where a
 #     real paste-in is most plausible; plugins/ holds the scanners' own pattern
 #     literals. Both must stay fully scanned.

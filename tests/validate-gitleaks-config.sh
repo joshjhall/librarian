@@ -35,6 +35,8 @@ if ! command -v gitleaks >/dev/null 2>&1; then
     return "$SKIP_EXIT_CODE" 2>/dev/null || exit "$SKIP_EXIT_CODE"
 fi
 
+GITLEAKS_VERSION="$(gitleaks version 2>/dev/null || printf 'unknown')"
+
 SANDBOX="$(command mktemp -d)"
 trap 'command rm -rf "$SANDBOX"' EXIT
 
@@ -93,7 +95,8 @@ test_prose_commits_clean() {
     dir="$(new_repo prose with-config)"
     printf '%s\n' "$PROSE_LINE" >"$dir/t.sh"
     scan "$dir"
-    assert_exit 0 "$SCAN_RC" "The #872 prose label must commit clean under .gitleaks.toml"
+    # gitleaks < 8.25 ignores [[allowlists]] and lands here, so name the version.
+    assert_exit 0 "$SCAN_RC" "The #872 prose label must commit clean under .gitleaks.toml (gitleaks $GITLEAKS_VERSION; the allowlist needs >= 8.25)"
 }
 
 test_planted_key_still_caught() {
@@ -115,10 +118,17 @@ test_slash_joined_key_still_caught() {
     printf 'api_key = "%s"\n%s\n' "$PLANTED_SLASH_KEY" "$PROSE_LINE" >"$dir/t.sh"
     scan "$dir"
     assert_exit 1 "$SCAN_RC" "A slash-joined key with digits/uppercase must not ride the prose allowlist"
+    # The allowlist targets only generic-api-key, so pin THAT rule: another
+    # default rule firing on line 1 would otherwise mask a widened regex.
+    assert_contains "$SCAN_REPORT" '"RuleID": "generic-api-key"'
     assert_contains "$SCAN_REPORT" '"StartLine": 1'
     assert_not_contains "$SCAN_REPORT" '"StartLine": 2'
 }
 
+# One-directional by design: the fixture tokens are concatenation-split
+# ("AKIA""0123…"), so they are clean under stock gitleaks too. This pins only
+# that the config does not START flagging them; the "still caught" direction is
+# carried by the two planted-key cases above.
 test_fixture_tokens_commit_clean() {
     local dir f
     dir="$(new_repo fixtures with-config)"
