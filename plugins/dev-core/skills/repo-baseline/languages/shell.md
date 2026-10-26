@@ -14,6 +14,7 @@ was drawn from.
 | ---------- | ----------------------------- | -------------- | ------------------------ | -------- |
 | shellcheck | static analysis               | unpinned       | — (devcontainer / apt)   | optional |
 | shfmt      | formatting (auto-fix)         | unpinned       | — (devcontainer)         | optional |
+| bats-core  | test framework                | 1.14.0         | `bin/install-tools.sh`   | optional |
 | bash       | runtime; the floor is **3.2** | n/a (floor)    | stock macOS `/bin/bash`  | required |
 
 bash is the runtime, not a lint tool: the floor is 3.2 because that is what
@@ -26,17 +27,23 @@ to run the scripts without it.
 `.shellcheckrc` — required.
 
 ```ini
-# Minimum severity level to report (error, warning, info, style).
-severity=info
+# No severity key: .shellcheckrc cannot carry one (shellcheck 0.10.0 silently
+# ignores `severity=`), so the floor is --severity=warning on every command line.
 
-# Shell dialect
 shell=bash
 
+# Follow relative `source` lines, so SC1091 needs no global disable.
+source-path=SCRIPTDIR
+external-sources=true
+
 # per-repo: disable only codes that are wrong for this repo's structure, with
-# the reason inline. Example: SC1090/SC1091 when helpers are sourced through a
-# runtime-resolved path.
-disable=SC1090,SC1091,SC2016
+# the reason inline. SC1090: helpers sourced through a runtime-resolved path.
+# SC2016: single-quoted `$` that is deliberately not expanded.
+disable=SC1090,SC2016
 ```
+
+The settings lines of this block equal librarian's own `.shellcheckrc`;
+`tests/validate-repo-baseline-slices.sh` fails if they drift apart.
 
 shfmt has no config file here; its flags are fixed in the hook and gate
 invocations (`-i 4 -ci`: 4-space indent, indented `case` arms). An
@@ -103,12 +110,23 @@ because the job installs the tool first.
 
 ## Test framework & runner
 
-A home-grown bash harness: `tests/lib/harness.sh` provides `test_suite`,
-`run_test`, the `assert_*` helpers, `skip_test`, and `generate_report` — the
-call that turns recorded failures into a non-zero exit, so it must be the last
-statement of every suite. Each suite is a `tests/<name>.sh` file; the single
-entry point `tests/run-all.sh` dispatches them as stages (`core.md` § 6). Tests
-follow Arrange-Act-Assert (`shell-scripting` § Testing).
+[bats-core](https://github.com/bats-core/bats-core), with `bats-support` and
+`bats-assert` for assertions and `bats-mock` when a test must stub an external
+command. Suites are `tests/*.bats`, run as `bats tests/` **from** the single
+entry point `tests/run.sh` (`core.md` § 6) — never as a separate CI job, so the
+hook, CI, and a developer all run the same thing. On a contributor host without
+`bats` the entry point reports the stage as skipped (sentinel `77`), never as
+passed. CI is different: its test stage runs `bin/install-tools.sh` first, which
+installs the pinned bats and fails if it does not land (`core.md` § 3), so in CI
+a missing `bats` is a failure, never a skip (`core.md` § 1). Tests follow
+Arrange-Act-Assert (`shell-scripting` § Testing). The reasoning, and the two
+properties any shell test framework must keep, are in `shell-scripting`'s
+`test-framework.md`.
+
+**Legacy exception — librarian itself.** The reference repo predates this
+decision and keeps its home-grown harness, `tests/lib/harness.sh`, dispatched
+by `tests/run-all.sh`. Migrating its suites would fix no defect. A new repo
+does not copy it.
 
 ## Size-budget override
 
@@ -119,16 +137,5 @@ pair; the audit lens uses the default.
 
 ## Open decisions
 
-- **shellcheck severity.** `.shellcheckrc` says `severity=info`, while the hook
-  and gate pass `--severity=warning`, which overrides it — so the rc value is
-  dead for both. Options: set the rc to `warning` (one source), or keep `info`
-  for editor integrations and document the split. Owner: the shell-slice issue
-  in the repo-baseline epic.
-- **`source-path=SCRIPTDIR` / `external-sources=true`** in `.shellcheckrc`, which
-  would let shellcheck follow relative `source` lines instead of disabling
-  SC1090/SC1091. Owner: the shell-slice issue.
-- **Test framework: bats vs the home-grown harness.** bats is the common
-  standard and gives TAP output; the harness has no dependency and is what every
-  suite in this repo already uses. Owner: the shell-slice issue.
 - **Pinning shellcheck and shfmt** to an exact version with one source, per
-  `core.md` § 4. Both are unpinned today.
+  `core.md` § 4. Both are unpinned today; bats-core is pinned above.
