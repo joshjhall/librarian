@@ -146,7 +146,7 @@ rc_settings() {
 # Prints nothing when the heading or the fence is absent or the fence is
 # unterminated, which the caller treats as a failure, never as a match.
 slice_ini_settings() {
-    local line in_section=0 in_block=0 block="$WORKDIR/ini.$$"
+    local line in_section=0 in_block=0 in_fence=0 block="$WORKDIR/ini.$$"
     : >"$block"
     while IFS= read -r line || [ -n "$line" ]; do
         if [ "$in_block" -eq 1 ]; then
@@ -160,10 +160,19 @@ slice_ini_settings() {
             command printf '%s\n' "$line" >>"$block"
             continue
         fi
+        # Inside any other fence, a `## ` line is example content, not a
+        # heading (the same rule slice_headings applies).
+        if [ "$in_fence" -eq 1 ]; then
+            case "$line" in
+                '```'* | '~~~'*) in_fence=0 ;;
+            esac
+            continue
+        fi
         case "$line" in
-            '## Config files'*) in_section=1 ;;
+            '```ini' | '```ini '*) [ "$in_section" -eq 1 ] && in_block=1 ;;
+            '```'* | '~~~'*) in_fence=1 ;;
+            '## Config files' | '## Config files '*) in_section=1 ;;
             '## '*) in_section=0 ;;
-            '```ini'*) [ "$in_section" -eq 1 ] && in_block=1 ;;
         esac
     done <"$1"
     command rm -f "$block"
@@ -256,6 +265,12 @@ test_fixture_ini_block_outside_section() {
     command printf '# S\n\n## Config files\n\n```ini\nshell=bash\n```\n\n```ini\nshell=sh\n```\n' >"$slice"
     assert_equals "shell=bash" "$(slice_ini_settings "$slice")" \
         "Only the FIRST ini fence under Config files is read"
+    command printf '# S\n\n## Config files\n\n```bash\n## not a heading\n```\n\n```ini\nshell=bash\n```\n' >"$slice"
+    assert_equals "shell=bash" "$(slice_ini_settings "$slice")" \
+        "A '## ' line inside an earlier non-ini fence does not end the Config files section"
+    command printf '# S\n\n## Config filesystem\n\n```ini\nshell=bash\n```\n' >"$slice"
+    assert_output_empty "$(slice_ini_settings "$slice")" \
+        "A heading that merely starts with 'Config files' is not the Config files section"
 }
 
 test_fixture_ini_block_unterminated() {

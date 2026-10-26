@@ -14,7 +14,7 @@ was drawn from.
 | ---------- | ----------------------------- | -------------- | ------------------------ | -------- |
 | shellcheck | static analysis               | unpinned       | — (devcontainer / apt)   | optional |
 | shfmt      | formatting (auto-fix)         | unpinned       | — (devcontainer)         | optional |
-| bats-core  | test framework                | 1.14.0         | `bin/install-tools.sh`   | required |
+| bats-core  | test framework                | 1.14.0         | `bin/install-tools.sh`   | optional |
 | bash       | runtime; the floor is **3.2** | n/a (floor)    | stock macOS `/bin/bash`  | required |
 
 bash is the runtime, not a lint tool: the floor is 3.2 because that is what
@@ -114,8 +114,11 @@ because the job installs the tool first.
 `bats-assert` for assertions and `bats-mock` when a test must stub an external
 command. Suites are `tests/*.bats`, run as `bats tests/` **from** the single
 entry point `tests/run.sh` (`core.md` § 6) — never as a separate CI job, so the
-hook, CI, and a developer all run the same thing. When `bats` is absent the
-entry point reports the stage as skipped, never as passed. Tests follow
+hook, CI, and a developer all run the same thing. On a contributor host without
+`bats` the entry point reports the stage as skipped (sentinel `77`), never as
+passed. CI is different: its test stage runs `bin/install-tools.sh` first, which
+installs the pinned bats and fails if it does not land (`core.md` § 3), so in CI
+a missing `bats` is a failure, never a skip (`core.md` § 1). Tests follow
 Arrange-Act-Assert (`shell-scripting` § Testing). The reasoning, and the two
 properties any shell test framework must keep, are in `shell-scripting`'s
 `test-framework.md`.
