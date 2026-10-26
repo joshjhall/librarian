@@ -37,6 +37,26 @@ fi
 
 GITLEAKS_VERSION="$(gitleaks version 2>/dev/null || printf 'unknown')"
 
+# [[allowlists]] needs gitleaks >= 8.25; an older one ignores it, so the config
+# cannot be exercised there at all. That is "did not run" (77), not a config
+# defect — reporting it red would block every push from that host. An
+# unparseable version runs the gate anyway: fail open, and the prose case's
+# failure message names the version.
+_gl_ver="${GITLEAKS_VERSION#v}"
+_gl_major="${_gl_ver%%.*}"
+_gl_rest="${_gl_ver#*.}"
+_gl_minor="${_gl_rest%%.*}"
+case "$_gl_major$_gl_minor" in
+    '' | *[!0-9]*) ;;
+    *)
+        if [ "$_gl_major" -lt 8 ] || { [ "$_gl_major" -eq 8 ] && [ "$_gl_minor" -lt 25 ]; }; then
+            skip_test "GATE DID NOT RUN — gitleaks $GITLEAKS_VERSION predates [[allowlists]] (upgrade to >= 8.25)"
+            generate_report
+            return "$SKIP_EXIT_CODE" 2>/dev/null || exit "$SKIP_EXIT_CODE"
+        fi
+        ;;
+esac
+
 SANDBOX="$(command mktemp -d)"
 trap 'command rm -rf "$SANDBOX"' EXIT
 
@@ -139,6 +159,9 @@ test_fixture_tokens_commit_clean() {
     for f in tests/validate-source-detectors/10-security.sh \
         tests/validate-loop-detectors.sh \
         tests/validate-python-ports.sh; do
+        # A renamed fixture would leave the sandbox near-empty and the scan clean
+        # by default, so require each one rather than let the copy fail quietly.
+        assert_file_exists "$REPO_ROOT/$f"
         command mkdir -p "$dir/$(command dirname "$f")"
         command cp "$REPO_ROOT/$f" "$dir/$f"
     done
