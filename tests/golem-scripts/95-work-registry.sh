@@ -221,31 +221,41 @@ test_work_docs_never_show_refused_verb() {
     # The COMMAND form is wrong in any workflow file of any type — a schema
     # description or a script comment instructs a golem just as a skill does (the
     # orchestrate schema still named it after the markdown sweep). Only the
-    # script that defines the alias may spell it, to explain the rename. The
-    # optional `"` after `.sh` covers the usual shell spelling, a quoted
-    # "${CLAUDE_PLUGIN_ROOT}/scripts/golem-work.sh" path; `[^`"]*` otherwise keeps
-    # a match inside one backtick span or JSON string.
-    local cmd_re='golem-work\.sh"?[^`"]*[[:space:]]complete([[:space:]`"]|$)' line
+    # script that defines the alias may spell it, to explain the rename. Two
+    # regexes, split by file type: in a script or doc the gap may cross quotes —
+    # a quoted "${CLAUDE_PLUGIN_ROOT}/scripts/golem-work.sh" path, or a quoted
+    # option before the verb — and stops only at a backtick span; in JSON it
+    # must also stop at `"`, or one string's verb would match the next string.
+    local text_re='golem-work\.sh[^`]*[[:space:]]complete([[:space:]`"]|$)' line
+    local json_re='golem-work\.sh"?[^`"]*[[:space:]]complete([[:space:]`"]|$)'
     # shellcheck disable=SC2016  # literal fixture lines, never expanded
     for line in \
         'golem-work.sh complete {id}' \
         '"${CLAUDE_PLUGIN_ROOT}/scripts/golem-work.sh" complete "$id"' \
+        'golem-work.sh --golem "$g" complete "$id"' \
         '<skill-base-dir>/../../scripts/golem-work.sh complete'; do
-        n="$(printf '%s\n' "$line" | command grep -cE "$cmd_re" || true)"
+        n="$(printf '%s\n' "$line" | command grep -cE "$text_re" || true)"
         assert_equals "1" "$n" "command-form regex fires on: $line"
     done
     # shellcheck disable=SC2016  # literal fixture lines, never expanded
     for line in \
         'golem-work.sh finish {id}' \
-        '`golem-work.sh finish` (which writes this `complete` event)'; do
-        n="$(printf '%s\n' "$line" | command grep -cE "$cmd_re" || true)"
+        '`golem-work.sh register bash "x" --pid {pid}` then `finish {id}`'; do
+        n="$(printf '%s\n' "$line" | command grep -cE "$text_re" || true)"
         assert_equals "0" "$n" "command-form regex stays quiet on: $line"
     done
-    raw="$(command grep -rnE "$cmd_re" "$root" || true)"
-    # Positive control: the alias-defining script DOES spell it, so an empty raw
-    # scan means the walk read nothing (a wrong \$root), not a clean tree.
-    assert_contains "$raw" "/scripts/golem-work.sh:" \
-        "the command-form scan reached the corpus (it sees golem-work.sh's own rename note)"
+    # shellcheck disable=SC2016  # literal fixture line, never expanded
+    n="$(printf '%s\n' '"`golem-work.sh finish` (which writes this `complete` event)"' |
+        command grep -cE "$json_re" || true)"
+    assert_equals "0" "$n" "JSON command-form regex stays quiet on the schema's event note"
+    # Vacuity control, structural rather than content-anchored: the walk must
+    # reach the files that name the script at all (13 at #1209), so a wrong
+    # \$root cannot read as a clean tree — and no single comment's wording holds
+    # the test up.
+    n="$(command grep -rlE 'golem-work\.sh' "$root" | command grep -c . || true)"
+    assert_true "[ \"$n\" -ge 10 ]" "the command-form scan reaches the files naming golem-work.sh (found $n)"
+    raw="$(command grep -rnE "$text_re" "$root" --exclude='*.json' || true)
+$(command grep -rnE "$json_re" "$root" --include='*.json' || true)"
     hits="$(printf '%s\n' "$raw" | command grep -v '/scripts/golem-work\.sh:' | command grep . || true)"
     assert_equals "" "$hits" "no workflow file of any type spells the refused command form"
 }
