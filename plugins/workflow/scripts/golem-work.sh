@@ -135,7 +135,7 @@
 # reducers and golem-work.schema.json read, not a command anyone types.
 #
 # WRITER VS OBSERVER (issue #949) — the distinction the read path turns on.
-# `register`/`complete` are called BY a golem about ITSELF, so resolving the
+# `register`/`finish` are called BY a golem about ITSELF, so resolving the
 # registry from the ambient cwd and $GOLEM_ID is correct. `list`/`count` are
 # also called by an OBSERVER — the gate-watch liveness sweep, running in the main
 # checkout, asking about a golem — and there the ambient environment describes

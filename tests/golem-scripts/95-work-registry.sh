@@ -195,17 +195,22 @@ test_work_finish_unknown_id_is_idempotent() {
 # (`golem-work.sh complete {id}`) and the bare backticked verb beside a
 # `register` (`register workflow`/`complete`), which a golem-work-anchored grep
 # missed at two sites. The one sentence that names the old verb to explain the
-# rename is exempted by its `#1209` tag rather than by file.
+# rename (two lines of background-work.md) is exempted by its exact phrasing in
+# that file only, and the exemption is counted: a third exempted line — say a
+# runnable recipe that merely mentions `builtin` — fails rather than hides.
 test_work_docs_never_show_refused_verb() {
-    local root="$REPO_ROOT/plugins/workflow" corpus hits n
+    local root="$REPO_ROOT/plugins/workflow" corpus raw hits exempt n
     corpus="$(command find "$root/skills/golem" "$root/skills/ship-issue" \
         "$root/skills/next-issue" "$root/README.md" -name '*.md' -type f)"
     n="$(printf '%s\n' "$corpus" | command grep -c .)"
     assert_true "[ \"$n\" -ge 10 ]" "the doc corpus is non-empty (found $n files)"
     # shellcheck disable=SC2086  # word-split the newline-separated file list
-    hits="$(command grep -nE 'golem-work\.sh[^`]*[[:space:]]complete([[:space:]]|$)|`complete`' $corpus |
-        command grep -vE '#1209|builtin' || true)"
+    raw="$(command grep -nE 'golem-work\.sh[^`]*[[:space:]]complete([[:space:]]|$)|`complete`' $corpus || true)"
+    exempt='/golem/background-work\.md:[0-9]+:(Spell it `finish`, never `complete` \(#1209\)|bash.s string-evaluating `complete` builtin)'
+    hits="$(printf '%s\n' "$raw" | command grep -vE "$exempt" | command grep . || true)"
     assert_equals "" "$hits" "no workflow doc shows the refused \`complete\` verb"
+    n="$(printf '%s\n' "$raw" | command grep -cE "$exempt" || true)"
+    assert_equals "2" "$n" "exactly the two lines of the #1209 rename sentence are exempted"
 }
 
 # Two opens and one close leaves exactly one — the reduction matches on id, so a
