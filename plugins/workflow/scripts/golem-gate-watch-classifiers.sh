@@ -319,6 +319,13 @@ pane_is_multi_question_form() {
 #                               a bare comma matches ordinary prose like "he noted, 4
 #                               monitors flagged"). Covers `N monitor still running`
 #                               and the `N monitors` plural.
+#   `· N shell(s)`              a BARE background-shell count (#1203): `· 1 shell
+#                               still running`, `· 3 shells · ← for agents`. Before
+#                               this arm a shell counted only when a monitor count
+#                               followed it, so the commonest footer — a lone
+#                               backgrounded `git push` / CI poll — read as idle.
+#                               Same `·` lead-in as the monitor arm, so prose like
+#                               "ran 3 shell scripts" (no bullet) stays idle.
 #   `Waiting for … dynamic workflow` / `Waiting for … to finish`  the in-flight wait
 #                               lines (ship-issue's review workflow and the CI/force-
 #                               push Monitor). Anchored on the `Waiting for` prefix
@@ -344,6 +351,7 @@ pane_is_multi_question_form() {
 # both the push matcher (pane_is_turn_end) and the pull classifier
 # (pane_liveness_class) call it so their idle reads stay consistent.
 OWN_WORK_RE='(·[[:space:]]*|[0-9]+[[:space:]]+shells?,[[:space:]]*)[0-9]+[[:space:]]+monitors?([[:space:]]|$)'
+OWN_WORK_RE="${OWN_WORK_RE}|·[[:space:]]*[0-9]+[[:space:]]+shells?([[:space:]]|,|$)"
 OWN_WORK_RE="${OWN_WORK_RE}|[Ww]aiting for.*dynamic workflow"
 OWN_WORK_RE="${OWN_WORK_RE}|[Ww]aiting for.*to finish"
 OWN_WORK_RE="${OWN_WORK_RE}|[0-9]+/[0-9]+[[:space:]]+agents[[:space:]]+done"

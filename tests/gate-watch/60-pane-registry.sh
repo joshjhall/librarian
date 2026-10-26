@@ -17,10 +17,13 @@
 # Sourced by tests/golem-gate-watch.sh, which defines GATE_WATCH and sources
 # tests/lib/gate-watch-sandbox.sh first.
 
-# The footer under test matches NO OWN_WORK_RE alternative: the background
-# `git push` shape (`· 1 shell ·`) observed on 2026-10-03. Every case below
-# therefore turns on the registry alone.
-_REG_PANE="⏺ pushing"$'\n'"  ⏵⏵ auto mode on · 1 shell ·"
+# The footer under test matches NO OWN_WORK_RE alternative, so every case below
+# turns on the registry alone. It used to be the background `git push` shape
+# (`· 1 shell ·`, 2026-10-03), until #1203 taught OWN_WORK_RE that bare shell
+# count — so it is now a footer carrying no work chrome at all, standing in for
+# whatever the next redesign renders. _run_panes_registry also disables the
+# #1203 activity gate by default (the sandbox index is always fresh).
+_REG_PANE="⏺ pushing"$'\n'"  ⏵⏵ auto mode on · ← for agents"
 _REG_IDLE="golem-9"$'\t'"⚠ idle at prompt — turn ended, awaiting input (check pane)"
 
 # _reg_line <epoch> [id] — one `register` record for golem-9.
@@ -29,87 +32,8 @@ _reg_line() {
         "${2:-work-1-aaaa}" "$1"
 }
 
-# _run_panes_registry <pane> <registry> [gate-watch] — run the pane channel
-# against ONE tmux session (golem-9) whose worktree is a REAL linked worktree
-# (`count --worktree` derives the golem id and status dir through `git rev-parse
-# --git-common-dir`; a mkdir-ed path would read an empty registry and every case
-# would pass while exercising nothing — the #949 fixture lesson).
-#
-# <registry>: empty = no file; the literal DIR = a directory at the registry path
-# (unreadable as a file — tests may run as root, where chmod 000 reads fine);
-# anything else = the file's contents. [gate-watch] defaults to $GATE_WATCH; the
-# mutation and bound cases pass a copy. Mode comes from $GW_MODE (default
-# --once-panes). Sets REG_OUT / REG_RC.
-#
-# PATH carries real sleep + mktemp + cat (bounded_run's output relay) so
-# bounded_run is genuinely armed — except in --stream-panes, whose `sleep` must
-# be the poll stub; there mktemp is withheld so bounded_run_available is false and
-# the unbounded (still correct) path runs, rather than the watcher calling the
-# poll stub.
-_run_panes_registry() {
-    local pane="$1" registry="$2" gw="${3:-$GATE_WATCH}"
-    local tmp
-    tmp="$(command mktemp -d)" || return 1
-    tmp="$(cd "$tmp" && command pwd -P)" || return 1
-    # shellcheck disable=SC2064
-    trap "command rm -rf '$tmp'" RETURN
-
-    local git_scrub=(GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE GIT_COMMON_DIR
-        GIT_PREFIX GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES)
-    local g=(/usr/bin/env "${git_scrub[@]/#/-u}" git -C "$tmp")
-    "${g[@]}" init -q 2>/dev/null || return 1
-    "${g[@]}" config user.email "test@example.com" 2>/dev/null
-    "${g[@]}" config user.name "Test" 2>/dev/null
-    command printf 'seed\n' >"$tmp/seed.txt"
-    "${g[@]}" add seed.txt 2>/dev/null
-    "${g[@]}" -c commit.gpgsign=false commit -qm seed 2>/dev/null || return 1
-    "${g[@]}" worktree add -q "$tmp/.worktrees/issue-9" -b issue-9 >/dev/null 2>&1 || return 1
-    command mkdir -p "$tmp/.worktrees/.status"
-    # Status cache so the liveness sweep enumerates golem-9.
-    command printf '%s\n' '{"golem":"golem-9","issue":9}' >"$tmp/.worktrees/.status/golem-9.json"
-    case "$registry" in
-        '') ;;
-        DIR) command mkdir -p "$tmp/.worktrees/.status/golem-9.work.jsonl" ;;
-        *) command printf '%s\n' "$registry" >"$tmp/.worktrees/.status/golem-9.work.jsonl" ;;
-    esac
-
-    local stub_bin="$tmp/stub-bin" mode_args b
-    command mkdir -p "$stub_bin"
-    for b in bash git jq; do
-        command -v "$b" >/dev/null 2>&1 && command ln -s "$(command -v "$b")" "$stub_bin/$b"
-    done
-    read -r -a mode_args <<<"${GW_MODE:---once-panes}"
-    if [ "${mode_args[0]}" = "--stream-panes" ]; then
-        _write_poll_stub "$stub_bin" "$tmp/polls"
-    else
-        for b in sleep mktemp cat; do
-            command ln -s "$(command -v "$b")" "$stub_bin/$b"
-        done
-    fi
-    command cat >"$stub_bin/tmux" <<'TMUX_STUB'
-#!/usr/bin/env bash
-case "$1" in
-    ls) command printf '%s\n' "golem-9: 1 windows" ;;
-    capture-pane) command printf '%s\n' "$FAKE_PANE_TEXT" ;;
-    *) exit 0 ;;
-esac
-TMUX_STUB
-    command chmod +x "$stub_bin/tmux"
-
-    REG_RC=0
-    (
-        cd "$tmp" &&
-            bounded_run 60 /usr/bin/env "${git_scrub[@]/#/-u}" -uBASH_ENV \
-                PATH="$stub_bin" FAKE_PANE_TEXT="$pane" \
-                GOLEM_WORKTREE_DIR=.worktrees GOLEM_STATUS_DIR=.worktrees/.status \
-                GOLEM_BLOCK_TTL=3600 GOLEM_STALL_THRESHOLD=1200 \
-                GOLEM_PANE_REGISTRY_TIMEOUT="${GOLEM_PANE_REGISTRY_TIMEOUT:-3}" \
-                "$(command -v bash)" "$gw" "${mode_args[@]}"
-    ) >"$tmp/out" 2>/dev/null && REG_RC=0 || REG_RC=$?
-    REG_OUT="$(command cat "$tmp/out")"
-}
-REG_OUT=""
-REG_RC=""
+# _run_panes_registry lives in tests/lib/gate-watch-sandbox.sh — shared with
+# 80-idle-activity.sh, which needs the same real linked worktree (#1203).
 
 # _reg_scripts_copy <dest> — a private copy of the scripts dir, so a case can
 # mutate gate-watch or stub golem-work.sh (SCRIPT_DIR resolves from the script's

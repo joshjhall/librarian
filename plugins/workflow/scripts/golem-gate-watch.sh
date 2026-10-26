@@ -106,6 +106,10 @@
 #   GOLEM_WATCH_INTERVAL     poll interval for --stream*, seconds (default 5)
 #   GOLEM_STALL_THRESHOLD    liveness stall window, seconds (default 1200)
 #   GOLEM_HEARTBEAT_INTERVAL liveness poll interval, seconds (default 60)
+#   GOLEM_IDLE_ACTIVITY_WINDOW
+#                            no "idle at prompt" while the golem's transcript or
+#                            git index moved within this many seconds (default
+#                            120; 0 disables the gate) (#1203)
 #   GOLEM_LIVENESS_SUMMARY_INTERVAL
 #                            --stream-liveness aggregate-summary cadence, seconds
 #                            (default 900; 0 disables the summary) (#489)
@@ -173,6 +177,7 @@ SCRIPT_DIR="$(cd "$("$DIRNAME" "${BASH_SOURCE[0]}")" && pwd)"
 ttl="${GOLEM_BLOCK_TTL:-3600}"
 interval="${GOLEM_WATCH_INTERVAL:-5}"
 stall_threshold="${GOLEM_STALL_THRESHOLD:-1200}"
+idle_activity_window="${GOLEM_IDLE_ACTIVITY_WINDOW:-120}"
 heartbeat_interval="${GOLEM_HEARTBEAT_INTERVAL:-60}"
 # Coerce a non-numeric GOLEM_HEARTBEAT_INTERVAL (a plausible typo like "15m") back
 # to the default: it feeds the --stream-liveness cadence arithmetic below, and a
@@ -235,6 +240,11 @@ esac
 # recognizes it to apply the two-consecutive-poll debounce (below). A top-level
 # assignment so a SOURCED unit test sees it before calling either function.
 TURN_END_MSG="⚠ idle at prompt — turn ended, awaiting input (check pane)"
+# Liveness line for a golem whose pane/transcript reads idle but whose transcript
+# or git index moved within GOLEM_IDLE_ACTIVITY_WINDOW (#1203). No age in the
+# text, so liveness_stabilize does not re-emit it every tick; the `alive` prefix
+# makes liveness_summary count it as alive.
+RECENT_ACTIVITY_MSG="alive (turn ended, recent activity)"
 
 # Suggestion annotation (#977), appended to an idle line when the golem's prompt
 # is showing an autocomplete SUGGESTION rather than queued input. An ANNOTATION,
@@ -561,9 +571,11 @@ emit_transitions() {
 # test in tests/gate-watch/30-helpers-and-modes.sh is what pins it.
 panes_snapshot() {
     command -v tmux >/dev/null 2>&1 || return 0
-    local sessions sess pane
+    local sessions sess pane root
     sessions="$(tmux ls 2>/dev/null | "$GREP" -oE '^golem-[0-9]+' || true)"
     [ -z "$sessions" ] && return 0
+    # Empty root just disables the #1203 activity gate (fail open to the alert).
+    root="$(repo_root 2>/dev/null || true)"
     for sess in $sessions; do
         pane="$(tmux capture-pane -p -t "$sess" 2>/dev/null || true)"
         [ -z "$pane" ] && continue
@@ -580,9 +592,12 @@ panes_snapshot() {
             # turn-end footer, so the more-specific death read must win (#446).
             command printf '%s\t%s: %s (check pane)\n' \
                 "$sess" "$DIED_MSG_PREFIX" "$(pane_api_error_class "$pane")"
-        elif pane_is_turn_end "$pane" && ! pane_registry_has_work "${sess#golem-}"; then
+        elif pane_is_turn_end "$pane" && ! pane_registry_has_work "${sess#golem-}" &&
+            ! _golem_recent_activity "${sess#golem-}" "$root"; then
             # #1097: registered background work suppresses the idle line whatever
-            # the footer shows, exactly as pane_pending_own_work does.
+            # the footer shows, exactly as pane_pending_own_work does. #1203: so
+            # does recent transcript/index activity — a golem visibly writing is
+            # not idle, whatever chrome its footer has grown this release.
             # #977: annotate when the prompt is showing a suggestion, so the
             # operator is not left reading it as something someone queued.
             command printf '%s\t%s%s\n' "$sess" "$TURN_END_MSG" \
@@ -782,6 +797,65 @@ _golem_last_activity() {
     [ -n "$best" ] && command echo "$best"
 }
 
+# _golem_recent_activity <n> <root> — 0 when golem N has visibly progressed within
+# the last $idle_activity_window seconds (#1203). Every "idle at prompt" emission
+# asks this first: the footer and transcript reads decide what the pane LOOKS
+# like, and each footer redesign reopened a false idle (#517/#890/#1089/#1097,
+# then a bare `· 1 shell` in #1203). A golem whose transcript was written moments
+# ago is not idle whatever its footer says, so this covers the whole class at a
+# turn boundary rather than one more regex arm.
+#
+# Signals, chosen so no gate-watch observer refreshes them:
+#   - its Claude Code transcript (newest `*.jsonl` under the worktree's project
+#     dir; slug rule as golem-transcript-liveness.sh), written every record;
+#   - its worktree's git index, touched by every add/commit/checkout. A linked
+#     worktree's `.git` is a FILE (`gitdir: <path>`), so the index lives under
+#     that path, not `<wt>/.git/index` — read the pointer.
+# The index is NOT golem-exclusive: a read-only `git status` in that worktree
+# (an operator, an IDE) rewrites it too (measured). No observer script runs git
+# there, so the residual cost is a human-inspected golem staying muted for one
+# window. NOT the status-cache JSON: observers rewrite it on every tick, so it
+# would mute the alarm permanently.
+#
+# A FUTURE mtime (clock skew between a container and the host, a bad touch) is
+# not "recent": a negative age would satisfy `-le $win` forever, so it is
+# rejected and the idle verdict stands.
+#
+# The window cannot cover a long SILENT background job (a 7-minute pre-push writes
+# nothing) — that is the registry's job (pane_registry_has_work). No evidence, a
+# disabled window (0), or a malformed knob returns 1: the idle verdict stands and
+# the alarm still fires (fail OPEN — never a silent mute).
+_golem_recent_activity() {
+    local n="$1" root="$2" win="$idle_activity_window"
+    case "$win" in '' | *[!0-9]* | 0) return 1 ;; esac
+    [ -n "$root" ] || return 1
+    # No `-d "$wt"` precondition: the transcript is keyed by the worktree PATH, so
+    # it is readable even when the worktree dir is not (container-visible-only).
+    local wt="$root/$GOLEM_WORKTREE_DIR/issue-$n"
+    local index="$wt/.git/index" line=""
+    if [ -f "$wt/.git" ]; then
+        IFS= read -r line <"$wt/.git" 2>/dev/null || true
+        case "$line" in
+            "gitdir: /"*) index="${line#gitdir: }/index" ;;
+            "gitdir: "*) index="$wt/${line#gitdir: }/index" ;;
+        esac
+    fi
+    local abs="$wt" slug p m best=""
+    slug="${abs//[\/.]/-}"
+    for p in "${CLAUDE_PROJECTS_DIR:-$HOME/.claude/projects}/$slug"/*.jsonl "$index"; do
+        m="$(_mtime_epoch "$p")"
+        [ -z "$m" ] && continue
+        if [ -z "$best" ] || [ "$m" -gt "$best" ]; then
+            best="$m"
+        fi
+    done
+    [ -n "$best" ] || return 1
+    local now age
+    now="$("$DATE" +%s)" || return 1
+    age=$((now - best))
+    [ "$age" -ge 0 ] && [ "$age" -le "$win" ]
+}
+
 # Human-friendly "Nm" / "Ns" for a non-negative second count.
 _fmt_age() {
     local s="$1"
@@ -876,6 +950,10 @@ liveness_snapshot() {
                         continue
                         ;;
                     idle)
+                        if _golem_recent_activity "$n" "$root"; then
+                            command printf '%s\t%s\n' "golem-$n" "$RECENT_ACTIVITY_MSG"
+                            continue
+                        fi
                         # #977 suggestion annotation, as in panes_snapshot().
                         command printf '%s\t%s%s\n' "golem-$n" \
                             "⚠ idle at prompt — process up, not advancing (check pane)" \
@@ -936,11 +1014,19 @@ liveness_snapshot() {
                     continue
                     ;;
                 idle)
-                    command printf '%s\t%s\n' "golem-$n" "⚠ idle at prompt — process up, not advancing (transcript: turn ended)"
+                    if _golem_recent_activity "$n" "$root"; then
+                        command printf '%s\t%s\n' "golem-$n" "$RECENT_ACTIVITY_MSG"
+                    else
+                        command printf '%s\t%s\n' "golem-$n" "⚠ idle at prompt — process up, not advancing (transcript: turn ended)"
+                    fi
                     continue
                     ;;
                 errored)
-                    command printf '%s\t%s\n' "golem-$n" "⚠ idle at prompt — errored and idle (transcript: command error, check pane)"
+                    if _golem_recent_activity "$n" "$root"; then
+                        command printf '%s\t%s\n' "golem-$n" "$RECENT_ACTIVITY_MSG"
+                    else
+                        command printf '%s\t%s\n' "golem-$n" "⚠ idle at prompt — errored and idle (transcript: command error, check pane)"
+                    fi
                     continue
                     ;;
             esac

@@ -41,6 +41,16 @@
 #   **Run** the `Workflow` tool       ditto, the other spelling
 #   Invoke it as a background task    the ci-fixer harness site
 #   run_in_background                 a backgrounded Bash task
+#   git push  (a fenced command line, not --delete) / `git push`, (an inline
+#             step)                   the push, which runs the pre-push suite
+#   Poll `gh pr checks` / Poll for check completion   the CI wait
+#
+# The last three are #1203's: golems routinely backgrounded the push and the CI
+# poll without registering, so the registry backstop never fired. Measured on
+# the corpus at introduction: they fire in 5 sections, 2 of them unregistered
+# (execute-protocol's CI poll and its Option-2 `git push origin main`), and no
+# prose mention — the comma after `git push` and the leading `Poll` select the
+# imperative step, never a sentence ABOUT pushing or polling.
 #
 # The bolding is deliberate and was MEASURED, not guessed. A looser trigger
 # (any of invoke|run|start|dispatch near a tool name) fired on 11 sections, 8 of
@@ -131,6 +141,12 @@ function trigger_on(t) {
     if (t ~ /\*\*[Rr]un\*\*[[:space:]]+the[[:space:]]+`?Workflow`?[[:space:]]+tool/) return 1
     if (t ~ /[Ii]nvoke it as a background task/) return 1
     if (t ~ /run_in_background/) return 1
+    # #1203: a push runs the whole pre-push suite (461 s measured) and a CI poll
+    # waits minutes - both outlive a turn as often as the harness does.
+    if (t ~ /^[[:space:]]*git[[:space:]]+push/ && t !~ /--delete/) return 1
+    if (t ~ /`git push`,/) return 1
+    if (tolower(t) ~ /poll[[:space:]]+(for[[:space:]]+[^`]*)?`gh pr checks/) return 1
+    if (tolower(t) ~ /poll[[:space:]]+for[[:space:]]+check[[:space:]]+completion/) return 1
     return 0
 }
 function flush(   i, two, hit, named, hitline) {
@@ -447,6 +463,66 @@ FIXTURE
     # the gate turned off — the failure mode a too-eager lens always reaches.
     assert_not_contains "$CUR_VIOLATIONS" "Merely discussing the harness" \
         "A section that DISCUSSES the harness without invoking it is NOT flagged"
+}
+
+# #1203's triggers: the push and the CI poll, each the shape golems backgrounded
+# unregistered. Every positive has a near-miss negative, since a trigger that
+# fires on prose about pushing would be turned off within a week.
+test_push_and_poll_triggers() {
+    local tmp
+    tmp="$(command mktemp -d)" || {
+        skip_test "mktemp unavailable"
+        return 0
+    }
+    # shellcheck disable=SC2064  # expand $tmp now, at trap-registration time
+    trap "command rm -rf '$tmp'" RETURN
+
+    command cat >"$tmp/fixture.md" <<'FIXTURE'
+## Fenced main push
+   ```bash
+   git push origin main
+   ```
+
+## Fenced push registered
+   ```bash
+   git push -u origin HEAD
+   ```
+   Backgrounded: `golem-work.sh register bash "git push" --pid {pid}`.
+
+## Inline push step
+   - Commit `fix(ci): {summary}`, `git push`, and re-poll CI.
+
+## Branch prune
+   ```bash
+   git push origin --delete "$BRANCH" 2>/dev/null || true
+   ```
+
+## Prose about a push
+A `git push` executing the pre-push hook reads as idle.
+
+## Poll every 30s
+   Poll `gh pr checks` every 30 s until nothing is pending.
+
+## Bolded completion poll
+a. **Poll for check completion** against a wait threshold:
+
+## Prose about polling
+The CI poll calls `gh pr checks` under the hood.
+FIXTURE
+
+    scan_file "$tmp/fixture.md"
+    assert_contains "$CUR_VIOLATIONS" "Fenced main push" "A fenced git push command is flagged"
+    assert_not_contains "$CUR_VIOLATIONS" "Fenced push registered" \
+        "A fenced push whose section names golem-work.sh is NOT flagged"
+    assert_contains "$CUR_VIOLATIONS" "Inline push step" "An inline \`git push\`, step is flagged"
+    assert_contains "$CUR_VIOLATIONS" "Poll every 30s" "Poll \`gh pr checks\` is flagged"
+    assert_contains "$CUR_VIOLATIONS" "Bolded completion poll" "Poll for check completion is flagged"
+    assert_not_contains "$CUR_VIOLATIONS" "Branch prune" \
+        "A remote-branch delete (instant, no pre-push suite) is NOT flagged"
+    assert_not_contains "$CUR_VIOLATIONS" "Prose about a push" \
+        "Prose mentioning \`git push\` without the step comma is NOT flagged"
+    assert_not_contains "$CUR_VIOLATIONS" "Prose about polling" \
+        "Prose mentioning gh pr checks without a Poll imperative is NOT flagged"
 }
 
 # Pins the two-line window. The trigger wraps across a newline in real prose, so
@@ -800,6 +876,7 @@ run_test test_corpus_non_empty "Corpus discovery is non-empty (gate is not a no-
 run_test test_corpus_scope_is_deliberate "orchestrate/ is out of scope on purpose (observer, not writer)"
 run_test test_exemption_is_narrow "The exemption is one FILE, and it genuinely arms the gate"
 run_test test_negative_case_fires "scan_file flags unregistered sites and honors every satisfier"
+run_test test_push_and_poll_triggers "Push and CI-poll imperatives are triggers; prose and branch prunes are not (#1203)"
 run_test test_wrapped_trigger_is_detected "A trigger wrapped across two lines is detected (not single-line)"
 run_test test_scan_failure_is_loud_not_clean "A scan that could not run fails loud, never reads as clean (cycle-1 review)"
 run_test test_line_attribution_picks_the_trigger_line "The reported line is the trigger line, not a neighbour (cycle-1 review)"
