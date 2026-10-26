@@ -93,12 +93,19 @@ def _load(name):
     path = BIN_DIR / f"{name}.py"
     if not path.is_file():
         raise FileNotFoundError(f"no script at {path}")
-    module_name = name.replace("-", "_")
+    # Prefixed so a script named like a stdlib module (bin/json.py) cannot
+    # replace the real one in sys.modules for the rest of the session.
+    module_name = "bin_" + name.replace("-", "_")
     spec = importlib.util.spec_from_file_location(module_name, path)
     module = importlib.util.module_from_spec(spec)
-    # Register before exec so dataclasses and pickling can resolve the module.
+    # Register before exec so dataclasses and pickling can resolve the module,
+    # and unregister on failure so no half-initialized module is left behind.
     sys.modules[module_name] = module
-    spec.loader.exec_module(module)
+    try:
+        spec.loader.exec_module(module)
+    except BaseException:
+        sys.modules.pop(module_name, None)
+        raise
     return module
 
 
@@ -108,9 +115,9 @@ def load_script():
     return _load
 ```
 
-A test then reads `load_script("rotate-logs").main([...])`. Loading executes
-the module body, so a script keeps its side effects under
-`if __name__ == "__main__":`.
+A test then reads `load_script("rotate-logs").main([...])`; the module is
+registered as `bin_rotate_logs`. Loading executes the module body, so a script
+keeps its side effects under `if __name__ == "__main__":`.
 
 `tests/run.sh` — required: the single entry point (`core.md` § 6).
 

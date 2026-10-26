@@ -335,6 +335,76 @@ test_python_slice_conftest_template() {
         "The conftest template parses as Python"
 }
 
+# conftest_behavior <conftest.py>
+# Runs the loader in <conftest.py> against fixture scripts in a sandbox and
+# prints one `ok <check>` or `FAIL <check>: <why>` line per behavior the slice
+# promises. A stub `pytest` (just `fixture`) stands in, so pytest need not be
+# installed; the driver puts the sandbox on sys.path itself because -I ignores
+# PYTHONPATH.
+conftest_behavior() {
+    local sb="$WORKDIR/loader.$$"
+    command rm -rf "$sb"
+    command mkdir -p "$sb/bin" "$sb/tests"
+    command cp "$1" "$sb/tests/conftest.py"
+    command printf 'def fixture(f):\n    return f\n' >"$sb/pytest.py"
+    command printf 'import dataclasses\n\n\n@dataclasses.dataclass\nclass Row:\n    n: int\n\n\ndef double(x):\n    return x * 2\n' >"$sb/bin/foo-bar.py"
+    command printf 'MARKER = "script"\n' >"$sb/bin/json.py"
+    command printf 'raise RuntimeError("boom")\n' >"$sb/bin/broken.py"
+    command cat >"$sb/drive.py" <<'EOF'
+import importlib.util
+import sys
+
+sb = sys.argv[1]
+sys.path.insert(0, sb)
+spec = importlib.util.spec_from_file_location("conftest", sb + "/tests/conftest.py")
+conftest = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(conftest)
+load = conftest._load
+
+
+def check(name, ok, why=""):
+    print(f"ok {name}" if ok else f"FAIL {name}: {why}")
+
+
+m = load("foo-bar")
+check("hyphenated-loads", m.double(21) == 42, "double(21) != 42")
+check("registered", sys.modules.get(m.__name__) is m, f"{m.__name__} not in sys.modules")
+check("dataclass", m.Row(3).n == 3, "dataclass did not instantiate")
+load("json")
+import json
+
+check("stdlib-intact", hasattr(json, "dumps"), f"json is {sys.modules['json']!r}")
+before = set(sys.modules)
+try:
+    load("broken")
+    check("raise-propagates", False, "no exception")
+except RuntimeError:
+    check("raise-propagates", True)
+check("no-half-module", set(sys.modules) == before, str(set(sys.modules) - before))
+try:
+    load("missing")
+    check("missing-raises", False, "no exception")
+except FileNotFoundError:
+    check("missing-raises", True)
+EOF
+    python3 -I "$sb/drive.py" "$sb" 2>&1
+    command rm -rf "$sb"
+}
+
+test_python_slice_conftest_behavior() {
+    local f="$WORKDIR/conftest.py" out
+    if ! command -v python3 >/dev/null 2>&1; then
+        skip_test "python3 unavailable — conftest behavior not checked"
+        return 0
+    fi
+    slice_fence_block python "$SLICES_DIR/python.md" >"$f"
+    out="$(conftest_behavior "$f")"
+    assert_contains "$out" "ok missing-raises" \
+        "The loader driver ran to its last check (got: $out)"
+    assert_output_empty "$(command printf '%s\n' "$out" | command grep -v '^ok ' || true)" \
+        "The conftest loader keeps every promised behavior"
+}
+
 # required_pin <file>
 # Prints the bare version from a top-level `required-version = "==X.Y.Z"` line
 # (ruff.toml, uv.toml), or nothing when there is none.
@@ -373,21 +443,29 @@ slice_ci_images() {
 # backticked path (e.g. `uv.toml` — required.) — the block the slice says IS
 # that file. Empty when the label or its fence is absent or unterminated.
 fence_after_label() {
-    local label="$1" line armed=0 fence="" block="$WORKDIR/label.$$"
+    # Every fence is tracked (fence_run/fence_closes, as slice_fence_block
+    # does), so a label-shaped line INSIDE an earlier fence is content and can
+    # never arm; only a fence opened while armed is captured.
+    local label="$1" line armed=0 fence="" capture=0 block="$WORKDIR/label.$$"
     : >"$block"
     while IFS= read -r line || [ -n "$line" ]; do
         if [ -n "$fence" ]; then
             if fence_closes "$fence" "$line"; then
-                command cat "$block"
-                command rm -f "$block"
-                return 0
+                if [ "$capture" -eq 1 ]; then
+                    command cat "$block"
+                    command rm -f "$block"
+                    return 0
+                fi
+                fence=""
+            elif [ "$capture" -eq 1 ]; then
+                command printf '%s\n' "$line" >>"$block"
             fi
-            command printf '%s\n' "$line" >>"$block"
             continue
         fi
         fence_run "$line"
         if [ -n "$FENCE_RUN" ]; then
-            [ "$armed" -eq 1 ] && fence="$FENCE_RUN"
+            fence="$FENCE_RUN"
+            [ "$armed" -eq 1 ] && capture=1
             continue
         fi
         case "$line" in
@@ -467,6 +545,29 @@ test_python_slice_table_pins() {
         "The Tools & versions pytest row equals the requirements.txt pin"
 }
 
+test_python_slice_python_floor() {
+    local slice="$SLICES_DIR/python.md" floor row target line
+    floor="$(fence_after_label .python-version "$slice")"
+    row="$(table_pin python "$slice")"
+    row="${row%% *}"
+    target=""
+    while IFS= read -r line || [ -n "$line" ]; do
+        case "$line" in
+            'target-version = "py'*'"')
+                target="${line#*\"py}"
+                target="${target%\"}"
+                ;;
+        esac
+    done <"$REPO_ROOT/ruff.toml"
+    assert_not_empty "$floor" "python.md's .python-version block yields a floor"
+    assert_not_empty "$target" "The repo's ruff.toml has a target-version"
+    assert_equals "$floor" "$row" \
+        "The Tools & versions python row equals the .python-version floor"
+    # 3.11 -> py311: ruff must not lint for syntax the floor cannot run.
+    assert_equals "$target" "$(command printf '%s' "$floor" | command tr -d .)" \
+        "ruff.toml's target-version names the .python-version floor"
+}
+
 test_python_slice_prepush_glob() {
     local slice="$SLICES_DIR/python.md"
     # Measured on lefthook 2.2.1: `dir/**/*.py` does not match a flat
@@ -528,6 +629,10 @@ test_fixture_label_and_table_parsing() {
     assert_equals "9.9.9" "$(table_pin uv "$slice")" "table_pin reads the Pinned version cell"
     assert_output_empty "$(fence_after_label missing.toml "$slice")" \
         "An absent label yields nothing"
+    # A label-shaped line inside an earlier fence is content: it must not arm.
+    command printf '```md\n`uv.toml` — example label inside a fence\n```\n\n```toml\nrequired-version = "==1.0.0"\n```\n\n`uv.toml` — required.\n\n```toml\nrequired-version = "==9.9.9"\n```\n' >"$slice"
+    assert_equals 'required-version = "==9.9.9"' "$(fence_after_label uv.toml "$slice")" \
+        "A label inside an earlier fence does not arm; the real label's fence is read"
 }
 
 test_fixture_sentinel_in_comment_only() {
@@ -737,8 +842,10 @@ run_test test_shell_slice_rc_matches_repo "The shell slice's .shellcheckrc block
 run_test test_python_slice_ruff_matches_repo "The python slice's ruff.toml block matches the repo's ruff.toml"
 run_test test_python_slice_run_sh_template "The python slice's tests/run.sh template parses and keeps the 77 sentinel"
 run_test test_python_slice_conftest_template "The python slice's conftest.py template parses"
+run_test test_python_slice_conftest_behavior "The python slice's conftest loader keeps its promised behavior"
 run_test test_python_slice_ci_images "The python slice's GitLab images are shelled variants at the ruff/uv pins"
 run_test test_python_slice_table_pins "The python slice's Tools & versions pins equal its config blocks"
+run_test test_python_slice_python_floor "The python slice's floor agrees across .python-version, the table, and target-version"
 run_test test_python_slice_prepush_glob "The python slice's pre-push glob matches flat bin/ and tests/ files"
 run_test test_fixture_ci_image_parsing "Fixture: CI image and pin parsing"
 run_test test_fixture_ci_image_problems_fire "Fixture: a shell-less or stale CI image is reported"
