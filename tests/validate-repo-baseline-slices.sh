@@ -181,14 +181,12 @@ rc_settings() {
     done <"$1"
 }
 
-# slice_fence_settings <lang> <slice-file>
-# Prints the settings lines (as rc_settings) of the FIRST ```<lang> fence under
-# the slice's `## Config files` heading — the slice's copy of a repo config file
-# (`ini` for shell's .shellcheckrc, `toml` for python's ruff.toml). TOML section
-# headers like `[lint]` are kept, so a setting moved between tables is drift.
+# slice_fence_block <lang> <slice-file>
+# Prints, verbatim, the FIRST ```<lang> fence under the slice's
+# `## Config files` heading — the slice's literal copy of a file it ships.
 # Prints nothing when the heading or the fence is absent or the fence is
 # unterminated, which the caller treats as a failure, never as a match.
-slice_fence_settings() {
+slice_fence_block() {
     # Fences go through fence_run/fence_closes, so a `## ` line inside any
     # fence is example content, never a heading. `capture` is set only on a
     # <lang> opener inside the section, and its close is the only successful
@@ -200,7 +198,7 @@ slice_fence_settings() {
         if [ -n "$fence" ]; then
             if fence_closes "$fence" "$line"; then
                 if [ "$capture" -eq 1 ]; then
-                    rc_settings "$block"
+                    command cat "$block"
                     command rm -f "$block"
                     return 0
                 fi
@@ -224,6 +222,18 @@ slice_fence_settings() {
         esac
     done <"$1"
     command rm -f "$block"
+}
+
+# slice_fence_settings <lang> <slice-file>
+# The settings lines (as rc_settings) of slice_fence_block's block — the form a
+# config copy is compared in (`ini` for shell's .shellcheckrc, `toml` for
+# python's ruff.toml). TOML table headers like `[lint]` are kept, so a setting
+# moved between tables is drift. Empty whenever slice_fence_block is.
+slice_fence_settings() {
+    local raw="$WORKDIR/settings.$$"
+    slice_fence_block "$@" >"$raw"
+    rc_settings "$raw"
+    command rm -f "$raw"
 }
 
 # A minimal fixture contract with three required headings.
@@ -297,7 +307,52 @@ test_python_slice_ruff_matches_repo() {
         "python.md's ruff.toml block has the same settings lines as the repo's ruff.toml"
 }
 
+test_python_slice_run_sh_template() {
+    local f="$WORKDIR/run.sh"
+    slice_fence_block bash "$SLICES_DIR/python.md" >"$f"
+    assert_true "[ -s \"$f\" ]" \
+        "python.md's Config files section carries a non-empty \`\`\`bash block (tests/run.sh)"
+    assert_true "bash -n \"$f\"" \
+        "The tests/run.sh template parses as bash"
+    assert_contains "$(command cat "$f")" "exit 77" \
+        "The tests/run.sh template reports a missing runner with the 77 skip sentinel"
+    assert_contains "$(command cat "$f")" "uv run --no-project --with-requirements tests/requirements.txt" \
+        "The tests/run.sh template runs pytest through the pinned requirements file"
+}
+
+test_python_slice_conftest_template() {
+    local f="$WORKDIR/conftest.py"
+    slice_fence_block python "$SLICES_DIR/python.md" >"$f"
+    assert_true "[ -s \"$f\" ]" \
+        "python.md's Config files section carries a non-empty \`\`\`python block (tests/conftest.py)"
+    assert_contains "$(command cat "$f")" "spec_from_file_location" \
+        "The conftest template loads scripts by path"
+    if ! command -v python3 >/dev/null 2>&1; then
+        skip_test "python3 unavailable — conftest syntax not checked"
+        return 0
+    fi
+    assert_true "python3 -I -c 'import ast, sys; ast.parse(open(sys.argv[1]).read())' \"$f\"" \
+        "The conftest template parses as Python"
+}
+
 # --- Negative fixtures: the checker must fire --------------------------------
+
+test_fixture_template_syntax_fires() {
+    local slice="$WORKDIR/broken-templates.md" f="$WORKDIR/broken.out"
+    command printf '# S\n\n## Config files\n\n```bash\nif true; then\n```\n\n```python\ndef f(:\n```\n' >"$slice"
+    slice_fence_block bash "$slice" >"$f"
+    assert_contains "$(command cat "$f")" "if true; then" \
+        "The broken bash template is the one read back"
+    assert_true "! bash -n \"$f\" 2>/dev/null" \
+        "A bash template with a syntax error fails bash -n"
+    if ! command -v python3 >/dev/null 2>&1; then
+        skip_test "python3 unavailable"
+        return 0
+    fi
+    slice_fence_block python "$slice" >"$f"
+    assert_true "! python3 -I -c 'import ast, sys; ast.parse(open(sys.argv[1]).read())' \"$f\" 2>/dev/null" \
+        "A python template with a syntax error fails to parse"
+}
 
 test_fixture_fence_lang_selects() {
     local slice="$WORKDIR/lang.md"
@@ -480,6 +535,9 @@ run_test test_slices_exist "At least one language slice exists"
 run_test test_every_slice_conforms "Every language slice carries the required headings in order"
 run_test test_shell_slice_rc_matches_repo "The shell slice's .shellcheckrc block matches the repo's .shellcheckrc"
 run_test test_python_slice_ruff_matches_repo "The python slice's ruff.toml block matches the repo's ruff.toml"
+run_test test_python_slice_run_sh_template "The python slice's tests/run.sh template parses and keeps the 77 sentinel"
+run_test test_python_slice_conftest_template "The python slice's conftest.py template parses"
+run_test test_fixture_template_syntax_fires "Fixture: a template with a syntax error is caught"
 run_test test_fixture_fence_lang_selects "Fixture: the fence reader captures only the requested language"
 run_test test_fixture_conforming "Fixture: a conforming slice passes"
 run_test test_fixture_missing_heading "Fixture: a missing heading is reported"

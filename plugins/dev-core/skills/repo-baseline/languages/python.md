@@ -216,7 +216,7 @@ GitLab CI — `lint` and `test` stages:
 ```yaml
 python-lint:
   stage: lint
-  image: ghcr.io/astral-sh/ruff:0.16.10 # pinned tag, never :latest
+  image: ghcr.io/astral-sh/ruff:0.16.10-alpine # pinned tag, never :latest
   script:
     - ruff check .
     - ruff format --check .
@@ -228,12 +228,19 @@ python-test:
     - bash tests/run.sh
 ```
 
-Use a **Debian-based** uv image for the test job (`-trixie-slim`, or the
-`-debian-slim` alias; `-bookworm-slim` is not published at this uv version).
-The `-alpine` variant has no bash, so `bash tests/run.sh` exits 127; the bare
-`ghcr.io/astral-sh/uv:<v>` tag is distroless and has no shell at all. Image tags
-are a second copy of the ruff and uv pins — bump them with `ruff.toml` and
-`uv.toml`.
+Pick each image variant by what its `script:` needs, because the bare tags have
+no shell: `ghcr.io/astral-sh/ruff:<v>` is the `/ruff` binary alone with
+`ENTRYPOINT ["/ruff"]`, and `ghcr.io/astral-sh/uv:<v>` is likewise distroless,
+so GitLab cannot run a `script:` in either.
+
+- **Lint** uses the ruff `-alpine` variant: it has `/bin/sh`, ruff on PATH, and
+  an empty entrypoint, and the job needs nothing beyond `ruff`.
+- **Test** uses a **Debian-based** uv image (`-trixie-slim`, or the
+  `-debian-slim` alias; `-bookworm-slim` is not published at this uv version),
+  because uv's `-alpine` variant has no bash and `bash tests/run.sh` exits 127.
+
+Image tags are a second copy of the ruff and uv pins — bump them with
+`ruff.toml` and `uv.toml`.
 
 ## Test framework & runner
 
