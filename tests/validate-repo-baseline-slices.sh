@@ -453,7 +453,12 @@ test_python_slice_table_pins() {
     fence_after_label tests/requirements.txt "$slice" >"$req"
     pytest_pin="$(command cat "$req")"
     pytest_pin="${pytest_pin#pytest==}"
+    # Non-empty first: two vanished values compare equal, which is not agreement.
     assert_not_empty "$pytest_pin" "python.md's tests/requirements.txt block yields a pytest pin"
+    assert_not_empty "$(required_pin "$uv_block")" "python.md's uv.toml block yields a uv pin"
+    assert_not_empty "$(table_pin ruff "$slice")" "The Tools & versions table has a ruff pin"
+    assert_not_empty "$(table_pin uv "$slice")" "The Tools & versions table has a uv pin"
+    assert_not_empty "$(table_pin pytest "$slice")" "The Tools & versions table has a pytest pin"
     assert_equals "$(required_pin "$REPO_ROOT/ruff.toml")" "$(table_pin ruff "$slice")" \
         "The Tools & versions ruff row equals the ruff.toml pin"
     assert_equals "$(required_pin "$uv_block")" "$(table_pin uv "$slice")" \
