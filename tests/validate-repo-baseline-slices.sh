@@ -368,29 +368,110 @@ slice_ci_images() {
     done <"$1"
 }
 
-test_python_slice_ci_images() {
-    local ruff_pin uv_block="$WORKDIR/uv.toml" uv_pin images uv_ok
-    ruff_pin="$(required_pin "$REPO_ROOT/ruff.toml")"
-    # The slice carries two pins (ruff.toml's, uv.toml's); uv's is the one that
-    # is not ruff's. Equal versions would leave uv_pin empty, which fails below.
-    command grep -E '^required-version = "==[0-9.]+"$' "$SLICES_DIR/python.md" |
-        command grep -v "==$ruff_pin\"" >"$uv_block" || true
-    uv_pin="$(required_pin "$uv_block")"
-    images="$(slice_ci_images "$SLICES_DIR/python.md")"
-    assert_not_empty "$ruff_pin" "The repo's ruff.toml yields a ruff pin"
-    assert_not_empty "$uv_pin" "python.md's uv.toml block yields a uv pin"
+# fence_after_label <label> <slice-file>
+# Prints, verbatim, the first fence that follows the line naming <label> as a
+# backticked path (e.g. `uv.toml` — required.) — the block the slice says IS
+# that file. Empty when the label or its fence is absent or unterminated.
+fence_after_label() {
+    local label="$1" line armed=0 fence="" block="$WORKDIR/label.$$"
+    : >"$block"
+    while IFS= read -r line || [ -n "$line" ]; do
+        if [ -n "$fence" ]; then
+            if fence_closes "$fence" "$line"; then
+                command cat "$block"
+                command rm -f "$block"
+                return 0
+            fi
+            command printf '%s\n' "$line" >>"$block"
+            continue
+        fi
+        fence_run "$line"
+        if [ -n "$FENCE_RUN" ]; then
+            [ "$armed" -eq 1 ] && fence="$FENCE_RUN"
+            continue
+        fi
+        case "$line" in
+            '`'"$label"'` '*) armed=1 ;;
+        esac
+    done <"$2"
+    command rm -f "$block"
+}
+
+# table_pin <tool> <slice-file>
+# Prints the `Pinned version` cell of <tool>'s row in the Tools & versions table
+# (the third column), trimmed.
+table_pin() {
+    local line cell
+    while IFS= read -r line || [ -n "$line" ]; do
+        case "$line" in
+            "| $1 "*)
+                cell="${line#|*|*|}"
+                cell="${cell%%|*}"
+                cell="${cell#"${cell%%[![:space:]]*}"}"
+                command printf '%s\n' "${cell%"${cell##*[![:space:]]}"}"
+                return 0
+                ;;
+        esac
+    done <"$2"
+}
+
+# ci_image_problems <slice-file> <ruff-pin> <uv-pin>
+# Prints one line per GitLab image that cannot run its job's script:. Empty
+# output means both jobs use a shell-bearing variant at the given pins.
+ci_image_problems() {
+    local images
+    images="$(slice_ci_images "$1")"
     # The bare ruff tag is the /ruff binary with ENTRYPOINT ["/ruff"] and no
     # shell, so GitLab cannot run script: in it; -alpine has /bin/sh.
-    assert_contains "$images" "python-lint ghcr.io/astral-sh/ruff:$ruff_pin-alpine" \
-        "GitLab python-lint uses the shelled ruff -alpine image at the ruff.toml pin"
+    case "$images" in
+        *"python-lint ghcr.io/astral-sh/ruff:$2-alpine"*) ;;
+        *) command printf 'python-lint is not ruff:%s-alpine\n' "$2" ;;
+    esac
     # tests/run.sh is bash: uv's bare tag is distroless and -alpine has no bash.
     case "$images" in
-        *"python-test ghcr.io/astral-sh/uv:$uv_pin-trixie-slim"* | \
-            *"python-test ghcr.io/astral-sh/uv:$uv_pin-debian-slim"*) uv_ok=1 ;;
-        *) uv_ok=0 ;;
+        *"python-test ghcr.io/astral-sh/uv:$3-trixie-slim"* | \
+            *"python-test ghcr.io/astral-sh/uv:$3-debian-slim"*) ;;
+        *) command printf 'python-test is not a Debian uv:%s image\n' "$3" ;;
     esac
-    assert_equals "1" "$uv_ok" \
-        "GitLab python-test uses a Debian uv image at the uv.toml pin (got: $images)"
+}
+
+test_python_slice_ci_images() {
+    local slice="$SLICES_DIR/python.md" uv_block="$WORKDIR/uv.toml" ruff_pin uv_pin
+    ruff_pin="$(required_pin "$REPO_ROOT/ruff.toml")"
+    fence_after_label uv.toml "$slice" >"$uv_block"
+    uv_pin="$(required_pin "$uv_block")"
+    assert_not_empty "$ruff_pin" "The repo's ruff.toml yields a ruff pin"
+    assert_not_empty "$uv_pin" "python.md's uv.toml block yields a uv pin"
+    assert_output_empty "$(ci_image_problems "$slice" "$ruff_pin" "$uv_pin")" \
+        "GitLab jobs use shell-bearing images at the ruff.toml / uv.toml pins"
+}
+
+test_python_slice_table_pins() {
+    local slice="$SLICES_DIR/python.md" uv_block="$WORKDIR/uv.toml"
+    local req="$WORKDIR/req.txt" pytest_pin
+    fence_after_label uv.toml "$slice" >"$uv_block"
+    fence_after_label tests/requirements.txt "$slice" >"$req"
+    pytest_pin="$(command cat "$req")"
+    pytest_pin="${pytest_pin#pytest==}"
+    assert_not_empty "$pytest_pin" "python.md's tests/requirements.txt block yields a pytest pin"
+    assert_equals "$(required_pin "$REPO_ROOT/ruff.toml")" "$(table_pin ruff "$slice")" \
+        "The Tools & versions ruff row equals the ruff.toml pin"
+    assert_equals "$(required_pin "$uv_block")" "$(table_pin uv "$slice")" \
+        "The Tools & versions uv row equals the uv.toml block's pin"
+    assert_equals "$pytest_pin" "$(table_pin pytest "$slice")" \
+        "The Tools & versions pytest row equals the requirements.txt pin"
+}
+
+test_python_slice_prepush_glob() {
+    local slice="$SLICES_DIR/python.md"
+    # Measured on lefthook 2.2.1: `dir/**/*.py` does not match a flat
+    # `dir/x.py`, so that glob silently skips this layout's tests.
+    # Only YAML glob lines count — the slice's prose quotes the bad pattern as
+    # a warning, and that must not trip the check.
+    assert_true "! command grep -E '^[[:space:]]+(glob: |- )\"[^\"]*/\*\*/\*\.py\"' \"$slice\" >/dev/null" \
+        "No hook glob in python.md uses dir/**/*.py (misses flat bin/x.py, tests/test_x.py)"
+    assert_true "command grep -Fx '        - \"tests/**\"' \"$slice\" >/dev/null" \
+        "The pre-push tests glob covers the whole tests/ directory"
 }
 
 # --- Negative fixtures: the checker must fire --------------------------------
@@ -401,12 +482,47 @@ test_fixture_ci_image_parsing() {
     assert_equals 'python-lint ghcr.io/astral-sh/ruff:1.2.3
 python-test ghcr.io/astral-sh/uv:4.5.6-alpine' "$(slice_ci_images "$slice")" \
         "Each job is paired with its own image, comment stripped"
-    assert_true "case \"\$(slice_ci_images \"$slice\")\" in *ruff:1.2.3-alpine*) false ;; *) true ;; esac" \
-        "A bare ruff tag does not satisfy the -alpine requirement"
     command printf '# c\nrequired-version = "==0.9.1"\nx = 1\n' >"$pin"
     assert_equals "0.9.1" "$(required_pin "$pin")" "required_pin reads the bare version"
     command printf 'required-version = ">=0.9"\n' >"$pin"
     assert_output_empty "$(required_pin "$pin")" "A non-exact pin yields nothing"
+}
+
+test_fixture_ci_image_problems_fire() {
+    local slice="$WORKDIR/images2.md" got
+    command printf 'python-lint:\n  image: ghcr.io/astral-sh/ruff:1.2.3-alpine\npython-test:\n  image: ghcr.io/astral-sh/uv:4.5.6-trixie-slim\n' >"$slice"
+    assert_output_empty "$(ci_image_problems "$slice" 1.2.3 4.5.6)" \
+        "Shell-bearing images at the given pins report no problem"
+    command printf 'python-lint:\n  image: ghcr.io/astral-sh/ruff:1.2.3\npython-test:\n  image: ghcr.io/astral-sh/uv:4.5.6-alpine\n' >"$slice"
+    got="$(ci_image_problems "$slice" 1.2.3 4.5.6)"
+    assert_contains "$got" "python-lint is not ruff:1.2.3-alpine" "A bare ruff tag is reported"
+    assert_contains "$got" "python-test is not a Debian uv:4.5.6 image" "A uv -alpine tag is reported"
+    command printf 'python-lint:\n  image: ghcr.io/astral-sh/ruff:1.2.3-alpine\npython-test:\n  image: ghcr.io/astral-sh/uv:4.5.6-trixie-slim\n' >"$slice"
+    assert_contains "$(ci_image_problems "$slice" 1.2.4 4.5.6)" "python-lint is not ruff:1.2.4-alpine" \
+        "An image tag left behind by a pin bump is reported"
+}
+
+test_fixture_prepush_glob_regex() {
+    local f="$WORKDIR/glob.md"
+    command printf '      glob: "{bin,tests}/**/*.py"\n' >"$f"
+    assert_true "command grep -E '^[[:space:]]+(glob: |- )\"[^\"]*/\*\*/\*\.py\"' \"$f\" >/dev/null" \
+        "A scalar dir/**/*.py glob line is caught"
+    command printf '      glob:\n        - "bin/**/*.py"\n' >"$f"
+    assert_true "command grep -E '^[[:space:]]+(glob: |- )\"[^\"]*/\*\*/\*\.py\"' \"$f\" >/dev/null" \
+        "A list-item dir/**/*.py glob is caught"
+    command printf 'Never use `"{bin,tests}/**/*.py"` here.\n      glob: "*.py"\n' >"$f"
+    assert_true "! command grep -E '^[[:space:]]+(glob: |- )\"[^\"]*/\*\*/\*\.py\"' \"$f\" >/dev/null" \
+        "Prose quoting the pattern, and a plain *.py glob, are not caught"
+}
+
+test_fixture_label_and_table_parsing() {
+    local slice="$WORKDIR/labels.md"
+    command printf '| Tool | P | Pinned version | S |\n| uv   | x | 9.9.9          | y |\n\n`ruff.toml` — required.\n\n```toml\nrequired-version = "==1.0.0"\n```\n\n`uv.toml` — required.\n\n```toml\nrequired-version = "==9.9.9"\n```\n' >"$slice"
+    assert_equals 'required-version = "==9.9.9"' "$(fence_after_label uv.toml "$slice")" \
+        "fence_after_label reads the fence after its own label, not an earlier toml fence"
+    assert_equals "9.9.9" "$(table_pin uv "$slice")" "table_pin reads the Pinned version cell"
+    assert_output_empty "$(fence_after_label missing.toml "$slice")" \
+        "An absent label yields nothing"
 }
 
 test_fixture_sentinel_in_comment_only() {
@@ -617,7 +733,12 @@ run_test test_python_slice_ruff_matches_repo "The python slice's ruff.toml block
 run_test test_python_slice_run_sh_template "The python slice's tests/run.sh template parses and keeps the 77 sentinel"
 run_test test_python_slice_conftest_template "The python slice's conftest.py template parses"
 run_test test_python_slice_ci_images "The python slice's GitLab images are shelled variants at the ruff/uv pins"
+run_test test_python_slice_table_pins "The python slice's Tools & versions pins equal its config blocks"
+run_test test_python_slice_prepush_glob "The python slice's pre-push glob matches flat bin/ and tests/ files"
 run_test test_fixture_ci_image_parsing "Fixture: CI image and pin parsing"
+run_test test_fixture_ci_image_problems_fire "Fixture: a shell-less or stale CI image is reported"
+run_test test_fixture_prepush_glob_regex "Fixture: the pre-push glob check catches glob lines, not prose"
+run_test test_fixture_label_and_table_parsing "Fixture: label-anchored fence and table-pin parsing"
 run_test test_fixture_sentinel_in_comment_only "Fixture: a commented-out 77 sentinel is not the sentinel"
 run_test test_fixture_template_syntax_fires "Fixture: a template with a syntax error is caught"
 run_test test_fixture_fence_lang_selects "Fixture: the fence reader captures only the requested language"

@@ -168,11 +168,22 @@ pre-push:
       run: ruff check . && ruff format --check .
 
     tests:
-      glob: "{bin,tests}/**/*.py"
+      glob:
+        - "bin/**"
+        - "tests/**"
+        - "uv.toml"
+        - ".python-version"
       skip:
         - run: "! command -v uv >/dev/null 2>&1"
       run: bash tests/run.sh
 ```
+
+The `tests` glob names whole directories plus the runner's own pin files, so a
+push that touches only `tests/requirements.txt` or `uv.toml` still runs the
+suite. Never narrow it to `"{bin,tests}/**/*.py"`: lefthook's default matcher
+(measured on 2.2.1) does **not** match a flat `bin/rotate-logs.py` or
+`tests/test_rotate.py` against `dir/**/*.py`, so the suite would silently skip on
+exactly this layout's commonest pushes — and a skipped hook reads as a pass.
 
 A bare `ruff` here is safe because of `required-version`: a wrong local ruff
 exits 2 rather than formatting differently. Pre-push re-runs ruff over the whole
