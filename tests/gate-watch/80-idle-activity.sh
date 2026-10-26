@@ -29,6 +29,7 @@ test_idle_activity_issue_footers_are_own_work() {
         "✻ Baked for 2m · done 1:06 AM · 1 shell still running" \
         "⏵⏵ auto mode on · 1 shell · ← for agents · ↓ to manage" \
         "⏵⏵ auto mode on · 3 shells · ← for agents" \
+        "⏵⏵ auto mode on · 1 shell, ← for agents" \
         "✻ Cooked for 9s · 2 shells still running" \
         "⏵⏵ auto mode on · 1 shell, 2 monitors · ←" \
         "◯ next-issue-review  ▰▰▰▰▱▱▱  4/6 · 11s"; do
@@ -47,6 +48,7 @@ test_idle_activity_shell_arm_is_anchored() {
         "ran 3 shell scripts against the fixture" \
         "Opened 1 shell, then exited" \
         "PR #514 · 12 shellfish recipes" \
+        "finish · 2 shellac coats" \
         "  ⏵⏵ auto mode on · ← for agents"; do
         assert_equals "1" "$(_pane_rc pane_pending_own_work "$prose")" \
             "Not own work: $prose"
@@ -87,6 +89,18 @@ test_idle_activity_relative_gitdir_index() {
         _run_panes_registry "$_ACT_PANE" ""
     assert_contains "$REG_OUT" "idle at prompt" \
         "Control: the same relative pointer to an aged index still alerts"
+}
+
+# The default branch: `.git` is a plain DIRECTORY (a clone), so no pointer is read.
+test_idle_activity_plain_gitdir_index() {
+    GOLEM_IDLE_ACTIVITY_WINDOW=120 REG_INDEX_AGE=5 REG_GITDIR_PLAIN=1 \
+        _run_panes_registry "$_ACT_PANE" ""
+    assert_not_contains "$REG_OUT" "idle at prompt" \
+        "A fresh index in a plain .git directory suppresses the idle push"
+    GOLEM_IDLE_ACTIVITY_WINDOW=120 REG_INDEX_AGE=600 REG_GITDIR_PLAIN=1 \
+        _run_panes_registry "$_ACT_PANE" ""
+    assert_contains "$REG_OUT" "idle at prompt" \
+        "Control: an aged index in a plain .git directory still alerts"
 }
 
 # A future-dated mtime (container/host clock skew) has a negative age, which a

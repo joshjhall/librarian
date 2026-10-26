@@ -177,6 +177,7 @@ run_fragment_test test_idle_activity_shell_arm_is_anchored "idle activity (#1203
 run_fragment_test test_idle_activity_fresh_transcript_suppresses_push "idle activity (#1203): a fresh transcript suppresses the idle push"
 run_fragment_test test_idle_activity_fresh_index_suppresses_push "idle activity (#1203): a fresh worktree index suppresses the idle push"
 run_fragment_test test_idle_activity_relative_gitdir_index "idle activity (#1203): a relative gitdir pointer still finds the index"
+run_fragment_test test_idle_activity_plain_gitdir_index "idle activity (#1203): a plain .git directory's index is read"
 run_fragment_test test_idle_activity_future_mtime_is_not_recent "idle activity (#1203): a future-dated mtime never mutes the alert"
 run_fragment_test test_idle_activity_stale_golem_still_alerts "idle activity (#1203): a stale golem still alerts (no regression)"
 run_fragment_test test_idle_activity_window_off_or_malformed_alerts "idle activity (#1203): window 0 or malformed fails open to the alert"

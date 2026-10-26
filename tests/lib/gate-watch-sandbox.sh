@@ -805,7 +805,8 @@ PANES_RC=""
 # fresh. $REG_TRANSCRIPT_AGE (seconds) plants a transcript at the worktree's
 # project slug, aged that much (negative = future-dated); $REG_INDEX_AGE ages the
 # worktree's real index; $REG_GITDIR_RELATIVE=1 rewrites the worktree's `.git`
-# pointer to the relative `gitdir:` form (git writes it absolute).
+# pointer to the relative `gitdir:` form (git writes it absolute);
+# $REG_GITDIR_PLAIN=1 replaces the pointer with a plain `.git` directory.
 #
 # PATH carries real sleep + mktemp + cat (bounded_run's output relay) so
 # bounded_run is genuinely armed — except in --stream-panes, whose `sleep` must
@@ -845,9 +846,20 @@ _run_panes_registry() {
         command printf '%s\n' '{"type":"user"}' >"$tmp/projects/$slug/s.jsonl"
         _gw_backdate "$REG_TRANSCRIPT_AGE" "$tmp/projects/$slug/s.jsonl"
     fi
+    if [ "${REG_GITDIR_PLAIN:-}" = 1 ]; then
+        # A plain `.git` DIRECTORY (a clone, not a linked worktree) holding the index.
+        idx="$(command sed -n 's/^gitdir: //p' "$wt/.git")/index"
+        command rm -f "$wt/.git"
+        command mkdir "$wt/.git"
+        command cp "$idx" "$wt/.git/index"
+    fi
     if [ -n "${REG_INDEX_AGE:-}" ]; then
         # A linked worktree's index sits under the gitdir its `.git` FILE names.
-        idx="$(command sed -n 's/^gitdir: //p' "$wt/.git")/index"
+        if [ -d "$wt/.git" ]; then
+            idx="$wt/.git/index"
+        else
+            idx="$(command sed -n 's/^gitdir: //p' "$wt/.git")/index"
+        fi
         _gw_backdate "$REG_INDEX_AGE" "$idx"
     fi
     if [ "${REG_GITDIR_RELATIVE:-}" = 1 ]; then
