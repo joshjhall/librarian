@@ -272,3 +272,7 @@ run_stage "fetch-corpora.sh behavior" bash "$SCRIPT_DIR/validate-fetch-corpora.s
 # the real helper sliced out and driven in a sandbox, since the script itself
 # only runs on a container create. ~1s.
 run_stage "devcontainer post-create .codegraph link" bash "$SCRIPT_DIR/validate-post-create.sh"
+# .gitleaks.toml's prose allowlist (#872), driven through gitleaks' own root
+# auto-discovery — the path the pre-commit hook takes. Exits 77 where gitleaks
+# is absent (CI does not install it; the hook is local). ~1s.
+run_stage "gitleaks config allowlist" bash "$SCRIPT_DIR/validate-gitleaks-config.sh"
