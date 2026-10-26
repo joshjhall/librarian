@@ -286,6 +286,18 @@ changing it, re-verify with `claude plugin details <name>@librarian` showing
   (#492), not the full diff.
 - **The `containers` submodule is pinned** (`update = none`). It exists only to
   build the devcontainer (`build.context: ../containers`). Bump it deliberately.
+- **A gitleaks hit on prose is a false positive with a sanctioned fix** (#872).
+  The pre-commit `gitleaks protect --staged` auto-discovers the root
+  `.gitleaks.toml`, which extends the stock rules with **one** allowlist:
+  `generic-api-key` whose captured secret is lowercase words joined by `/`
+  (`internal/private` beside `API` in a test label clears its entropy bar). On a
+  blocked commit, read the finding's `Secret` field first. A real value: unstage
+  it. A slash-run the config should already cover: suspect a gitleaks older than
+  8.25, which ignores `[[allowlists]]`. Any other prose: mark that line
+  `# gitleaks:allow (<reason>)`, or widen the config consciously, with the reason
+  in its header and `tests/validate-gitleaks-config.sh` green. Never reword the
+  label to dodge the scanner, never allowlist by path (`tests/` holds the
+  fake-token fixtures), and never `--no-verify`.
 - **GitHub Actions are SHA-pinned with a version comment.** Every `uses:` in
   `.github/workflows/*.yml` pins a full 40-char commit SHA followed by a
   `# vX.Y.Z` comment (`actions/checkout@<sha> # v4.3.1`). The SHA and the

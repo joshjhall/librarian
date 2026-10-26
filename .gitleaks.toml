@@ -1,0 +1,36 @@
+# gitleaks config, auto-discovered at the repo root by the lefthook pre-commit
+# `gitleaks protect --staged` step (lefthook.yml) — no --config flag needed (#872).
+#
+# The stock ruleset stays in full force (`useDefault`). The one allowlist below
+# exists because `generic-api-key` fires on PROSE: a test label such as
+#   "missing-api swift: unmarked/internal/private declarations are not public API"
+# captures `unmarked/internal/private` as the secret, and a slash-joined word run
+# next to `API` clears the rule's entropy threshold. This repo's assertion labels
+# enumerate alternatives with slashes constantly, so the hit recurs.
+#
+# SCOPE — keyed on the captured SECRET'S SHAPE, never on a path:
+#   - one rule only (`targetRules`), and only when the whole captured value is
+#     lowercase letters joined by `/`. A real key carries digits or mixed case,
+#     so it cannot match; tests/validate-gitleaks-config.sh plants one in the
+#     same file as the prose and asserts it is still caught.
+#   - NOT a path allowlist. tests/ holds the fake-token fixtures and is where a
+#     real paste-in is most plausible; plugins/ holds the scanners' own pattern
+#     literals. Both must stay fully scanned.
+# Widening this — a path, a digit or uppercase class, another rule — is a
+# conscious edit: say why here, and re-run tests/validate-gitleaks-config.sh.
+#
+# A one-off that this shape does not cover gets a visible per-line marker
+# instead of a config edit: `# gitleaks:allow (<reason>)` (see
+# tests/golem-scripts/12-launch-auth.sh).
+#
+# Version floor: `[[allowlists]]` + `targetRules` need gitleaks >= 8.25. An older
+# gitleaks ignores them, which fails CLOSED — the false positive simply returns.
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Prose: slash-joined lowercase word runs (e.g. internal/private) in test labels"
+targetRules = ["generic-api-key"]
+regexTarget = "secret"
+regexes = ['''^[a-z]+(?:/[a-z]+)+$''']
