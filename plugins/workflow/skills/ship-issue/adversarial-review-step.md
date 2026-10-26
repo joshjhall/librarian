@@ -112,7 +112,7 @@ with these args:
 > outlives the turn that starts it — measured 2.7 min and 8.7 min between the
 > `Workflow` call and the next top-level record — so an observer reads this
 > golem as `⚠ idle at prompt` while it reviews. `golem-work.sh register
-> workflow` before, `complete` after; recipe in `golem/background-work.md`.
+> workflow` before, `finish` after; recipe in `golem/background-work.md`.
 
 <!-- contract: args-keys-pre-pr-cycle1 -->
 

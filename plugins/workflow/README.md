@@ -122,7 +122,7 @@ them as `${CLAUDE_PLUGIN_ROOT}/scripts/<name>.sh`.
 | `golem-gate-watch.sh` | Gate-detection engine shared by status + watch. Its pane classifiers (`pane_is_*`, prompt-line / API-error reads) live in the sourced fragment `golem-gate-watch-classifiers.sh` (#1109) |
 | `golem-resolve.sh <N>` | Emit a `resolved` feed line to clear a golem's send-keys-resolved plan gate from the BLOCKED list on the next sweep (#422) |
 | `golem-token-scrape.sh <worktree>` | Scrape a Mode-2 golem's top-level token count from its newest transcript (deduped by `message.id`), feeding `golem-status.sh`'s frozen-counter signal (#371) |
-| `golem-work.sh register\|complete\|list\|count` | The background-work registry (#949): a golem records work that outlives its turn (backgrounded Bash, `Monitor`, `Workflow`) so a liveness read reports it working, not `idle at prompt`. Protocol: `skills/golem/background-work.md` |
+| `golem-work.sh register\|finish\|list\|count` | The background-work registry (#949): a golem records work that outlives its turn (backgrounded Bash, `Monitor`, `Workflow`) so a liveness read reports it working, not `idle at prompt`. Protocol: `skills/golem/background-work.md` |
 | `golem-transcript-liveness.sh <worktree>` | Classify a golem working/background/idle/errored from its newest transcript's top-level `stop_reason`/`isApiErrorMessage` plus the background-work registry — the TTY-free headless fallback tier in `golem-gate-watch.sh`'s liveness sweep (#248, #949). The registry arm is the one signal that reaches a Mode-3 container golem |
 | `seed-worktree-trust.sh` | Seed Claude Code workspace trust for a worktree |
 | `recover-journal-partials.sh <journal>` | Recover finding-shaped partials from a `TaskStop`-ped review harness's `journal.jsonl` (#224) |

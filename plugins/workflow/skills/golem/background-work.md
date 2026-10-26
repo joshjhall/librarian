@@ -23,7 +23,7 @@ operator stops reading the column — which is exactly when a real stall lands.
 
 ## The one thing to do
 
-Register before you start, complete when you finish:
+Register before you start, `finish` when the work does:
 
 ```bash
 <skill-base-dir>/../../scripts/golem-work.sh register workflow "review harness"
@@ -44,11 +44,15 @@ skill's own invocation header.
 When the work finishes:
 
 ```bash
-<skill-base-dir>/../../scripts/golem-work.sh complete work-1788724096-6b6a
+<skill-base-dir>/../../scripts/golem-work.sh finish work-1788724096-6b6a
 ```
 
-`complete` is **idempotent** — completing an unknown or already-closed id exits 0
+`finish` is **idempotent** — finishing an unknown or already-closed id exits 0
 — so a cleanup path may call it unconditionally.
+
+Spell it `finish`, never `complete` (#1209): the old verb still works, but a
+worktree-isolated session refuses any command containing that token — it reads as
+bash's string-evaluating `complete` builtin — so in a golem it never runs.
 
 ### Pass `--pid` whenever you have it
 
@@ -123,7 +127,7 @@ from *parked*, which is most of what the liveness column exists to tell you.
 
 ## A stale registration cannot pin a golem to "working"
 
-Three bounds, applied on every read, so a forgotten `complete` self-heals:
+Three bounds, applied on every read, so a forgotten `finish` self-heals:
 
 1. **Dead pid** — an entry whose `pid` is gone is dropped. (A pid that exists but
    cannot be signalled counts as alive: the reaper errs toward keeping an entry,
@@ -155,7 +159,7 @@ golem is idle.
 
 | file | role |
 | --- | --- |
-| `scripts/golem-work.sh` | `register` / `complete` / `list` / `count` |
+| `scripts/golem-work.sh` | `register` / `finish` / `list` / `count` |
 | `scripts/golem-transcript-liveness.sh` | consumes the registry; owns the verdict table |
 | `scripts/golem-gate-watch.sh` | renders `alive, working (background: N items)` |
 | `skills/orchestrate/schemas/golem-work.schema.json` | one registry line |

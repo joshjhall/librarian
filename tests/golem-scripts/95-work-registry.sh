@@ -146,6 +146,68 @@ test_work_complete_unknown_id_is_idempotent() {
     assert_exit 0 "$RUN_RC" "completing an unknown id is a no-op that exits 0"
 }
 
+# `finish` is the documented close verb (#1209): a worktree-isolated session
+# refuses any command containing the token `complete`, so that spelling never ran
+# in a golem. It must close the item EXACTLY as the alias does — same on-disk
+# event, which the reducers and golem-work.schema.json key on. A second item stays
+# open so compaction does not truncate the log before the event can be read:
+# a count-only assertion would pass even if `finish` wrote a new event name that
+# the reducer happened to treat as a close.
+test_work_finish_closes_item() {
+    local sb id keep reg
+    new_sandbox sb
+    reg="$sb/.worktrees/.status/golem-42.work.jsonl"
+    run_work "$sb" register bash "suite" --golem golem-42
+    id="${RUN_OUT#id=}"
+    run_work "$sb" register monitor "kept open" --golem golem-42
+    keep="${RUN_OUT#id=}"
+    run_work "$sb" finish "$id" --golem golem-42
+    assert_exit 0 "$RUN_RC" "finish exits 0"
+    run_work "$sb" count --golem golem-42
+    assert_equals "1" "$RUN_OUT" "finish closed exactly the named item"
+    run_work "$sb" list --golem golem-42
+    assert_contains "$RUN_OUT" "$keep" "the other item is still listed"
+    assert_not_contains "$RUN_OUT" "$id" "the finished item is no longer listed"
+    assert_contains "$(command cat "$reg")" "\"event\":\"complete\",\"id\":\"$id\"" \
+        "finish writes the SAME on-disk event the alias does (schema unchanged)"
+}
+
+# The alias keeps working (back-compat for callers outside worktree isolation),
+# and `finish` keeps the alias's idempotence on an unknown id.
+test_work_finish_unknown_id_is_idempotent() {
+    local sb
+    new_sandbox sb
+    run_work "$sb" finish work-1-dead --golem golem-42
+    assert_exit 0 "$RUN_RC" "finishing an unknown id is a no-op that exits 0"
+    # An error must name the spelling a golem can actually run, well-formed —
+    # pins the message text no other assertion reads.
+    run_work "$sb" finish --golem golem-42
+    assert_exit 2 "$RUN_RC" "finish with no id refuses"
+    assert_contains "$RUN_OUT" "golem-work finish: need <id>" \
+        "the refusal names the documented verb"
+}
+
+# The bug was a DOC bug as much as a CLI one: the script worked, the documented
+# spelling was refused. So pin the docs. Corpus = the three pipeline skills a
+# golem executes plus the workflow README (lint-background-work-refs.sh's scope);
+# dev-core's loop contracts use `complete` as a STATUS value and are rightly out.
+# Two shapes, because both were live before #1209: the full command
+# (`golem-work.sh complete {id}`) and the bare backticked verb beside a
+# `register` (`register workflow`/`complete`), which a golem-work-anchored grep
+# missed at two sites. The one sentence that names the old verb to explain the
+# rename is exempted by its `#1209` tag rather than by file.
+test_work_docs_never_show_refused_verb() {
+    local root="$REPO_ROOT/plugins/workflow" corpus hits n
+    corpus="$(command find "$root/skills/golem" "$root/skills/ship-issue" \
+        "$root/skills/next-issue" "$root/README.md" -name '*.md' -type f)"
+    n="$(printf '%s\n' "$corpus" | command grep -c .)"
+    assert_true "[ \"$n\" -ge 10 ]" "the doc corpus is non-empty (found $n files)"
+    # shellcheck disable=SC2086  # word-split the newline-separated file list
+    hits="$(command grep -nE 'golem-work\.sh[^`]*[[:space:]]complete([[:space:]]|$)|`complete`' $corpus |
+        command grep -vE '#1209|builtin' || true)"
+    assert_equals "" "$hits" "no workflow doc shows the refused \`complete\` verb"
+}
+
 # Two opens and one close leaves exactly one — the reduction matches on id, so a
 # close cannot take the wrong item with it.
 test_work_multiple_items_counted_independently() {
@@ -649,6 +711,7 @@ test_work_dangling_flag_refuses() {
         "register:bash:job:--max-age" \
         "register:bash:job:--golem" \
         "complete:work-1-aaaa:--golem" \
+        "finish:work-1-aaaa:--golem" \
         "count:--worktree" \
         "count:--golem" \
         "count:--status-dir" \

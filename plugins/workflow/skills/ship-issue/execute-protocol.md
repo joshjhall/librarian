@@ -52,7 +52,7 @@ procedure in one file instead of breaking mid-sequence across two.
 
    The push runs the lefthook pre-push suite — measured 461 s, and #890 recorded
    one at 6m38s reported as `⚠ idle at prompt`. If you background it, **register
-   it** — and `complete` when it returns. The pid is what reaps a crashed push in
+   it** — and `finish` when it returns. The pid is what reaps a crashed push in
    seconds rather than at the hour-long age bound. Protocol:
    `golem/background-work.md`.
 
@@ -60,7 +60,7 @@ procedure in one file instead of breaking mid-sequence across two.
    # substitute <skill-base-dir>: next-issue/worktree-safe-recipes.md (#815)
    <skill-base-dir>/../../scripts/golem-work.sh register bash "git push" --pid {pid}
    # -> id=work-…   read it from the output; when the push returns:
-   <skill-base-dir>/../../scripts/golem-work.sh complete {id}
+   <skill-base-dir>/../../scripts/golem-work.sh finish {id}
    ```
 
 1. **Create a PR**:
@@ -103,7 +103,7 @@ Continue here once `gh pr create` / `glab mr create` has opened the PR.
      `LIBRARIAN_CI_WAIT_TIMEOUT` + `LIBRARIAN_CI_WAIT_MAX_EXTENSIONS` (L3–L4
      auto-extends, then STOPs) — never re-derive that arithmetic by hand. A
      poll run as a background task or `Monitor` is background work: `golem-work.sh
-     register monitor "CI wait"` before it, `complete` once checks resolve (#1203).
+     register monitor "CI wait"` before it, `finish` once checks resolve (#1203).
      On failure, **triage
      infra-flake vs real first** (classify by failing-step name vs the diff;
      auto-retry an infra flake once via `gh run rerun --failed`; collapse cascade
@@ -443,7 +443,7 @@ Proceed with the steps below only when the review ran and came back `clean`.
    ```
 
    Same pre-push suite as Option 1's push, so the same rule: backgrounded, it is
-   `golem-work.sh register bash "git push" --pid {pid}` then `complete {id}`
+   `golem-work.sh register bash "git push" --pid {pid}` then `finish {id}`
    (`golem/background-work.md`, #1203).
 
 1. **Remove `status/in-progress` label**:
