@@ -98,23 +98,28 @@ conformance_problems() {
     required_headings "$contract" >"$req_file"
     slice_headings "$slice" >"$have_file"
 
-    local req have pos last_pos=0
+    # Greedy subsequence match: each required heading is searched for only
+    # AFTER the previous match, so a duplicate earlier in the slice cannot be
+    # mistaken for the in-order occurrence. A heading present only before that
+    # point is out of order; one present nowhere is missing.
+    local req have pos seen n last_pos=0
     while IFS= read -r req; do
-        pos=0
-        local n=0
+        pos=0 seen=0 n=0
         while IFS= read -r have; do
             n=$((n + 1))
-            if [ "$have" = "$req" ]; then
+            [ "$have" = "$req" ] || continue
+            seen=1
+            if [ "$n" -gt "$last_pos" ]; then
                 pos=$n
                 break
             fi
         done <"$have_file"
-        if [ "$pos" -eq 0 ]; then
-            command printf 'missing heading: %s\n' "$req"
-        elif [ "$pos" -lt "$last_pos" ]; then
+        if [ "$pos" -gt 0 ]; then
+            last_pos=$pos
+        elif [ "$seen" -eq 1 ]; then
             command printf 'out of order: %s\n' "$req"
         else
-            last_pos=$pos
+            command printf 'missing heading: %s\n' "$req"
         fi
     done <"$req_file"
     command rm -f "$req_file" "$have_file"
@@ -209,6 +214,15 @@ test_fixture_vacuous_contract() {
         "A contract without markers parses to zero headings (which test_contract_parses rejects)"
 }
 
+test_fixture_duplicate_heading() {
+    local slice="$WORKDIR/dup.md"
+    # An early stray `## Gamma` must not be taken as the required one: the
+    # in-order sequence Alpha, Beta, Gamma still exists, so this conforms.
+    command printf '# S\n\n## Gamma\n\n## Alpha\n\n## Beta\n\n## Gamma\n' >"$slice"
+    assert_output_empty "$(conformance_problems "$FIXTURE_CONTRACT" "$slice")" \
+        "A duplicated required heading is matched in order, not at its first occurrence"
+}
+
 test_fixture_unterminated_contract() {
     local contract="$WORKDIR/unterminated.md"
     command printf '# C\n\n<!-- slice-contract:required-headings -->\n\n1. `## Alpha`\n\n1. `## Later`\n' >"$contract"
@@ -226,6 +240,7 @@ run_test test_fixture_missing_heading "Fixture: a missing heading is reported"
 run_test test_fixture_out_of_order "Fixture: an out-of-order heading is reported"
 run_test test_fixture_heading_only_in_fence "Fixture: a fenced-only heading is reported missing"
 run_test test_fixture_vacuous_contract "Fixture: a marker-less contract parses empty"
+run_test test_fixture_duplicate_heading "Fixture: a duplicated heading is matched as a subsequence"
 run_test test_fixture_unterminated_contract "Fixture: an unterminated contract region parses empty"
 
 generate_report

@@ -133,7 +133,7 @@ check rather than a list that drifts.
 | ---------- | ----------------------------------------------------------------- |
 | `lint`     | every always-on tool + every slice's linters, whole tree, no skips |
 | `test`     | the single test entry point (§ 6)                                  |
-| `security` | gitleaks over the full history range of the change, dependency audit from each slice |
+| `security` | gitleaks over the change's whole range (the PR/MR base to `HEAD`; the **full history** when there is no base — never just the last commit), dependency audit from each slice |
 
 Pinning, on both platforms:
 
@@ -148,6 +148,9 @@ Pinning, on both platforms:
 ### GitHub Actions
 
 ```yaml
+permissions:
+  contents: read # least privilege; widen per job only where a job needs it
+
 jobs:
   lint:
     runs-on: ubuntu-24.04
@@ -169,13 +172,29 @@ jobs:
       - uses: actions/checkout@<40-char-sha> # vX.Y.Z
         with: { fetch-depth: 0 }
       - run: bin/install-tools.sh
-      - run: gitleaks detect --redact --log-opts="${{ github.event.pull_request.base.sha || 'HEAD~1' }}..HEAD"
+      - name: Secret scan (PR range, else full history)
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ -n "$BASE_SHA" ]; then
+            gitleaks detect --redact --log-opts="$BASE_SHA..HEAD"
+          else
+            gitleaks detect --redact # no PR base: scan everything, never just HEAD~1
+          fi
   merge-gate:
+    if: always() # a skipped required check counts as PASSED — never let it skip
     needs: [lint, test, security]
     runs-on: ubuntu-24.04
     steps:
-      - run: echo "all stages passed"
+      - run: |
+          for r in ${{ join(needs.*.result, ' ') }}; do
+            [ "$r" = success ] || { echo "a stage did not succeed: $r"; exit 1; }
+          done
 ```
+
+`merge-gate` is the one check branch protection requires. It must run even when
+a stage fails, and fail on anything but `success`: with plain `needs:` a failed
+stage **skips** the gate, and GitHub treats a skipped required check as passing.
 
 ### GitLab CI
 
@@ -202,7 +221,12 @@ security:
   variables:
     GIT_DEPTH: 0
   script:
-    - gitleaks detect --redact --log-opts="${CI_MERGE_REQUEST_DIFF_BASE_SHA:-HEAD~1}..HEAD"
+    - |
+      if [ -n "${CI_MERGE_REQUEST_DIFF_BASE_SHA:-}" ]; then
+        gitleaks detect --redact --log-opts="$CI_MERGE_REQUEST_DIFF_BASE_SHA..HEAD"
+      else
+        gitleaks detect --redact # branch pipeline: no MR base, scan everything
+      fi
 ```
 
 GitLab runs stages in order and fails the pipeline on any failed job, so the
@@ -325,7 +349,8 @@ What an audit tests, per repo:
 - [ ] pre-commit commands use `glob:` + `{staged_files}`; formatters set `stage_fixed: true`
 - [ ] every optional tool has a `skip:` guard; toolchain and in-repo gates have none
 - [ ] all always-on tools (§ 2) are present at the listed stages
-- [ ] CI has lint → test → security, plus a single merge gate
+- [ ] CI has lint → test → security, plus a single merge gate that runs `if: always()` and fails unless every stage succeeded
+- [ ] the secret scan covers the whole change range, falling back to full history (not `HEAD~1`) when there is no base
 - [ ] CI installs every tool and runs every check with no skip guard
 - [ ] no CI image uses `:latest` or a floating tag; every action is SHA-pinned with a version comment
 - [ ] each tool version has one source of truth and one accessor; no consumer hardcodes it
