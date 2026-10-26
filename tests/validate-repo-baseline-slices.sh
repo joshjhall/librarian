@@ -37,8 +37,11 @@ trap 'command rm -rf "$WORKDIR"' EXIT
 # Prints each required heading (e.g. `## CI job`), one per line, from the list
 # items between the start and end markers. An item is a line whose first
 # backticked span starts with `## `; anything else in the region is ignored.
+# Prints NOTHING unless the region is closed by its end marker: an unterminated
+# region would otherwise run to EOF and absorb every later list item as a
+# requirement, so it fails closed into the zero-heading case instead.
 required_headings() {
-    local line in_region=0 span
+    local line in_region=0 closed=0 span found=""
     while IFS= read -r line || [ -n "$line" ]; do
         case "$line" in
             *'<!-- slice-contract:required-headings -->'*)
@@ -46,6 +49,7 @@ required_headings() {
                 continue
                 ;;
             *'<!-- slice-contract:end-required-headings -->'*)
+                [ "$in_region" -eq 1 ] && closed=1
                 in_region=0
                 continue
                 ;;
@@ -55,10 +59,13 @@ required_headings() {
             *'`## '*'`'*)
                 span="${line#*\`}"
                 span="${span%%\`*}"
-                command printf '%s\n' "$span"
+                found="$found$span
+"
                 ;;
         esac
     done <"$1"
+    [ "$closed" -eq 1 ] || return 0
+    command printf '%s' "$found"
 }
 
 # slice_headings <slice-file>
@@ -202,6 +209,13 @@ test_fixture_vacuous_contract() {
         "A contract without markers parses to zero headings (which test_contract_parses rejects)"
 }
 
+test_fixture_unterminated_contract() {
+    local contract="$WORKDIR/unterminated.md"
+    command printf '# C\n\n<!-- slice-contract:required-headings -->\n\n1. `## Alpha`\n\n1. `## Later`\n' >"$contract"
+    assert_output_empty "$(required_headings "$contract")" \
+        "A contract whose end marker is missing parses to zero headings, not to everything after the start"
+}
+
 # --- Run All Tests ----------------------------------------------------------
 
 run_test test_contract_parses "slice-contract.md's required-heading list parses non-empty"
@@ -212,5 +226,6 @@ run_test test_fixture_missing_heading "Fixture: a missing heading is reported"
 run_test test_fixture_out_of_order "Fixture: an out-of-order heading is reported"
 run_test test_fixture_heading_only_in_fence "Fixture: a fenced-only heading is reported missing"
 run_test test_fixture_vacuous_contract "Fixture: a marker-less contract parses empty"
+run_test test_fixture_unterminated_contract "Fixture: an unterminated contract region parses empty"
 
 generate_report
