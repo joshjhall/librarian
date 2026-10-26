@@ -215,9 +215,32 @@ test_work_docs_never_show_refused_verb() {
     # The COMMAND form is wrong in any workflow file of any type — a schema
     # description or a script comment instructs a golem just as a skill does (the
     # orchestrate schema still named it after the markdown sweep). Only the
-    # script that defines the alias may spell it, to explain the rename.
-    hits="$(command grep -rnE 'golem-work\.sh[^`"]*[[:space:]]complete([[:space:]`]|$)' "$root" |
-        command grep -v '/scripts/golem-work\.sh:' || true)"
+    # script that defines the alias may spell it, to explain the rename. The
+    # optional `"` after `.sh` covers the usual shell spelling, a quoted
+    # "${CLAUDE_PLUGIN_ROOT}/scripts/golem-work.sh" path; `[^`"]*` otherwise keeps
+    # a match inside one backtick span or JSON string.
+    local cmd_re='golem-work\.sh"?[^`"]*[[:space:]]complete([[:space:]`"]|$)' line
+    # shellcheck disable=SC2016  # literal fixture lines, never expanded
+    for line in \
+        'golem-work.sh complete {id}' \
+        '"${CLAUDE_PLUGIN_ROOT}/scripts/golem-work.sh" complete "$id"' \
+        '<skill-base-dir>/../../scripts/golem-work.sh complete'; do
+        n="$(printf '%s\n' "$line" | command grep -cE "$cmd_re" || true)"
+        assert_equals "1" "$n" "command-form regex fires on: $line"
+    done
+    # shellcheck disable=SC2016  # literal fixture lines, never expanded
+    for line in \
+        'golem-work.sh finish {id}' \
+        '`golem-work.sh finish` (which writes this `complete` event)'; do
+        n="$(printf '%s\n' "$line" | command grep -cE "$cmd_re" || true)"
+        assert_equals "0" "$n" "command-form regex stays quiet on: $line"
+    done
+    raw="$(command grep -rnE "$cmd_re" "$root" || true)"
+    # Positive control: the alias-defining script DOES spell it, so an empty raw
+    # scan means the walk read nothing (a wrong \$root), not a clean tree.
+    assert_contains "$raw" "/scripts/golem-work.sh:" \
+        "the command-form scan reached the corpus (it sees golem-work.sh's own rename note)"
+    hits="$(printf '%s\n' "$raw" | command grep -v '/scripts/golem-work\.sh:' | command grep . || true)"
     assert_equals "" "$hits" "no workflow file of any type spells the refused command form"
 }
 
