@@ -156,7 +156,9 @@ slice_ini_settings() {
     while IFS= read -r line || [ -n "$line" ]; do
         if [ -n "$fence" ]; then
             case "$line" in
-                "$fence"*)
+                # A closing fence carries no info string: ```bash inside an
+                # open ``` fence is content, but a longer run (````) closes.
+                "$fence" | "$fence"[\`~[:space:]]*)
                     if [ "$capture" -eq 1 ]; then
                         rc_settings "$block"
                         command rm -f "$block"
@@ -284,6 +286,9 @@ test_fixture_ini_block_outside_section() {
     command printf '# S\n\n## Config files (copy me)\n\n```ini\nshell=bash\n```\n' >"$slice"
     assert_equals "shell=bash" "$(slice_ini_settings "$slice")" \
         "The Config files heading may carry trailing text after a space"
+    command printf '# S\n\n## Config files\n\n```md\n```ini\nx=1\n```\n\n```ini\nshell=bash\n```\n' >"$slice"
+    assert_equals "shell=bash" "$(slice_ini_settings "$slice")" \
+        "A fence opener with an info string inside an open fence is content, not a close"
 }
 
 test_fixture_ini_block_unterminated() {
