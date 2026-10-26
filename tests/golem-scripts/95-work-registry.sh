@@ -189,24 +189,30 @@ test_work_finish_unknown_id_is_idempotent() {
 }
 
 # The bug was a DOC bug as much as a CLI one: the script worked, the documented
-# spelling was refused. So pin the docs. Corpus = the three pipeline skills a
-# golem executes plus the workflow README (lint-background-work-refs.sh's scope);
-# dev-core's loop contracts use `complete` as a STATUS value and are rightly out.
-# Two shapes, because both were live before #1209: the full command
-# (`golem-work.sh complete {id}`) and the bare backticked verb beside a
-# `register` (`register workflow`/`complete`), which a golem-work-anchored grep
-# missed at two sites. The one sentence that names the old verb to explain the
-# rename (two lines of background-work.md) is exempted by its exact phrasing in
-# that file only, and the exemption is counted: a third exempted line — say a
-# runnable recipe that merely mentions `builtin` — fails rather than hides.
+# spelling was refused. So pin the docs. Corpus = every workflow skill plus the
+# workflow README; dev-core's loop contracts use `complete` as a STATUS value and
+# are rightly out (unbackticked, as orchestrate's prose uses it, never matches).
+# Three shapes, all live before #1209: the full command
+# (`golem-work.sh complete {id}`), the bare backticked verb beside a `register`
+# (`register workflow`/`complete`), and a backticked verb WITH its argument in a
+# span of its own (`...register bash ...` then `complete {id}`) — the last two
+# a golem-work-anchored grep missed. The one sentence that names the old verb to
+# explain the rename (two lines of background-work.md) is exempted by its exact
+# phrasing in that file only, and the exemption is counted: a third exempted
+# line — say a runnable recipe that merely mentions `builtin` — fails rather
+# than hides.
 test_work_docs_never_show_refused_verb() {
     local root="$REPO_ROOT/plugins/workflow" corpus raw hits exempt n
-    corpus="$(command find "$root/skills/golem" "$root/skills/ship-issue" \
-        "$root/skills/next-issue" "$root/README.md" -name '*.md' -type f)"
+    local md_re='golem-work\.sh[^`]*[[:space:]]complete([[:space:]]|$)|`complete([[:space:]][^`]*)?`'
+    # shellcheck disable=SC2016  # literal fixture line, never expanded
+    n="$(printf '%s\n' '`golem-work.sh register bash "x" --pid {pid}` then `complete {id}`' |
+        command grep -cE "$md_re" || true)"
+    assert_equals "1" "$n" "markdown regex fires on a backticked verb carrying its argument"
+    corpus="$(command find "$root/skills" "$root/README.md" -name '*.md' -type f)"
     n="$(printf '%s\n' "$corpus" | command grep -c .)"
     assert_true "[ \"$n\" -ge 10 ]" "the doc corpus is non-empty (found $n files)"
     # shellcheck disable=SC2086  # word-split the newline-separated file list
-    raw="$(command grep -nE 'golem-work\.sh[^`]*[[:space:]]complete([[:space:]]|$)|`complete`' $corpus || true)"
+    raw="$(command grep -nE "$md_re" $corpus || true)"
     exempt='/golem/background-work\.md:[0-9]+:(Spell it `finish`, never `complete` \(#1209\)|bash.s string-evaluating `complete` builtin)'
     hits="$(printf '%s\n' "$raw" | command grep -vE "$exempt" | command grep . || true)"
     assert_equals "" "$hits" "no workflow doc shows the refused \`complete\` verb"
