@@ -1,0 +1,13 @@
+name: repo-baseline
+version: "1.0"
+
+labels: []
+
+required_tools:
+  - name: lefthook
+    purpose: Git hook runner the baseline's hook layout is written for
+    install_hint: "brew install lefthook, or see https://lefthook.dev/installation/"
+
+required_permissions: []
+
+required_mcps: []

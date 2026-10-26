@@ -10,6 +10,8 @@ description: Code quality standards, naming conventions, and review checklist. U
 - Follow existing codebase conventions
 - Don't add unnecessary abstractions or over-engineer
 - Only make changes that are directly requested or clearly necessary
+- Repo tooling — which linters/formatters run, how tool versions are pinned, and
+  the docs and test minimums — follows the `repo-baseline` skill (`core.md`)
 
 ## Naming
 

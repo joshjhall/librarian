@@ -7,7 +7,7 @@ debug, refactor, and test code, and author the Claude Code artifacts (skills,
 agents, `workflow.js` harnesses) themselves — on a host, on bare Linux, or
 inside a devcontainer.
 
-## Skills (21)
+## Skills (22)
 
 ### Code & workflow guidance
 
@@ -18,6 +18,8 @@ inside a devcontainer.
 - `shell-scripting` — shell conventions, naming patterns, testing
 - `testing-patterns` — test-first patterns and framework conventions
 - `documentation-authoring` — docs/docstring/README standards
+- `repo-baseline` — the repo tooling baseline: hook stages, skip guards, CI
+  shape, version pinning, docs/test minimums, and per-language slices
 
 ### Authoring guides (for building Claude Code artifacts)
 

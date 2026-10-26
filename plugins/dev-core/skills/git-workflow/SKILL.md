@@ -32,6 +32,9 @@ Good: "feat(api): add pagination to /users endpoint"
 - Run existing hooks; don't skip with --no-verify
 - Fix issues rather than bypassing checks
 - If a hook fails, the commit did NOT happen — create a new commit after fixing
+- Which checks run at pre-commit / commit-msg / pre-push, the `skip:` guard for
+  optional tools, and the "CI runs every check unguarded" rule are defined once
+  in the `repo-baseline` skill (`core.md` § Hook layout)
 
 ## PR Workflow
 
