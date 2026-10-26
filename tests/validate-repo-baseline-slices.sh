@@ -68,19 +68,60 @@ required_headings() {
     command printf '%s' "$found"
 }
 
+# Fenced-code tracking, shared by every parser in this file so they cannot
+# disagree on what a fence is. CommonMark's rules, the subset the slices use:
+# a fence opens on a run of 3+ backticks or 3+ tildes; it closes only on a run
+# of the SAME character at least as long, followed by nothing but whitespace.
+# So inside a ``` fence, "```bash", "``` bash" and "~~~" are all content.
+
+# fence_run <line>
+# Sets FENCE_RUN to the line's leading run of 3+ backticks or tildes and
+# FENCE_REST to what follows it; FENCE_RUN is empty when the line opens no
+# fence. Pure parameter expansion: no subshell per line.
+fence_run() {
+    local line="$1" ch rest
+    FENCE_RUN="" FENCE_REST=""
+    case "$line" in
+        '```'*) ch='`' ;;
+        '~~~'*) ch='~' ;;
+        *) return 0 ;;
+    esac
+    rest="$line"
+    while [ "${rest#"$ch"}" != "$rest" ]; do
+        FENCE_RUN="$FENCE_RUN$ch"
+        rest="${rest#"$ch"}"
+    done
+    FENCE_REST="$rest"
+}
+
+# fence_closes <open-run> <line>
+# Succeeds when <line> closes a fence opened by <open-run>.
+fence_closes() {
+    fence_run "$2"
+    [ -n "$FENCE_RUN" ] || return 1
+    [ "${FENCE_RUN%"${FENCE_RUN#?}"}" = "${1%"${1#?}"}" ] || return 1
+    [ "${#FENCE_RUN}" -ge "${#1}" ] || return 1
+    case "$FENCE_REST" in
+        *[![:space:]]*) return 1 ;;
+    esac
+    return 0
+}
+
 # slice_headings <slice-file>
 # Prints the slice's `## ` headings in document order, skipping fenced code
 # blocks (a `## ` inside a fence is example content, not structure).
 slice_headings() {
-    local line in_fence=0
+    local line fence=""
     while IFS= read -r line || [ -n "$line" ]; do
-        case "$line" in
-            '```'* | '~~~'*)
-                in_fence=$((1 - in_fence))
-                continue
-                ;;
-        esac
-        [ "$in_fence" -eq 0 ] || continue
+        if [ -n "$fence" ]; then
+            fence_closes "$fence" "$line" && fence=""
+            continue
+        fi
+        fence_run "$line"
+        if [ -n "$FENCE_RUN" ]; then
+            fence="$FENCE_RUN"
+            continue
+        fi
         case "$line" in
             '## '*) command printf '%s\n' "${line%"${line##*[![:space:]]}"}" ;;
         esac
@@ -146,37 +187,35 @@ rc_settings() {
 # Prints nothing when the heading or the fence is absent or the fence is
 # unterminated, which the caller treats as a failure, never as a match.
 slice_ini_settings() {
-    # Every fence, ini or not, goes through one state machine: `fence` holds
-    # the opening marker (``` or ~~~) and only the same marker closes it, so
-    # a `## ` line inside any fence is example content, never a heading (the
-    # rule slice_headings applies). `capture` is set only on an ini opener
-    # inside the section, and its close is the only successful return.
+    # Fences go through fence_run/fence_closes, so a `## ` line inside any
+    # fence is example content, never a heading. `capture` is set only on an
+    # ini opener inside the section, and its close is the only successful
+    # return.
     local line in_section=0 fence="" capture=0 block="$WORKDIR/ini.$$"
     : >"$block"
     while IFS= read -r line || [ -n "$line" ]; do
         if [ -n "$fence" ]; then
-            case "$line" in
-                # A closing fence carries no info string: ```bash inside an
-                # open ``` fence is content, but a longer run (````) closes.
-                "$fence" | "$fence"[\`~[:space:]]*)
-                    if [ "$capture" -eq 1 ]; then
-                        rc_settings "$block"
-                        command rm -f "$block"
-                        return 0
-                    fi
-                    fence=""
-                    ;;
-                *) [ "$capture" -eq 1 ] && command printf '%s\n' "$line" >>"$block" ;;
+            if fence_closes "$fence" "$line"; then
+                if [ "$capture" -eq 1 ]; then
+                    rc_settings "$block"
+                    command rm -f "$block"
+                    return 0
+                fi
+                fence=""
+            elif [ "$capture" -eq 1 ]; then
+                command printf '%s\n' "$line" >>"$block"
+            fi
+            continue
+        fi
+        fence_run "$line"
+        if [ -n "$FENCE_RUN" ]; then
+            fence="$FENCE_RUN"
+            case "$FENCE_REST" in
+                ini | 'ini '*) [ "$in_section" -eq 1 ] && capture=1 ;;
             esac
             continue
         fi
         case "$line" in
-            '```'* | '~~~'*)
-                fence="${line%"${line#???}"}"
-                case "$line" in
-                    '```ini' | '```ini '*) [ "$in_section" -eq 1 ] && capture=1 ;;
-                esac
-                ;;
             '## Config files' | '## Config files '*) in_section=1 ;;
             '## '*) in_section=0 ;;
         esac
@@ -291,6 +330,52 @@ test_fixture_ini_block_outside_section() {
         "A fence opener with an info string inside an open fence is content, not a close"
 }
 
+# Table-driven: <open-run>|<line>|<closes: 1 or 0>. One row per fence rule, so
+# both parsers' shared definition of "closes" is pinned in one place.
+test_fixture_fence_closes_table() {
+    local row open line want got
+    while IFS= read -r row; do
+        [ -n "$row" ] || continue
+        open="${row%%|*}"
+        row="${row#*|}"
+        line="${row%|*}"
+        want="${row##*|}"
+        got=0
+        fence_closes "$open" "$line" && got=1
+        assert_equals "$want" "$got" "fence_closes '$open' '$line'"
+    done <<'EOF'
+```|```|1
+```|```   |1
+```|````|1
+````|```|0
+```|~~~|0
+~~~|~~~|1
+~~~|```|0
+```|```bash|0
+```|``` bash|0
+```|```ini|0
+```|  text|0
+EOF
+}
+
+test_fixture_ini_fence_variants() {
+    local slice="$WORKDIR/variants.md"
+    command printf '# S\n\n## Config files\n\n```md\n``` bash\n## Hook entries\n```\n\n```ini\nshell=bash\n```\n' >"$slice"
+    assert_equals "shell=bash" "$(slice_ini_settings "$slice")" \
+        "'\`\`\` bash' inside an open fence is content, so the fenced '## ' stays fenced"
+    command printf '# S\n\n## Config files\n\n````md\n```\n## x\n````\n\n~~~ini\nshell=bash\n~~~\n' >"$slice"
+    assert_equals "shell=bash" "$(slice_ini_settings "$slice")" \
+        "A 4-backtick fence is not closed by 3, and a ~~~ini fence is captured"
+}
+
+test_fixture_headings_nested_fence() {
+    local slice="$WORKDIR/headings-nested.md"
+    command printf '# S\n\n## Alpha\n\n~~~md\n```\n## Beta\n~~~\n\n## Gamma\n' >"$slice"
+    assert_contains "$(conformance_problems "$FIXTURE_CONTRACT" "$slice")" \
+        "missing heading: ## Beta" \
+        "slice_headings: a backtick line inside a ~~~ fence does not close it"
+}
+
 test_fixture_ini_block_unterminated() {
     local slice="$WORKDIR/unterminated-ini.md"
     command printf '# S\n\n## Config files\n\n```ini\nshell=bash\n\n## Later\n' >"$slice"
@@ -372,6 +457,9 @@ run_test test_fixture_duplicate_heading "Fixture: a duplicated heading is matche
 run_test test_fixture_unterminated_contract "Fixture: an unterminated contract region parses empty"
 run_test test_fixture_ini_drift "Fixture: a drifted ini block is reported; comments and whitespace are not drift"
 run_test test_fixture_ini_block_outside_section "Fixture: an ini block outside Config files is ignored"
+run_test test_fixture_fence_closes_table "Fixture: fence close rules (same char, run >= opener, no info string)"
+run_test test_fixture_ini_fence_variants "Fixture: info-string lines and longer runs stay inside an open fence"
+run_test test_fixture_headings_nested_fence "Fixture: slice_headings shares the fence rules"
 run_test test_fixture_ini_block_unterminated "Fixture: an unterminated ini fence or absent heading parses empty"
 
 generate_report
