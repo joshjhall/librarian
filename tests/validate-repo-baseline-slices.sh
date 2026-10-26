@@ -146,31 +146,35 @@ rc_settings() {
 # Prints nothing when the heading or the fence is absent or the fence is
 # unterminated, which the caller treats as a failure, never as a match.
 slice_ini_settings() {
-    local line in_section=0 in_block=0 in_fence=0 block="$WORKDIR/ini.$$"
+    # Every fence, ini or not, goes through one state machine: `fence` holds
+    # the opening marker (``` or ~~~) and only the same marker closes it, so
+    # a `## ` line inside any fence is example content, never a heading (the
+    # rule slice_headings applies). `capture` is set only on an ini opener
+    # inside the section, and its close is the only successful return.
+    local line in_section=0 fence="" capture=0 block="$WORKDIR/ini.$$"
     : >"$block"
     while IFS= read -r line || [ -n "$line" ]; do
-        if [ "$in_block" -eq 1 ]; then
+        if [ -n "$fence" ]; then
             case "$line" in
-                '```'*)
-                    rc_settings "$block"
-                    command rm -f "$block"
-                    return 0
+                "$fence"*)
+                    if [ "$capture" -eq 1 ]; then
+                        rc_settings "$block"
+                        command rm -f "$block"
+                        return 0
+                    fi
+                    fence=""
                     ;;
-            esac
-            command printf '%s\n' "$line" >>"$block"
-            continue
-        fi
-        # Inside any other fence, a `## ` line is example content, not a
-        # heading (the same rule slice_headings applies).
-        if [ "$in_fence" -eq 1 ]; then
-            case "$line" in
-                '```'* | '~~~'*) in_fence=0 ;;
+                *) [ "$capture" -eq 1 ] && command printf '%s\n' "$line" >>"$block" ;;
             esac
             continue
         fi
         case "$line" in
-            '```ini' | '```ini '*) [ "$in_section" -eq 1 ] && in_block=1 ;;
-            '```'* | '~~~'*) in_fence=1 ;;
+            '```'* | '~~~'*)
+                fence="${line%"${line#???}"}"
+                case "$line" in
+                    '```ini' | '```ini '*) [ "$in_section" -eq 1 ] && capture=1 ;;
+                esac
+                ;;
             '## Config files' | '## Config files '*) in_section=1 ;;
             '## '*) in_section=0 ;;
         esac
@@ -271,6 +275,15 @@ test_fixture_ini_block_outside_section() {
     command printf '# S\n\n## Config filesystem\n\n```ini\nshell=bash\n```\n' >"$slice"
     assert_output_empty "$(slice_ini_settings "$slice")" \
         "A heading that merely starts with 'Config files' is not the Config files section"
+    command printf '# S\n\n## Tools\n\n```ini\n## not a heading\nx=1\n```\n\n## Config files\n\n```ini\nshell=bash\n```\n' >"$slice"
+    assert_equals "shell=bash" "$(slice_ini_settings "$slice")" \
+        "An ini fence in an earlier section is skipped as a fence, not read or inverted"
+    command printf '# S\n\n## Config files\n\n~~~md\n## not a heading\n```\n~~~\n\n```ini title\nshell=bash\n```\n' >"$slice"
+    assert_equals "shell=bash" "$(slice_ini_settings "$slice")" \
+        "A ~~~ fence closes only on ~~~, and an ini opener may carry an info string"
+    command printf '# S\n\n## Config files (copy me)\n\n```ini\nshell=bash\n```\n' >"$slice"
+    assert_equals "shell=bash" "$(slice_ini_settings "$slice")" \
+        "The Config files heading may carry trailing text after a space"
 }
 
 test_fixture_ini_block_unterminated() {
