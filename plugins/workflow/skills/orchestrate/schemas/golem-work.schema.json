@@ -9,7 +9,7 @@
     "event": {
       "type": "string",
       "enum": ["register", "complete"],
-      "description": "`register` opens an item; `complete` closes the item with the same id. A `complete` with no matching `register` is a harmless no-op — `golem-work.sh complete` is idempotent so a skill may call it unconditionally in a cleanup path."
+      "description": "`register` opens an item; `complete` closes the item with the same id. A `complete` with no matching `register` is a harmless no-op — `golem-work.sh finish` (which writes this `complete` event) is idempotent so a skill may call it unconditionally in a cleanup path."
     },
     "id": {
       "type": "string",

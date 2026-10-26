@@ -172,8 +172,9 @@ test_work_finish_closes_item() {
         "finish writes the SAME on-disk event the alias does (schema unchanged)"
 }
 
-# The alias keeps working (back-compat for callers outside worktree isolation),
-# and `finish` keeps the alias's idempotence on an unknown id.
+# `finish` keeps the alias's idempotence on an unknown id. (The alias itself —
+# back-compat for callers outside worktree isolation — stays pinned by the #949
+# test_work_complete_* cases above, which still dispatch through it.)
 test_work_finish_unknown_id_is_idempotent() {
     local sb
     new_sandbox sb
@@ -211,6 +212,13 @@ test_work_docs_never_show_refused_verb() {
     assert_equals "" "$hits" "no workflow doc shows the refused \`complete\` verb"
     n="$(printf '%s\n' "$raw" | command grep -cE "$exempt" || true)"
     assert_equals "2" "$n" "exactly the two lines of the #1209 rename sentence are exempted"
+    # The COMMAND form is wrong in any workflow file of any type — a schema
+    # description or a script comment instructs a golem just as a skill does (the
+    # orchestrate schema still named it after the markdown sweep). Only the
+    # script that defines the alias may spell it, to explain the rename.
+    hits="$(command grep -rnE 'golem-work\.sh[^`"]*[[:space:]]complete([[:space:]`]|$)' "$root" |
+        command grep -v '/scripts/golem-work\.sh:' || true)"
+    assert_equals "" "$hits" "no workflow file of any type spells the refused command form"
 }
 
 # Two opens and one close leaves exactly one — the reduction matches on id, so a

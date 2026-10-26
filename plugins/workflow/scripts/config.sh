@@ -319,7 +319,7 @@
 
 # Background-work registry age-out (golem-work.sh, #949). An entry in
 # <status_dir>/<golem>.work.jsonl older than this is treated as leaked and
-# dropped on read, so a forgotten `complete` can never pin a golem to `working`
+# dropped on read, so a forgotten `finish` can never pin a golem to `working`
 # forever — the mirror of the GOLEM_STALL_THRESHOLD bound on a frozen `tool_use`.
 #
 # DELIBERATELY NOT GOLEM_STALL_THRESHOLD (1200), though the neighbouring
