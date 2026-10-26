@@ -186,6 +186,10 @@ test_work_finish_unknown_id_is_idempotent() {
     assert_exit 2 "$RUN_RC" "finish with no id refuses"
     assert_contains "$RUN_OUT" "golem-work finish: need <id>" \
         "the refusal names the documented verb"
+    run_work "$sb" finish bogus --golem golem-42
+    assert_exit 2 "$RUN_RC" "finish with a malformed id refuses"
+    assert_contains "$RUN_OUT" "golem-work finish: invalid id 'bogus'" \
+        "the invalid-id refusal names the documented verb too"
 }
 
 # The bug was a DOC bug as much as a CLI one: the script worked, the documented
@@ -248,6 +252,10 @@ test_work_docs_never_show_refused_verb() {
     n="$(printf '%s\n' '"`golem-work.sh finish` (which writes this `complete` event)"' |
         command grep -cE "$json_re" || true)"
     assert_equals "0" "$n" "JSON command-form regex stays quiet on the schema's event note"
+    # shellcheck disable=SC2016  # literal fixture line, never expanded
+    n="$(printf '%s\n' '"description": "`golem-work.sh complete` is idempotent"' |
+        command grep -cE "$json_re" || true)"
+    assert_equals "1" "$n" "JSON command-form regex fires on the pre-#1209 schema shape"
     # Vacuity control, structural rather than content-anchored: the walk must
     # reach the files that name the script at all (13 at #1209), so a wrong
     # \$root cannot read as a clean tree — and no single comment's wording holds
