@@ -40,8 +40,11 @@ trap 'command rm -rf "$SANDBOX"' EXIT
 
 # The exact label from #872 that blocked a commit.
 PROSE_LINE='        "missing-api swift: unmarked/internal/private declarations are not public API"'
-# A credential-shaped assignment, split so this file does not trip the hook.
+# Credential-shaped assignments, split so this file does not trip the hook.
 PLANTED_KEY="q8Zr2mVx""7LpT4wKc9NbJ"
+# Slash-joined like the prose, but with digits and uppercase: the one shape
+# that reaches the allowlist regex's `/` branch and must still be refused by it.
+PLANTED_SLASH_KEY="Ab3dEf/gh7j""Kl/mn9pQr"
 
 # new_repo <name> [with-config] -> prints the sandbox repo path
 # GITLEAKS_CONFIG* would outrank the auto-discovered file, and GIT_* would point
@@ -106,6 +109,16 @@ test_planted_key_still_caught() {
     assert_not_contains "$SCAN_REPORT" '"StartLine": 2'
 }
 
+test_slash_joined_key_still_caught() {
+    local dir
+    dir="$(new_repo planted-slash with-config)"
+    printf 'api_key = "%s"\n%s\n' "$PLANTED_SLASH_KEY" "$PROSE_LINE" >"$dir/t.sh"
+    scan "$dir"
+    assert_exit 1 "$SCAN_RC" "A slash-joined key with digits/uppercase must not ride the prose allowlist"
+    assert_contains "$SCAN_REPORT" '"StartLine": 1'
+    assert_not_contains "$SCAN_REPORT" '"StartLine": 2'
+}
+
 test_fixture_tokens_commit_clean() {
     local dir f
     dir="$(new_repo fixtures with-config)"
@@ -123,6 +136,7 @@ run_test test_config_present "config extends the defaults and scopes the allowli
 run_test test_prose_fires_without_config "control: #872 label fires with no config"
 run_test test_prose_commits_clean "#872 label commits clean under the config"
 run_test test_planted_key_still_caught "planted credential in the same file is still caught"
+run_test test_slash_joined_key_still_caught "slash-joined mixed-case credential is still caught"
 run_test test_fixture_tokens_commit_clean "fake-token fixture files commit clean"
 
 generate_report
