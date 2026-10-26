@@ -105,8 +105,8 @@
 #       --pid is optional but strongly recommended: it is what makes bound (1)
 #       work, so a crashed background job is reaped in seconds rather than after
 #       GOLEM_WORK_MAX_AGE.
-#   complete <id> [--golem G]
-#       Close the item with that id. Idempotent — completing an unknown or
+#   finish <id> [--golem G]          (alias: complete — see WHY `finish` below)
+#       Close the item with that id. Idempotent — finishing an unknown or
 #       already-closed id is a no-op that exits 0, so a skill may call it
 #       unconditionally in a cleanup path.
 #   list [--golem G] [--status-dir D] [--worktree W]
@@ -122,8 +122,20 @@
 # hooks/golem-notify.sh derives it (GOLEM_ID, else `issue-N` basename, else
 # AGENT_ID); a caller in the main checkout passes --golem explicitly.
 #
+# WHY THE VERB IS `finish`, NOT `complete` (issue #1209). Claude Code's
+# worktree-isolation Bash check refuses any command containing the token
+# `complete` — it reads it as bash's `complete` builtin, which can evaluate a
+# string via -C/-F — and it fires on the token ANYWHERE in the command line, not
+# only in command position (measured: even a quoted `grep 'complete'` pattern is
+# refused). Golems always run worktree-isolated, so a documented
+# `golem-work.sh complete <id>` never ran, and the item pinned a false `working`
+# until it aged out. `complete` stays a working alias for callers outside
+# isolation; `done` was rejected because it is a bash reserved word, the same
+# class of hazard. The on-disk EVENT name is still "complete" — that is data the
+# reducers and golem-work.schema.json read, not a command anyone types.
+#
 # WRITER VS OBSERVER (issue #949) — the distinction the read path turns on.
-# `register`/`complete` are called BY a golem about ITSELF, so resolving the
+# `register`/`finish` are called BY a golem about ITSELF, so resolving the
 # registry from the ambient cwd and $GOLEM_ID is correct. `list`/`count` are
 # also called by an OBSERVER — the gate-watch liveness sweep, running in the main
 # checkout, asking about a golem — and there the ambient environment describes
@@ -182,8 +194,9 @@ usage: golem-work.sh <subcommand> [args]
   register <kind> <description> [--pid N] [--max-age S] [--golem G]
       Open a background-work item (kind: bash|monitor|workflow).
       Prints `id=work-<epoch>-<rand>`.
-  complete <id> [--golem G]
-      Close the item with that id (idempotent).
+  finish <id> [--golem G]
+      Close the item with that id (idempotent). `complete` is an alias, but a
+      worktree-isolated session refuses that spelling — use `finish`.
   list [--golem G] [--status-dir D] [--worktree W]
       Print open items: <id>\t<kind>\t<started>\t<pid>\t<description>
   count [--golem G] [--status-dir D] [--worktree W]
@@ -801,14 +814,14 @@ cmd_complete() {
         case "$1" in
             --golem)
                 shift
-                require_flag_value complete --golem "$#" || return 2
+                require_flag_value finish --golem "$#" || return 2
                 golem="$1"
                 ;;
             *)
                 case "$seen" in
                     0) id="$1" ;;
                     *)
-                        command echo "golem-work complete: too many arguments" >&2
+                        command echo "golem-work finish: too many arguments" >&2
                         return 2
                         ;;
                 esac
@@ -819,38 +832,38 @@ cmd_complete() {
     done
 
     if [ "$seen" -lt 1 ]; then
-        command echo "golem-work complete: need <id>" >&2
+        command echo "golem-work finish: need <id>" >&2
         return 2
     fi
     case "$id" in
         work-*)
             case "$id" in
                 *[!A-Za-z0-9_.-]*)
-                    command echo "golem-work complete: invalid id '$id'" >&2
+                    command echo "golem-work finish: invalid id '$id'" >&2
                     return 2
                     ;;
             esac
             ;;
         *)
-            command echo "golem-work complete: invalid id '$id' (want work-<epoch>-<rand>)" >&2
+            command echo "golem-work finish: invalid id '$id' (want work-<epoch>-<rand>)" >&2
             return 2
             ;;
     esac
 
     if [ -z "$golem" ]; then
         golem="$(work_default_golem)" || {
-            command echo "golem-work complete: cannot derive a golem id — pass --golem golem-N" >&2
+            command echo "golem-work finish: cannot derive a golem id — pass --golem golem-N" >&2
             return 2
         }
     fi
     if ! work_valid_golem "$golem"; then
-        command echo "golem-work complete: invalid golem id '$golem'" >&2
+        command echo "golem-work finish: invalid golem id '$golem'" >&2
         return 2
     fi
 
     local registry status_dir ts
     registry="$(work_path_for "$golem")" || {
-        command echo "golem-work complete: not inside a git repository" >&2
+        command echo "golem-work finish: not inside a git repository" >&2
         return 1
     }
     status_dir="$("$DIRNAME" "$registry")"
@@ -1083,7 +1096,7 @@ if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
             cmd_register "$@"
             exit $?
             ;;
-        complete)
+        finish | complete)
             shift
             cmd_complete "$@"
             exit $?

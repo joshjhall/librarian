@@ -146,6 +146,137 @@ test_work_complete_unknown_id_is_idempotent() {
     assert_exit 0 "$RUN_RC" "completing an unknown id is a no-op that exits 0"
 }
 
+# `finish` is the documented close verb (#1209): a worktree-isolated session
+# refuses any command containing the token `complete`, so that spelling never ran
+# in a golem. It must close the item EXACTLY as the alias does — same on-disk
+# event, which the reducers and golem-work.schema.json key on. A second item stays
+# open so compaction does not truncate the log before the event can be read:
+# a count-only assertion would pass even if `finish` wrote a new event name that
+# the reducer happened to treat as a close.
+test_work_finish_closes_item() {
+    local sb id keep reg
+    new_sandbox sb
+    reg="$sb/.worktrees/.status/golem-42.work.jsonl"
+    run_work "$sb" register bash "suite" --golem golem-42
+    id="${RUN_OUT#id=}"
+    run_work "$sb" register monitor "kept open" --golem golem-42
+    keep="${RUN_OUT#id=}"
+    run_work "$sb" finish "$id" --golem golem-42
+    assert_exit 0 "$RUN_RC" "finish exits 0"
+    run_work "$sb" count --golem golem-42
+    assert_equals "1" "$RUN_OUT" "finish closed exactly the named item"
+    run_work "$sb" list --golem golem-42
+    assert_contains "$RUN_OUT" "$keep" "the other item is still listed"
+    assert_not_contains "$RUN_OUT" "$id" "the finished item is no longer listed"
+    assert_contains "$(command cat "$reg")" "\"event\":\"complete\",\"id\":\"$id\"" \
+        "finish writes the SAME on-disk event the alias does (schema unchanged)"
+}
+
+# `finish` keeps the alias's idempotence on an unknown id. (The alias itself —
+# back-compat for callers outside worktree isolation — stays pinned by the #949
+# test_work_complete_* cases above, which still dispatch through it.)
+test_work_finish_unknown_id_is_idempotent() {
+    local sb
+    new_sandbox sb
+    run_work "$sb" finish work-1-dead --golem golem-42
+    assert_exit 0 "$RUN_RC" "finishing an unknown id is a no-op that exits 0"
+    # An error must name the spelling a golem can actually run, well-formed —
+    # pins the message text no other assertion reads.
+    run_work "$sb" finish --golem golem-42
+    assert_exit 2 "$RUN_RC" "finish with no id refuses"
+    assert_contains "$RUN_OUT" "golem-work finish: need <id>" \
+        "the refusal names the documented verb"
+    run_work "$sb" finish bogus --golem golem-42
+    assert_exit 2 "$RUN_RC" "finish with a malformed id refuses"
+    assert_contains "$RUN_OUT" "golem-work finish: invalid id 'bogus'" \
+        "the invalid-id refusal names the documented verb too"
+}
+
+# The bug was a DOC bug as much as a CLI one: the script worked, the documented
+# spelling was refused. So pin the docs. Corpus = every workflow skill plus the
+# workflow README; dev-core's loop contracts use `complete` as a STATUS value and
+# are rightly out (unbackticked, as orchestrate's prose uses it, never matches).
+# Three shapes, all live before #1209: the full command
+# (`golem-work.sh complete {id}`), the bare backticked verb beside a `register`
+# (`register workflow`/`complete`), and a backticked verb WITH its argument in a
+# span of its own (`...register bash ...` then `complete {id}`) — the last two
+# a golem-work-anchored grep missed. The one sentence that names the old verb to
+# explain the rename (two lines of background-work.md) is exempted by its exact
+# phrasing in that file only, and the exemption is counted: a third exempted
+# line — say a runnable recipe that merely mentions `builtin` — fails rather
+# than hides.
+test_work_docs_never_show_refused_verb() {
+    local root="$REPO_ROOT/plugins/workflow" corpus raw hits exempt n
+    local md_re='golem-work\.sh[^`]*[[:space:]]complete([[:space:]]|$)|`complete([[:space:]][^`]*)?`'
+    # shellcheck disable=SC2016  # literal fixture line, never expanded
+    n="$(printf '%s\n' '`golem-work.sh register bash "x" --pid {pid}` then `complete {id}`' |
+        command grep -cE "$md_re" || true)"
+    assert_equals "1" "$n" "markdown regex fires on a backticked verb carrying its argument"
+    corpus="$(command find "$root/skills" "$root/README.md" -name '*.md' -type f)"
+    n="$(printf '%s\n' "$corpus" | command grep -c .)"
+    assert_true "[ \"$n\" -ge 10 ]" "the doc corpus is non-empty (found $n files)"
+    # shellcheck disable=SC2086  # word-split the newline-separated file list
+    raw="$(command grep -nE "$md_re" $corpus || true)"
+    exempt='/golem/background-work\.md:[0-9]+:(Spell it `finish`, never `complete` \(#1209\)|bash.s string-evaluating `complete` builtin)'
+    hits="$(printf '%s\n' "$raw" | command grep -vE "$exempt" | command grep . || true)"
+    assert_equals "" "$hits" "no workflow doc shows the refused \`complete\` verb"
+    n="$(printf '%s\n' "$raw" | command grep -cE "$exempt" || true)"
+    assert_equals "2" "$n" "exactly the two lines of the #1209 rename sentence are exempted"
+    # The COMMAND form is wrong in any workflow file of any type — a schema
+    # description or a script comment instructs a golem just as a skill does (the
+    # orchestrate schema still named it after the markdown sweep). Only the
+    # script that defines the alias may spell it, to explain the rename. Two
+    # regexes, split by file type: in a script or doc the gap may cross quotes —
+    # a quoted "${CLAUDE_PLUGIN_ROOT}/scripts/golem-work.sh" path, or a quoted
+    # option before the verb — and stops only at a backtick span; in JSON it
+    # must also stop at `"`, or one string's verb would match the next string.
+    local text_re='golem-work\.sh[^`]*[[:space:]]complete([[:space:]`"]|$)' line
+    local json_re='golem-work\.sh"?[^`"]*[[:space:]]complete([[:space:]`"]|$)'
+    # shellcheck disable=SC2016  # literal fixture lines, never expanded
+    for line in \
+        'golem-work.sh complete {id}' \
+        '"${CLAUDE_PLUGIN_ROOT}/scripts/golem-work.sh" complete "$id"' \
+        'golem-work.sh --golem "$g" complete "$id"' \
+        '<skill-base-dir>/../../scripts/golem-work.sh complete'; do
+        n="$(printf '%s\n' "$line" | command grep -cE "$text_re" || true)"
+        assert_equals "1" "$n" "command-form regex fires on: $line"
+    done
+    # shellcheck disable=SC2016  # literal fixture lines, never expanded
+    for line in \
+        'golem-work.sh finish {id}' \
+        '`golem-work.sh register bash "x" --pid {pid}` then `finish {id}`'; do
+        n="$(printf '%s\n' "$line" | command grep -cE "$text_re" || true)"
+        assert_equals "0" "$n" "command-form regex stays quiet on: $line"
+    done
+    # shellcheck disable=SC2016  # literal fixture line, never expanded
+    n="$(printf '%s\n' '"`golem-work.sh finish` (which writes this `complete` event)"' |
+        command grep -cE "$json_re" || true)"
+    assert_equals "0" "$n" "JSON command-form regex stays quiet on the schema's event note"
+    # shellcheck disable=SC2016  # literal fixture line, never expanded
+    n="$(printf '%s\n' '"description": "`golem-work.sh complete` is idempotent"' |
+        command grep -cE "$json_re" || true)"
+    assert_equals "1" "$n" "JSON command-form regex fires on the pre-#1209 schema shape"
+    # Vacuity control, structural rather than content-anchored: the walk must
+    # reach the files that name the script at all (13 at #1209), so a wrong
+    # \$root cannot read as a clean tree — and no single comment's wording holds
+    # the test up.
+    n="$(command grep -rlE 'golem-work\.sh' "$root" | command grep -c . || true)"
+    assert_true "[ \"$n\" -ge 10 ]" "the command-form scan reaches the files naming golem-work.sh (found $n)"
+    raw="$(command grep -rnE "$text_re" "$root" --exclude='*.json' || true)
+$(command grep -rnE "$json_re" "$root" --include='*.json' || true)"
+    # The exemption is the rename note's COMMENT lines in golem-work.sh, counted —
+    # not the whole file, whose usage heredoc is exactly what a golem reads.
+    local note_re='/scripts/golem-work\.sh:[0-9]+:#'
+    hits="$(printf '%s\n' "$raw" | command grep -vE "$note_re" | command grep . || true)"
+    assert_equals "" "$hits" "no workflow file of any type spells the refused command form"
+    n="$(printf '%s\n' "$raw" | command grep -cE "$note_re" || true)"
+    assert_equals "1" "$n" "exactly one golem-work.sh comment line (the rename note) is exempted"
+    # And the usage text itself advertises `finish`, never the refused command.
+    RUN_OUT="$("$REAL_BASH" "$WORK" 2>&1 || true)"
+    assert_contains "$RUN_OUT" "  finish <id> [--golem G]" "usage advertises the finish verb"
+    assert_not_contains "$RUN_OUT" "golem-work.sh complete" "usage never shows the refused command"
+}
+
 # Two opens and one close leaves exactly one — the reduction matches on id, so a
 # close cannot take the wrong item with it.
 test_work_multiple_items_counted_independently() {
@@ -649,6 +780,7 @@ test_work_dangling_flag_refuses() {
         "register:bash:job:--max-age" \
         "register:bash:job:--golem" \
         "complete:work-1-aaaa:--golem" \
+        "finish:work-1-aaaa:--golem" \
         "count:--worktree" \
         "count:--golem" \
         "count:--status-dir" \

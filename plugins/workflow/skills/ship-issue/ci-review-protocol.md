@@ -38,7 +38,7 @@ cycles that produced a review; `attempt` counts every trip including crashed one
 — see step (f) (#616):
 
 **Register each harness re-run as background work** (#890) — `golem-work.sh
-register workflow`, `complete` when the cycle returns. Every cycle re-runs the
+register workflow`, `finish` when the cycle returns. Every cycle re-runs the
 `Workflow` harness and ends its turn while the fan-out is still running, so an
 unregistered loop reads as an idle golem for its whole duration. Protocol:
 `golem/background-work.md`.
