@@ -264,8 +264,17 @@ test_work_docs_never_show_refused_verb() {
     assert_true "[ \"$n\" -ge 10 ]" "the command-form scan reaches the files naming golem-work.sh (found $n)"
     raw="$(command grep -rnE "$text_re" "$root" --exclude='*.json' || true)
 $(command grep -rnE "$json_re" "$root" --include='*.json' || true)"
-    hits="$(printf '%s\n' "$raw" | command grep -v '/scripts/golem-work\.sh:' | command grep . || true)"
+    # The exemption is the rename note's COMMENT lines in golem-work.sh, counted —
+    # not the whole file, whose usage heredoc is exactly what a golem reads.
+    local note_re='/scripts/golem-work\.sh:[0-9]+:#'
+    hits="$(printf '%s\n' "$raw" | command grep -vE "$note_re" | command grep . || true)"
     assert_equals "" "$hits" "no workflow file of any type spells the refused command form"
+    n="$(printf '%s\n' "$raw" | command grep -cE "$note_re" || true)"
+    assert_equals "1" "$n" "exactly one golem-work.sh comment line (the rename note) is exempted"
+    # And the usage text itself advertises `finish`, never the refused command.
+    RUN_OUT="$("$REAL_BASH" "$WORK" 2>&1 || true)"
+    assert_contains "$RUN_OUT" "  finish <id> [--golem G]" "usage advertises the finish verb"
+    assert_not_contains "$RUN_OUT" "golem-work.sh complete" "usage never shows the refused command"
 }
 
 # Two opens and one close leaves exactly one — the reduction matches on id, so a
