@@ -66,7 +66,11 @@ scan() {
     local dir="$1"
     command env -uGIT_DIR -uGIT_WORK_TREE -uGIT_INDEX_FILE git -C "$dir" add -A
     SCAN_RC=0
-    (cd "$dir" && command env -uGITLEAKS_CONFIG -uGITLEAKS_CONFIG_TOML \
+    # gitleaks runs its own `git diff --staged`, so it needs the GIT_* scrub too:
+    # under a hook-exported GIT_DIR it would diff the OUTER repo's index, and the
+    # clean cases would then pass without scanning the sandbox at all.
+    (cd "$dir" && command env -uGIT_DIR -uGIT_WORK_TREE -uGIT_INDEX_FILE \
+        -uGITLEAKS_CONFIG -uGITLEAKS_CONFIG_TOML \
         gitleaks protect --staged --no-banner --redact \
         --report-format json --report-path "$dir.report.json" >/dev/null 2>&1) || SCAN_RC=$?
     SCAN_REPORT="$(command cat "$dir.report.json" 2>/dev/null || true)"
