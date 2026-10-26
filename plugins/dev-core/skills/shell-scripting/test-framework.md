@@ -1,9 +1,9 @@
 # Shell Test Framework and Lint Baseline
 
 Companion to `SKILL.md`. The recorded decision for how a repo tests and lints
-its shell (#1212). It is the input to the shell slice of the repo-baseline spec
-(#1211); when that spec's slice contract lands, the slice cites this file
-rather than re-deriving it.
+its shell (#1212). The repo-baseline shell slice
+(`repo-baseline/languages/shell.md`) states the resulting tooling and cites this
+file for the reasoning rather than re-deriving it.
 
 ## Decision: bats-core for new repos
 

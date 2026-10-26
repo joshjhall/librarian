@@ -125,6 +125,50 @@ conformance_problems() {
     command rm -f "$req_file" "$have_file"
 }
 
+# rc_settings <file>
+# Prints the settings lines of an rc-style file: every line that is neither
+# blank nor a `#` comment, with surrounding whitespace trimmed.
+rc_settings() {
+    local line
+    while IFS= read -r line || [ -n "$line" ]; do
+        line="${line#"${line%%[![:space:]]*}"}"
+        line="${line%"${line##*[![:space:]]}"}"
+        case "$line" in
+            '' | '#'*) continue ;;
+        esac
+        command printf '%s\n' "$line"
+    done <"$1"
+}
+
+# slice_ini_settings <slice-file>
+# Prints the settings lines (as rc_settings) of the FIRST ```ini fence under the
+# slice's `## Config files` heading — the slice's copy of the .shellcheckrc.
+# Prints nothing when the heading or the fence is absent or the fence is
+# unterminated, which the caller treats as a failure, never as a match.
+slice_ini_settings() {
+    local line in_section=0 in_block=0 block="$WORKDIR/ini.$$"
+    : >"$block"
+    while IFS= read -r line || [ -n "$line" ]; do
+        if [ "$in_block" -eq 1 ]; then
+            case "$line" in
+                '```'*)
+                    rc_settings "$block"
+                    command rm -f "$block"
+                    return 0
+                    ;;
+            esac
+            command printf '%s\n' "$line" >>"$block"
+            continue
+        fi
+        case "$line" in
+            '## Config files'*) in_section=1 ;;
+            '## '*) in_section=0 ;;
+            '```ini'*) [ "$in_section" -eq 1 ] && in_block=1 ;;
+        esac
+    done <"$1"
+    command rm -f "$block"
+}
+
 # A minimal fixture contract with three required headings.
 FIXTURE_CONTRACT="$WORKDIR/contract.md"
 command cat >"$FIXTURE_CONTRACT" <<'EOF'
@@ -172,7 +216,41 @@ test_every_slice_conforms() {
     done
 }
 
+test_shell_slice_rc_matches_repo() {
+    local slice_set rc_set
+    slice_set="$(slice_ini_settings "$SLICES_DIR/shell.md")"
+    rc_set="$(rc_settings "$REPO_ROOT/.shellcheckrc")"
+    assert_not_empty "$slice_set" \
+        "shell.md's Config files section carries a non-empty \`\`\`ini block"
+    assert_not_empty "$rc_set" \
+        "The repo's .shellcheckrc has at least one settings line"
+    assert_equals "$rc_set" "$slice_set" \
+        "shell.md's .shellcheckrc block has the same settings lines as the repo's .shellcheckrc"
+}
+
 # --- Negative fixtures: the checker must fire --------------------------------
+
+test_fixture_ini_drift() {
+    local slice="$WORKDIR/drift.md" rc="$WORKDIR/rc"
+    command printf 'shell=bash\ndisable=SC1090\n' >"$rc"
+    command printf '# S\n\n## Config files\n\n```ini\n# c\nseverity=info\nshell=bash\ndisable=SC1090\n```\n' >"$slice"
+    local got
+    got="$(slice_ini_settings "$slice")"
+    assert_contains "$got" "severity=info" \
+        "The drifted line is read out of the slice block"
+    assert_true "[ \"\$got\" != \"\$(rc_settings \"\$rc\")\" ]" \
+        "A slice block carrying severity=info differs from an rc without it"
+    command printf '# S\n\n## Config files\n\n```ini\n  # c\n\n shell=bash \ndisable=SC1090\n```\n' >"$slice"
+    assert_equals "$(rc_settings "$rc")" "$(slice_ini_settings "$slice")" \
+        "Comments, blank lines and surrounding whitespace do not count as drift"
+}
+
+test_fixture_ini_block_outside_section() {
+    local slice="$WORKDIR/elsewhere.md"
+    command printf '# S\n\n## Tools\n\n```ini\nshell=bash\n```\n\n## Config files\n\nnone\n' >"$slice"
+    assert_output_empty "$(slice_ini_settings "$slice")" \
+        "An ini block under another heading is not read as the Config files block"
+}
 
 test_fixture_conforming() {
     local slice="$WORKDIR/ok.md"
@@ -235,6 +313,7 @@ test_fixture_unterminated_contract() {
 run_test test_contract_parses "slice-contract.md's required-heading list parses non-empty"
 run_test test_slices_exist "At least one language slice exists"
 run_test test_every_slice_conforms "Every language slice carries the required headings in order"
+run_test test_shell_slice_rc_matches_repo "The shell slice's .shellcheckrc block matches the repo's .shellcheckrc"
 run_test test_fixture_conforming "Fixture: a conforming slice passes"
 run_test test_fixture_missing_heading "Fixture: a missing heading is reported"
 run_test test_fixture_out_of_order "Fixture: an out-of-order heading is reported"
@@ -242,5 +321,7 @@ run_test test_fixture_heading_only_in_fence "Fixture: a fenced-only heading is r
 run_test test_fixture_vacuous_contract "Fixture: a marker-less contract parses empty"
 run_test test_fixture_duplicate_heading "Fixture: a duplicated heading is matched as a subsequence"
 run_test test_fixture_unterminated_contract "Fixture: an unterminated contract region parses empty"
+run_test test_fixture_ini_drift "Fixture: a drifted ini block is reported; comments and whitespace are not drift"
+run_test test_fixture_ini_block_outside_section "Fixture: an ini block outside Config files is ignored"
 
 generate_report
