@@ -314,8 +314,8 @@ test_python_slice_run_sh_template() {
         "python.md's Config files section carries a non-empty \`\`\`bash block (tests/run.sh)"
     assert_true "bash -n \"$f\"" \
         "The tests/run.sh template parses as bash"
-    assert_contains "$(command cat "$f")" "exit 77" \
-        "The tests/run.sh template reports a missing runner with the 77 skip sentinel"
+    assert_true "command grep -E '^[[:space:]]+exit 77\$' \"$f\" >/dev/null" \
+        "The tests/run.sh template reports a missing runner with the 77 skip sentinel (as code, not a comment)"
     assert_contains "$(command cat "$f")" "uv run --no-project --with-requirements tests/requirements.txt" \
         "The tests/run.sh template runs pytest through the pinned requirements file"
 }
@@ -335,7 +335,86 @@ test_python_slice_conftest_template() {
         "The conftest template parses as Python"
 }
 
+# required_pin <file>
+# Prints the bare version from a top-level `required-version = "==X.Y.Z"` line
+# (ruff.toml, uv.toml), or nothing when there is none.
+required_pin() {
+    local line
+    while IFS= read -r line || [ -n "$line" ]; do
+        case "$line" in
+            'required-version = "=='*'"')
+                line="${line#*==}"
+                command printf '%s\n' "${line%\"}"
+                return 0
+                ;;
+        esac
+    done <"$1"
+}
+
+# slice_ci_images <slice-file>
+# Prints `<job> <image>` for each GitLab job in the slice: a column-0 `name:`
+# line names the job, and its `  image:` line (comment stripped) names the image.
+slice_ci_images() {
+    local line job="" img
+    while IFS= read -r line || [ -n "$line" ]; do
+        case "$line" in
+            [a-z]*:) job="${line%:}" ;;
+            '  image: '*)
+                img="${line#  image: }"
+                img="${img%% *}"
+                command printf '%s %s\n' "$job" "$img"
+                ;;
+        esac
+    done <"$1"
+}
+
+test_python_slice_ci_images() {
+    local ruff_pin uv_block="$WORKDIR/uv.toml" uv_pin images uv_ok
+    ruff_pin="$(required_pin "$REPO_ROOT/ruff.toml")"
+    # The slice carries two pins (ruff.toml's, uv.toml's); uv's is the one that
+    # is not ruff's. Equal versions would leave uv_pin empty, which fails below.
+    command grep -E '^required-version = "==[0-9.]+"$' "$SLICES_DIR/python.md" |
+        command grep -v "==$ruff_pin\"" >"$uv_block" || true
+    uv_pin="$(required_pin "$uv_block")"
+    images="$(slice_ci_images "$SLICES_DIR/python.md")"
+    assert_not_empty "$ruff_pin" "The repo's ruff.toml yields a ruff pin"
+    assert_not_empty "$uv_pin" "python.md's uv.toml block yields a uv pin"
+    # The bare ruff tag is the /ruff binary with ENTRYPOINT ["/ruff"] and no
+    # shell, so GitLab cannot run script: in it; -alpine has /bin/sh.
+    assert_contains "$images" "python-lint ghcr.io/astral-sh/ruff:$ruff_pin-alpine" \
+        "GitLab python-lint uses the shelled ruff -alpine image at the ruff.toml pin"
+    # tests/run.sh is bash: uv's bare tag is distroless and -alpine has no bash.
+    case "$images" in
+        *"python-test ghcr.io/astral-sh/uv:$uv_pin-trixie-slim"* | \
+            *"python-test ghcr.io/astral-sh/uv:$uv_pin-debian-slim"*) uv_ok=1 ;;
+        *) uv_ok=0 ;;
+    esac
+    assert_equals "1" "$uv_ok" \
+        "GitLab python-test uses a Debian uv image at the uv.toml pin (got: $images)"
+}
+
 # --- Negative fixtures: the checker must fire --------------------------------
+
+test_fixture_ci_image_parsing() {
+    local slice="$WORKDIR/images.md" pin="$WORKDIR/pin.toml"
+    command printf 'python-lint:\n  stage: lint\n  image: ghcr.io/astral-sh/ruff:1.2.3 # c\npython-test:\n  image: ghcr.io/astral-sh/uv:4.5.6-alpine\n' >"$slice"
+    assert_equals 'python-lint ghcr.io/astral-sh/ruff:1.2.3
+python-test ghcr.io/astral-sh/uv:4.5.6-alpine' "$(slice_ci_images "$slice")" \
+        "Each job is paired with its own image, comment stripped"
+    assert_true "case \"\$(slice_ci_images \"$slice\")\" in *ruff:1.2.3-alpine*) false ;; *) true ;; esac" \
+        "A bare ruff tag does not satisfy the -alpine requirement"
+    command printf '# c\nrequired-version = "==0.9.1"\nx = 1\n' >"$pin"
+    assert_equals "0.9.1" "$(required_pin "$pin")" "required_pin reads the bare version"
+    command printf 'required-version = ">=0.9"\n' >"$pin"
+    assert_output_empty "$(required_pin "$pin")" "A non-exact pin yields nothing"
+}
+
+test_fixture_sentinel_in_comment_only() {
+    local f="$WORKDIR/comment-sentinel.sh"
+    command printf '#!/usr/bin/env bash\n# would exit 77 here\necho "exit 77"\nexit 0\n' >"$f"
+    assert_true "! command grep -E '^[[:space:]]+exit 77\$' \"$f\" >/dev/null" \
+        "An 'exit 77' that appears only in a comment or a string is not the sentinel"
+}
 
 test_fixture_template_syntax_fires() {
     local slice="$WORKDIR/broken-templates.md" f="$WORKDIR/broken.out"
@@ -537,6 +616,9 @@ run_test test_shell_slice_rc_matches_repo "The shell slice's .shellcheckrc block
 run_test test_python_slice_ruff_matches_repo "The python slice's ruff.toml block matches the repo's ruff.toml"
 run_test test_python_slice_run_sh_template "The python slice's tests/run.sh template parses and keeps the 77 sentinel"
 run_test test_python_slice_conftest_template "The python slice's conftest.py template parses"
+run_test test_python_slice_ci_images "The python slice's GitLab images are shelled variants at the ruff/uv pins"
+run_test test_fixture_ci_image_parsing "Fixture: CI image and pin parsing"
+run_test test_fixture_sentinel_in_comment_only "Fixture: a commented-out 77 sentinel is not the sentinel"
 run_test test_fixture_template_syntax_fires "Fixture: a template with a syntax error is caught"
 run_test test_fixture_fence_lang_selects "Fixture: the fence reader captures only the requested language"
 run_test test_fixture_conforming "Fixture: a conforming slice passes"
