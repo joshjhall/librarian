@@ -252,6 +252,16 @@ test_fixture_ini_block_outside_section() {
         "An ini block under another heading is not read as the Config files block"
 }
 
+test_fixture_ini_block_unterminated() {
+    local slice="$WORKDIR/unterminated-ini.md"
+    command printf '# S\n\n## Config files\n\n```ini\nshell=bash\n\n## Later\n' >"$slice"
+    assert_output_empty "$(slice_ini_settings "$slice")" \
+        "An ini fence with no closing fence parses empty, not to everything after it"
+    command printf '# S\n\n## Tools\n\ntext\n' >"$slice"
+    assert_output_empty "$(slice_ini_settings "$slice")" \
+        "A slice with no Config files heading parses empty"
+}
+
 test_fixture_conforming() {
     local slice="$WORKDIR/ok.md"
     command printf '# S\n\n## Alpha\n\n## Beta\n\n## Extra\n\n## Gamma\n' >"$slice"
@@ -323,5 +333,6 @@ run_test test_fixture_duplicate_heading "Fixture: a duplicated heading is matche
 run_test test_fixture_unterminated_contract "Fixture: an unterminated contract region parses empty"
 run_test test_fixture_ini_drift "Fixture: a drifted ini block is reported; comments and whitespace are not drift"
 run_test test_fixture_ini_block_outside_section "Fixture: an ini block outside Config files is ignored"
+run_test test_fixture_ini_block_unterminated "Fixture: an unterminated ini fence or absent heading parses empty"
 
 generate_report
