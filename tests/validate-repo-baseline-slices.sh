@@ -344,12 +344,15 @@ test_fixture_fence_closes_table() {
         fence_closes "$open" "$line" && got=1
         assert_equals "$want" "$got" "fence_closes '$open' '$line'"
     done <<'EOF'
+```|```	|1
 ```|```|1
 ```|```   |1
 ```|````|1
 ````|```|0
 ```|~~~|0
 ~~~|~~~|1
+~~~|~~~~|1
+~~~~|~~~|0
 ~~~|```|0
 ```|```bash|0
 ```|``` bash|0
