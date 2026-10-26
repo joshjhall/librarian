@@ -281,8 +281,10 @@ Example: Homebrew upgraded ruff to 0.17 and the repo pins 0.16.10, so ruff exits
    pipx install --force "ruff==$(bin/ruff-version.sh)"      # or: mise use ruff@<pin>
    ```
 
-   `uv tool` / `pipx` install into `~/.local/bin`; make sure that precedes the
-   Homebrew prefix on PATH.
+   Ask the tool where it installs rather than assuming a path — the directory is
+   configurable and platform-dependent (`uv tool dir --bin`, `pipx environment
+   --value PIPX_BIN_DIR`) — and make sure that directory precedes the system
+   package manager's prefix on PATH.
 2. **Or run the pinned version ephemerally** where the repo's gate supports it
    (`uvx ruff@<pin>`).
 3. **Never edit the pin to match your machine.** Bumping a pin is a deliberate
