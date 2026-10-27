@@ -5,11 +5,18 @@
 # Pins come from tools.versions (plus each slice's own single source); nothing
 # here hardcodes a version. Linux x86_64 / aarch64 only — on a Mac use the
 # package manager, then check `<tool> --version` against tools.versions.
+#
+# Every tool lands in a fresh, empty $STAGE first. Only when every tool is
+# present there does the tail move them into TOOLS_BIN, so a stale binary
+# already in TOOLS_BIN can never pass for this run's install, and a failed run
+# leaves TOOLS_BIN untouched.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TOOLS_BIN="${TOOLS_BIN:-$HOME/.local/bin}"
-mkdir -p "$TOOLS_BIN"
+# Tools that ship more than one file (bats) live here, outside TOOLS_BIN.
+TOOLS_HOME="${TOOLS_HOME:-$HOME/.local/share/repo-baseline-tools}"
+mkdir -p "$TOOLS_BIN" "$TOOLS_HOME"
 case ":$PATH:" in *":$TOOLS_BIN:"*) ;; *) PATH="$TOOLS_BIN:$PATH" ;; esac
 [ -n "${GITHUB_PATH:-}" ] && echo "$TOOLS_BIN" >>"$GITHUB_PATH"
 
@@ -35,6 +42,8 @@ pin() {
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
+STAGE="$TMP/stage"
+mkdir -p "$STAGE"
 
 # sha256_of <file> — sha256sum on Linux, shasum on a host that lacks it.
 sha256_of() {
@@ -69,19 +78,20 @@ fetch() {
     printf '%s\n' "$out"
 }
 
-# put <file> <tool> — install one verified binary into TOOLS_BIN, executable.
-put() { install -m 0755 "$1" "$TOOLS_BIN/$2"; }
+# put <file> <tool> — stage one verified binary, executable. The tail moves
+# staged tools into TOOLS_BIN once every one of them has landed.
+put() { install -m 0755 "$1" "$STAGE/$2"; }
 
-# from_tar <url> <tool> — verify a tarball, then install the one binary named <tool>.
+# from_tar <url> <tool> — verify a tarball, then stage the one binary named <tool>.
 from_tar() {
     local dir="$TMP/$2" archive
     archive="$(fetch "$1" "$2-$ARCH")"
     mkdir -p "$dir"
     tar -xzf "$archive" -C "$dir"
-    # `find -exec` exits 0 when nothing matches, so check the result: an archive
-    # whose layout changed must fail here, not install nothing.
-    find "$dir" -type f -name "$2" -exec install -m 0755 {} "$TOOLS_BIN/$2" \;
-    if [ ! -x "$TOOLS_BIN/$2" ]; then
+    # `find -exec` exits 0 when nothing matches, so check the result. $STAGE
+    # starts empty, so only this run's install can satisfy the check.
+    find "$dir" -type f -name "$2" -exec install -m 0755 {} "$STAGE/$2" \;
+    if [ ! -x "$STAGE/$2" ]; then
         echo "ERROR: no file named $2 in $1" >&2
         exit 1
     fi

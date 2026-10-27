@@ -456,80 +456,112 @@ test_every_download_has_a_hash() {
         "Every tools.sha256 entry is a 64-hex digest"
 }
 
-test_install_tools_verifies_before_install() {
-    # Offline: a stub curl writes fixed bytes, so the gate never fetches. The
-    # rendered fetch() must install bytes whose hash matches, and must abort
-    # BEFORE installing on a mismatch or a missing entry.
-    local d="$WORKDIR/integrity" stub="$WORKDIR/integrity-bin" good rc
+# install_sandbox <dir> <curl-payload-file> — render the scaffold into <dir>,
+# stub curl to serve <payload> for every URL (the gate never fetches), and split
+# the rendered install-tools.sh into its helpers and its tail, so a case can run
+# `helpers; <one fetch/put or from_tar>; tail` — the same stage -> check -> move
+# path the real script takes, minus the 14 real downloads.
+install_sandbox() {
+    local d="$1"
     render_to "$d" --ci github >/dev/null
-    command mkdir -p "$stub"
-    command printf '#!/usr/bin/env sh\nwhile [ "$#" -gt 0 ]; do [ "$1" = -o ] && { printf payload >"$2"; exit 0; }; shift; done\nexit 1\n' >"$stub/curl"
-    command chmod +x "$stub/curl"
-    # Cut the rendered script at the first install line: keep the helpers only,
-    # then call fetch/put directly against a one-entry tools.sha256.
+    command mkdir -p "$d/stub"
+    command printf '#!/usr/bin/env sh\nwhile [ "$#" -gt 0 ]; do [ "$1" = -o ] && { cat "%s" >"$2"; exit 0; }; shift; done\nexit 1\n' \
+        "$2" >"$d/stub/curl"
+    command chmod +x "$d/stub/curl"
     command awk '/^v=\$\(pin typos\)/ { exit } { print }' "$d/bin/install-tools.sh" >"$d/bin/helpers.sh"
-    good="$(command printf payload | { command -v sha256sum >/dev/null 2>&1 && sha256sum || shasum -a 256; } | command awk '{ print $1 }')"
-    probe() { # <tools.sha256 line> -> runs fetch+put for key "conform-x"
-        command printf '%s\n' "$1" >"$d/tools.sha256"
-        command rm -rf "$d/tb"
-        (cd "$d" && PATH="$stub:/usr/bin:/bin" TOOLS_BIN="$d/tb" HOME="$d" /usr/bin/env -uBASH_ENV bash -c '
-            . bin/helpers.sh
-            f=$(fetch https://example.invalid/conform conform-x)
-            put "$f" conform' >"$d/probe.log" 2>&1)
-    }
+    command awk '/^# Fail, never skip/ { on = 1 } on' "$d/bin/install-tools.sh" >"$d/bin/tail.sh"
+}
+
+# run_install <dir> <tools.sha256 contents> <REQUIRED> <body> — run helpers, then
+# <body>, then the real tail, with TOOLS_BIN=<dir>/tb. Output in <dir>/run.log.
+run_install() {
+    command printf '%s\n' "$2" >"$1/tools.sha256"
+    (cd "$1" && PATH="$1/stub:/usr/bin:/bin" TOOLS_BIN="$1/tb" TOOLS_HOME="$1/th" HOME="$1" \
+        /usr/bin/env -uBASH_ENV bash -c ". bin/helpers.sh
+            $4
+            REQUIRED='$3'
+            . bin/tail.sh" >"$1/run.log" 2>&1)
+}
+
+sha256_file() {
+    local s
+    s="$({ command -v sha256sum >/dev/null 2>&1 && sha256sum "$1"; } || shasum -a 256 "$1")"
+    command printf '%s\n' "${s%% *}"
+}
+
+test_install_tools_verifies_before_install() {
+    # A download whose bytes match tools.sha256 installs; a mismatch or a
+    # missing entry aborts BEFORE anything reaches TOOLS_BIN.
+    local d="$WORKDIR/integrity" good rc body
+    command mkdir -p "$d"
+    command printf payload >"$WORKDIR/integrity.payload"
+    install_sandbox "$d" "$WORKDIR/integrity.payload"
+    good="$(sha256_file "$WORKDIR/integrity.payload")"
+    body='f=$(fetch https://example.invalid/conform conform-x)
+            put "$f" conform'
     rc=0
-    probe "conform-x $good" || rc=$?
+    run_install "$d" "conform-x $good" conform "$body" || rc=$?
     assert_equals "0" "$rc" "Bytes matching tools.sha256 install"
     assert_true "[ -x \"$d/tb/conform\" ]" "...and land executable in TOOLS_BIN"
+    command rm -rf "$d/tb"
     rc=0
-    probe "conform-x $(command printf '%064d' 0)" || rc=$?
+    run_install "$d" "conform-x $(command printf '%064d' 0)" conform "$body" || rc=$?
     assert_equals "1" "$rc" "A sha256 mismatch aborts the install"
-    assert_contains "$(command cat "$d/probe.log")" "sha256 mismatch for conform-x" "...naming the tool"
+    assert_contains "$(command cat "$d/run.log")" "sha256 mismatch for conform-x" "...naming the tool"
     assert_true "[ ! -e \"$d/tb/conform\" ]" "...and installs NOTHING"
     rc=0
-    probe "other-x $good" || rc=$?
+    run_install "$d" "other-x $good" conform "$body" || rc=$?
     assert_equals "1" "$rc" "A download with no tools.sha256 entry aborts"
     # Named, not inferred: with no entry the digest comparison ALSO fails, so
     # the exit code alone cannot show the missing-entry guard fired.
-    assert_contains "$(command cat "$d/probe.log")" "no sha256 for conform-x in tools.sha256" \
+    assert_contains "$(command cat "$d/run.log")" "no sha256 for conform-x in tools.sha256" \
         "...with the missing-entry error, before any download"
     assert_true "[ ! -e \"$d/tb/conform\" ]" "...and installs nothing"
 }
 
 test_install_tools_fails_when_nothing_lands() {
-    # Two ways an install can "succeed" with no pinned binary in TOOLS_BIN, both
-    # measured live in review: from_tar's `find -exec` exits 0 on no match, and a
-    # `command -v` tail check is satisfied by a runner's preinstalled copy.
-    local d="$WORKDIR/nothing-lands" stub="$WORKDIR/nothing-lands-bin" sum rc
-    render_to "$d" --ci github >/dev/null
-    command mkdir -p "$stub" "$d/arch/other"
-    # A tarball that verifies but holds no file named `typos`.
-    command printf 'not the tool\n' >"$d/arch/other/README"
-    (cd "$d/arch" && command tar -czf "$d/payload.tgz" other)
-    command printf '#!/usr/bin/env sh\nwhile [ "$#" -gt 0 ]; do [ "$1" = -o ] && { cat "%s" >"$2"; exit 0; }; shift; done\nexit 1\n' \
-        "$d/payload.tgz" >"$stub/curl"
-    command chmod +x "$stub/curl"
-    command awk '/^v=\$\(pin typos\)/ { exit } { print }' "$d/bin/install-tools.sh" >"$d/bin/helpers.sh"
-    sum="$({ command -v sha256sum >/dev/null 2>&1 && sha256sum "$d/payload.tgz"; } || shasum -a 256 "$d/payload.tgz")"
-    sum="${sum%% *}"
-    rc=0
-    (cd "$d" && PATH="$stub:/usr/bin:/bin" TOOLS_BIN="$d/tb" HOME="$d" ARCH=x86_64 /usr/bin/env -uBASH_ENV bash -c '
-        . bin/helpers.sh
-        printf "typos-%s %s\n" "$ARCH" "'"$sum"'" >tools.sha256
-        from_tar https://example.invalid/typos.tgz typos' >"$d/tar.log" 2>&1) || rc=$?
-    assert_equals "1" "$rc" "from_tar fails when a verified archive holds no binary of that name"
-    assert_contains "$(command cat "$d/tar.log")" "no file named typos" "...naming the missing binary"
+    # Three ways an install can "succeed" without this run landing a pinned
+    # binary, each found in review: from_tar's `find -exec` exits 0 on no match;
+    # a `command -v` check is satisfied by a preinstalled copy on PATH; and a
+    # destination check is satisfied by a STALE binary already in TOOLS_BIN.
+    # Staging into a fresh dir closes all three. Each case has a positive control.
+    local d="$WORKDIR/lands" sum rc body
+    command mkdir -p "$d/arch/good" "$d/arch/bad"
+    command printf '#!/usr/bin/env sh\necho typos-fresh\n' >"$d/arch/good/typos"
+    command chmod +x "$d/arch/good/typos"
+    command printf 'not the tool\n' >"$d/arch/bad/README"
+    (cd "$d/arch" && command tar -czf "$WORKDIR/good.tgz" good && command tar -czf "$WORKDIR/bad.tgz" bad)
+    body='ARCH=x86_64; from_tar https://example.invalid/typos.tgz typos'
 
-    # The tail: `faketool` is on PATH (a preinstalled copy) but not in TOOLS_BIN.
-    command printf '#!/usr/bin/env sh\nexit 0\n' >"$stub/faketool"
-    command chmod +x "$stub/faketool"
-    command mkdir -p "$d/tb2"
-    command awk '/^# Fail, never skip/ { on = 1 } on' "$d/bin/install-tools.sh" >"$d/bin/tail.sh"
+    install_sandbox "$d" "$WORKDIR/good.tgz"
+    sum="$(sha256_file "$WORKDIR/good.tgz")"
     rc=0
-    (cd "$d" && PATH="$stub:/usr/bin:/bin" TOOLS_BIN="$d/tb2" REQUIRED=faketool \
-        /usr/bin/env -uBASH_ENV bash bin/tail.sh >"$d/tail.log" 2>&1) || rc=$?
-    assert_equals "1" "$rc" "The post-install check fails when a tool is on PATH but not in TOOLS_BIN"
-    assert_contains "$(command cat "$d/tail.log")" "did not install: faketool" "...naming it"
+    run_install "$d" "typos-x86_64 $sum" typos "$body" || rc=$?
+    assert_equals "0" "$rc" "Control: from_tar + tail install a tarball that holds the binary"
+    assert_equals "typos-fresh" "$("$d/tb/typos" 2>/dev/null)" "...and TOOLS_BIN runs THIS run's binary"
+
+    # Stale: TOOLS_BIN already holds an executable `typos`; the new archive has none.
+    install_sandbox "$d" "$WORKDIR/bad.tgz"
+    command rm -rf "$d/tb"
+    command mkdir -p "$d/tb"
+    command printf '#!/usr/bin/env sh\necho typos-stale\n' >"$d/tb/typos"
+    command chmod +x "$d/tb/typos"
+    sum="$(sha256_file "$WORKDIR/bad.tgz")"
+    rc=0
+    run_install "$d" "typos-x86_64 $sum" typos "$body" || rc=$?
+    assert_equals "1" "$rc" "from_tar fails on an archive with no such binary, even with a stale copy in TOOLS_BIN"
+    assert_contains "$(command cat "$d/run.log")" "no file named typos" "...naming the missing binary"
+    assert_equals "typos-stale" "$("$d/tb/typos" 2>/dev/null)" "...and leaves TOOLS_BIN exactly as it was"
+
+    # The tail alone: `faketool` is preinstalled on PATH AND stale in TOOLS_BIN,
+    # but this run staged nothing.
+    command printf '#!/usr/bin/env sh\nexit 0\n' >"$d/stub/faketool"
+    command chmod +x "$d/stub/faketool"
+    command cp "$d/stub/faketool" "$d/tb/faketool"
+    rc=0
+    run_install "$d" "" faketool ":" || rc=$?
+    assert_equals "1" "$rc" "The post-install check ignores a tool on PATH or stale in TOOLS_BIN"
+    assert_contains "$(command cat "$d/run.log")" "did not install: faketool" "...naming it"
 }
 
 # --- AC1: the rendered hooks pass on a clean checkout --------------------------

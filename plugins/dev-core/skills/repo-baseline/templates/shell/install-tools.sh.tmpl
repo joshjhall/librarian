@@ -7,8 +7,13 @@ v=$(pin shellcheck)
 f=$(fetch "https://github.com/koalaman/shellcheck/releases/download/v$v/shellcheck-v$v.linux.$ARCH.tar.xz" "shellcheck-$ARCH")
 tar -xJf "$f" -C "$TMP"
 put "$TMP/shellcheck-v$v/shellcheck" shellcheck
+# bats-core is a launcher plus libexec/ and lib/, not one binary: it gets its
+# own versioned prefix under TOOLS_HOME, and a symlink is staged in its place
+# (bats resolves its libexec through the link).
 v=$(pin bats)
 f=$(fetch "https://github.com/bats-core/bats-core/archive/refs/tags/v$v.tar.gz" "bats-any")
 tar -xzf "$f" -C "$TMP"
-"$TMP/bats-core-$v/install.sh" "$(dirname "$TOOLS_BIN")" >/dev/null
+rm -rf "$TOOLS_HOME/bats-core-$v"
+"$TMP/bats-core-$v/install.sh" "$TOOLS_HOME/bats-core-$v" >/dev/null
+ln -s "$TOOLS_HOME/bats-core-$v/bin/bats" "$STAGE/bats"
 REQUIRED="$REQUIRED shellcheck shfmt bats"

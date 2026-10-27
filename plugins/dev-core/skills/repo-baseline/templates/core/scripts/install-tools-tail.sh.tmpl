@@ -1,13 +1,19 @@
 
 # Fail, never skip: a tool that did not land is a broken install (core § 1).
-# Check TOOLS_BIN itself, not `command -v`: a runner's preinstalled, unpinned
-# copy of the same tool on PATH would otherwise hide a failed install.
+# Check $STAGE, which this run created empty, so neither a stale binary in
+# TOOLS_BIN nor a preinstalled copy elsewhere on PATH can stand in for it.
 missing=""
 for t in $REQUIRED; do
-    [ -x "$TOOLS_BIN/$t" ] || missing="$missing $t"
+    [ -x "$STAGE/$t" ] || missing="$missing $t"
 done
 if [ -n "$missing" ]; then
     echo "ERROR: install-tools.sh did not install:$missing" >&2
     exit 1
 fi
+# Every tool landed: only now replace what TOOLS_BIN holds. `cp -P` keeps a
+# staged symlink (bats) a symlink rather than copying its target.
+for t in $REQUIRED; do
+    rm -f "$TOOLS_BIN/$t"
+    cp -P "$STAGE/$t" "$TOOLS_BIN/$t"
+done
 echo "install-tools: ok ($REQUIRED)"
