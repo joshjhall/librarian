@@ -1,0 +1,4 @@
+# shell slice
+shellcheck=0.10.0
+shfmt=3.14.1
+bats=1.14.0

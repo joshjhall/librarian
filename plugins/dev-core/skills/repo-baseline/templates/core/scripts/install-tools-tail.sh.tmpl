@@ -1,0 +1,11 @@
+
+# Fail, never skip: a tool that did not land is a broken install (core § 1).
+missing=""
+for t in $REQUIRED; do
+    command -v "$t" >/dev/null 2>&1 || missing="$missing $t"
+done
+if [ -n "$missing" ]; then
+    echo "ERROR: install-tools.sh did not install:$missing" >&2
+    exit 1
+fi
+echo "install-tools: ok ($REQUIRED)"

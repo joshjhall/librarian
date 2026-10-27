@@ -1,0 +1,13 @@
+
+    shellcheck:
+      glob: "*.sh"
+      skip:
+        - run: "! command -v shellcheck >/dev/null 2>&1"
+      run: shellcheck --severity=warning {staged_files}
+
+    shfmt:
+      glob: "*.sh"
+      skip:
+        - run: "! command -v shfmt >/dev/null 2>&1"
+      run: shfmt -w -i 4 -ci {staged_files}
+      stage_fixed: true

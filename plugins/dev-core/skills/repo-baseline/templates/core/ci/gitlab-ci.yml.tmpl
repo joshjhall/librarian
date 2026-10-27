@@ -1,0 +1,38 @@
+# Rendered from librarian's repo-baseline templates (core § 3).
+# GitLab runs stages in order and fails the pipeline on any failed job, so the
+# stage list IS the merge gate: require "Pipelines must succeed" on the project.
+stages: [lint, test, security]
+
+default:
+  # Pinned tag, never :latest. Debian-based so bin/install-tools.sh has bash.
+  image: debian:trixie-20261005-slim
+  before_script:
+    - apt-get update -qq
+    - apt-get install -y -qq --no-install-recommends bash ca-certificates curl git unzip xz-utils >/dev/null
+    - bash bin/install-tools.sh
+    - export PATH="$HOME/.local/bin:$PATH"
+
+variables:
+  CI: "true" # tests/run.sh fails a skipped stage under CI
+
+lint:
+  stage: lint
+  script:
+    - just lint
+
+test:
+  stage: test
+  script:
+    - just test
+
+security:
+  stage: security
+  variables:
+    GIT_DEPTH: 0
+  script:
+    - |
+      if [ -n "${CI_MERGE_REQUEST_DIFF_BASE_SHA:-}" ]; then
+        gitleaks detect --redact --log-opts="$CI_MERGE_REQUEST_DIFF_BASE_SHA..HEAD"
+      else
+        gitleaks detect --redact # branch pipeline: no MR base, scan everything
+      fi

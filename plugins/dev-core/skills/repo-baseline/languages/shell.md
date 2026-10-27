@@ -76,6 +76,10 @@ inside the single test entry point, which pre-push already calls (`core.md` § 1
 
 ## CI job
 
+These are the **single-slice** jobs. A repo rendered from `templates/` runs the
+same tools through `just lint` and `tests/run.sh` inside core's `lint`/`test`
+jobs instead (`templates/README.md`).
+
 GitHub Actions — `lint` stage:
 
 ```yaml

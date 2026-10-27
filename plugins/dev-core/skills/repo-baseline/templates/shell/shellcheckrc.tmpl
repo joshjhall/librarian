@@ -1,0 +1,13 @@
+# No severity key: .shellcheckrc cannot carry one (shellcheck 0.10.0 silently
+# ignores `severity=`), so the floor is --severity=warning on every command line.
+
+shell=bash
+
+# Follow relative `source` lines, so SC1091 needs no global disable.
+source-path=SCRIPTDIR
+external-sources=true
+
+# per-repo: disable only codes that are wrong for this repo's structure, with
+# the reason inline. SC1090: helpers sourced through a runtime-resolved path.
+# SC2016: single-quoted `$` that is deliberately not expanded.
+disable=SC1090,SC2016

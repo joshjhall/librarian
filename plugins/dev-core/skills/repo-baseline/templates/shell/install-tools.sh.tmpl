@@ -1,0 +1,14 @@
+
+# --- shell slice: shellcheck + shfmt from the OS / tool pins, bats-core pinned ---
+v=$(pin shfmt)
+fetch "https://github.com/mvdan/sh/releases/download/v$v/shfmt_v${v}_linux_$GOARCH" "$TOOLS_BIN/shfmt"
+chmod 0755 "$TOOLS_BIN/shfmt"
+v=$(pin shellcheck)
+fetch "https://github.com/koalaman/shellcheck/releases/download/v$v/shellcheck-v$v.linux.$ARCH.tar.xz" "$TMP/sc.txz"
+tar -xJf "$TMP/sc.txz" -C "$TMP"
+install -m 0755 "$TMP/shellcheck-v$v/shellcheck" "$TOOLS_BIN/shellcheck"
+v=$(pin bats)
+fetch "https://github.com/bats-core/bats-core/archive/refs/tags/v$v.tar.gz" "$TMP/bats.tgz"
+tar -xzf "$TMP/bats.tgz" -C "$TMP"
+"$TMP/bats-core-$v/install.sh" "$(dirname "$TOOLS_BIN")" >/dev/null
+REQUIRED="$REQUIRED shellcheck shfmt bats"

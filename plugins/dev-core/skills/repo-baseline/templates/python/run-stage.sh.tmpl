@@ -1,0 +1,9 @@
+
+# --- python slice: pytest via uv, pinned by tests/requirements.txt ---
+pytest_stage() {
+    command -v uv >/dev/null 2>&1 || return 77
+    compgen -G 'tests/test_*.py' >/dev/null || return 78
+    uv run --no-project --with-requirements tests/requirements.txt \
+        python -m pytest tests/
+}
+stage "python (pytest)" pytest_stage

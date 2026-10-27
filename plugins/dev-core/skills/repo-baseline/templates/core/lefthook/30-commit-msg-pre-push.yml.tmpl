@@ -1,0 +1,28 @@
+
+commit-msg:
+  commands:
+    conform:
+      skip:
+        - run: "! command -v conform >/dev/null 2>&1"
+      run: conform enforce --commit-msg-file {1}
+
+pre-push:
+  parallel: true
+  commands:
+    dprint-check:
+      skip:
+        - run: "! command -v dprint >/dev/null 2>&1"
+      run: dprint check
+
+    taplo-check:
+      skip:
+        - run: "! command -v taplo >/dev/null 2>&1"
+      run: taplo fmt --check
+
+    typos:
+      skip:
+        - run: "! command -v typos >/dev/null 2>&1"
+      run: typos
+
+    tests:
+      run: bash tests/run.sh

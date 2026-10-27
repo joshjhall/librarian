@@ -1,0 +1,10 @@
+
+if [ "$failed" -gt 0 ]; then
+    echo "tests: $failed stage(s) failed" >&2
+    exit 1
+fi
+if [ "$skipped" -gt 0 ] && [ "${CI:-}" = "true" ]; then
+    echo "tests: $skipped stage(s) skipped under CI — a missing tool is a failure here" >&2
+    exit 1
+fi
+exit 0

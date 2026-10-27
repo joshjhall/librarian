@@ -233,9 +233,9 @@ GitLab runs stages in order and fails the pipeline on any failed job, so the
 stage list *is* the merge gate; require "Pipelines must succeed" on the project.
 
 `bin/install-tools.sh` and `just lint` / `just test` are placeholders for the
-repo's own entry points. The checkable property is that **CI and the hooks call
-the same entry points**, and that the install step **fails** when a tool cannot
-be installed.
+repo's own entry points; `templates/` renders a working set of all three. The
+checkable property is that **CI and the hooks call the same entry points**, and
+that the install step **fails** when a tool cannot be installed.
 
 ---
 

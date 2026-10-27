@@ -16,12 +16,17 @@ layers:
   override. Every slice fills in the same headings, defined by
   `slice-contract.md`, so audit and scaffold tooling can read any slice
   generically.
+- **Templates** (`templates/`) — the baseline as plain files plus a manifest,
+  rendered per slice by `templates/render.sh` (or any tool following
+  `templates/README.md`): hooks, configs, justfile, test entry point, tool
+  installer, and both CI platforms.
 
 ## Which file to load
 
 | You are…                                         | Load                                  |
 | ------------------------------------------------ | ------------------------------------- |
-| Setting up hooks / CI / tool pins for a repo     | `core.md`, then the slice per language |
+| Setting up hooks / CI / tool pins for a repo     | `templates/README.md` — render, then `core.md` |
+| Changing what the scaffold writes                | `templates/README.md`                 |
 | Writing or reviewing a language slice            | `slice-contract.md`                   |
 | Working in a shell-heavy repo                    | `languages/shell.md`                  |
 | Working in a Python repo (scripts or package)    | `languages/python.md`                 |
