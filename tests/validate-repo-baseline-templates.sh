@@ -592,16 +592,21 @@ test_install_tools_cache_is_reverified() {
     assert_true "[ ! -e \"$c/conform-x\" ]" "...and is NOT cached"
 
     # An unreadable entry is a miss, not an abort: the download still installs.
-    # (Root reads a mode-000 file anyway, so the case only bites as non-root.)
+    # A cp stub fails reads of the entry (chmod 000 would not stop root), and
+    # the entry holds bad bytes, so a read that got through would log the sha
+    # warning — the fallback path must not.
     command mkdir -p "$c"
-    command printf payload >"$c/conform-x"
-    command chmod 000 "$c/conform-x"
+    command printf tampered >"$c/conform-x"
+    command printf '#!/usr/bin/env sh\n[ "$1" = "%s" ] && exit 1\nexec /bin/cp "$@"\n' \
+        "$c/conform-x" >"$d/stub/cp"
+    command chmod +x "$d/stub/cp"
     command rm -rf "$d/tb"
     rc=0
     run_install "$d" "conform-x $good" conform "$body" || rc=$?
+    command rm -f "$d/stub/cp"
     assert_equals "0" "$rc" "An unreadable cache entry falls back to a download"
     assert_equals "$good" "$(sha256_file "$d/tb/conform")" "...which installs the verified bytes"
-    command chmod 644 "$c/conform-x" 2>/dev/null || true
+    assert_not_contains "$(command cat "$d/run.log")" "fails its sha256" "...without ever reading the entry"
 
     # An unusable cache (a regular file where the dir should be) costs only the
     # copy: the verified download still installs.
