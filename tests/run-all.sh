@@ -273,7 +273,7 @@ print_summary() {
     done
     printf '\nExit code is %s. NOTE: piping this suite (`| tail`, `| grep`)\n' "$rc"
     printf 'discards it — the pipeline reports the LAST command status. Capture\n'
-    printf 'instead:  bash tests/run-all.sh > /tmp/run.log 2>&1; echo $?\n'
+    printf 'instead:  tests/run-all.sh > /tmp/run.log 2>&1; echo $?\n'
 }
 
 # Emit the verdict on every stream that must carry it. The stream DECISION lives

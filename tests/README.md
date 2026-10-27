@@ -12,7 +12,8 @@
 
 **Capture, do not pipe** (#854): `bash tests/run-all.sh | tail` exits 0 on a
 red suite, because a pipeline reports its last command's status. Run
-`bash tests/run-all.sh > /tmp/run.log 2>&1; echo $?` instead. The failure
+`tests/run-all.sh > /tmp/run.log 2>&1; echo $?` instead (no `bash` prefix — a
+worktree-isolated golem session refuses that spelling, #1247). The failure
 verdict is also mirrored to stderr so a piped run is still loud, but only the
 captured form preserves the exit code.
 

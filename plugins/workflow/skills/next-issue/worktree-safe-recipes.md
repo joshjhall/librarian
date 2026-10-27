@@ -53,6 +53,15 @@ Measured in an isolated session, deterministic across repeats:
 | `X=$(cmd); echo "$X"` — command substitution anywhere | **refused** |
 | `/literal/path/script.sh --arg "$UNSET_VAR"` | **refused** |
 | `mkdir -p d && cat > d/f <<'EOF' … EOF` — compound + heredoc | **refused** |
+| `bash tests/x.sh > /tmp/x.log 2>&1; echo $?` — interpreter, then `$?` | **refused** |
+| `bash tests/x.sh; echo $?` / `bash tests/x.sh > l 2>&1 \|\| echo $?` | **refused** |
+| `bash tests/x.sh > /tmp/x.log 2>&1` — alone, or `&& echo ok` | allowed |
+| `tests/x.sh > /tmp/x.log 2>&1; echo $?` — no `bash` prefix | allowed |
+| `python3 - <<'EOF' … EOF` — stdin heredoc, body names no git | allowed |
+| `python3 - <<'EOF' … EOF` — body runs `git` | **refused** |
+| `golem-work.sh register bash "git push (pre-push suite)"` | **refused** |
+| `golem-work.sh register bash "pre-push suite"` | allowed |
+| `golem-work.sh complete <id>` | **refused** |
 
 The operative property is whether the harness can **statically evaluate** the
 command. A value it can see (a literal, a variable assigned in the same command,
@@ -63,6 +72,38 @@ model, a braced expansion) is not.
 > not read off a spec, and a Claude Code release may change it. Treat it as the
 > reason the two patterns below are shaped as they are — and if a recipe is
 > refused despite matching an "allowed" row, trust the refusal and re-measure.
+
+### A second family — text that names git, or a string evaluator
+
+The last five rows (measured for #1247, 2026-10-27) probe a refusal with a
+different cause than evaluability: the harness refuses a command whose
+**argument or fed body names a git operation**
+(*"runs golem-work.sh with the text git push … cannot be shown not to be git"*,
+*"feeds python text naming git"*), and one it reads as a **string evaluator** —
+`complete` is bash's builtin (*"runs a string through complete"*). A heredoc
+is not itself the trigger: `python3 - <<'EOF'` with a plain body is allowed,
+and so is `cd <worktree> && python3 - <<'EOF'`, while the `mkdir … && cat >
+… <<'EOF'` row above stays refused on re-measure. So judge a heredoc by its
+body and its whole command, not by the `<<`. Fix these by **renaming**, never by
+obfuscating the word past the check: describe the work (`"pre-push suite"`)
+rather than the command, and spell the verb `finish` — `background-work.md`
+carries both rules for `golem-work.sh`. Note the installed copy can lag the
+tree here: a `finish`-less install answers `unknown subcommand 'finish'`, so
+re-measure against the copy you are actually running.
+
+### Capturing a gate's exit code
+
+The interpreter rows are the ones a golem hits first, because `CLAUDE.md`'s
+capture-don't-pipe rule (#854) used to be spelled `bash tests/run-all.sh >
+/tmp/run.log 2>&1; echo $?`. The redirect is not the trigger — a `bash <script>`
+call **followed by a `$?` read** is. Drop the prefix: every `tests/*.sh` is
+executable, so
+
+```bash
+tests/run-all.sh > /tmp/run.log 2>&1; echo $?
+```
+
+keeps the log and the exit code in an isolated session and outside one alike.
 
 `CLAUDE_PLUGIN_ROOT` additionally is **not exported into the Bash environment**
 at all (`env | grep -c CLAUDE_PLUGIN_ROOT` → 0), so that spelling has two

@@ -209,6 +209,10 @@ test_verdict_states_the_capture_recipe() {
 
     assert_contains "$err" "> /tmp/run.log 2>&1" \
         "the failure verdict states the capture-not-pipe recipe"
+    # #1247: `bash <script> …; echo $?` is refused in a worktree-isolated golem
+    # session, so the advice the suite prints must be the bare-executable form.
+    assert_not_contains "$err" "bash tests/run-all.sh >" \
+        "the verdict's capture recipe has no bash prefix (refused when isolated)"
 }
 
 # --- Guard the sentinel behaviour this change had to preserve (#538) ---------
@@ -239,6 +243,11 @@ test_docs_carry_the_capture_recipe() {
         "CLAUDE.md documents capturing the suite rather than piping it"
     assert_file_contains "$SCRIPT_DIR/README.md" "run.log 2>&1" \
         "tests/README.md documents capturing the suite rather than piping it"
+    # #1247: the documented recipe must be one a golem can actually run.
+    assert_file_not_contains "$SCRIPT_DIR/../CLAUDE.md" "bash tests/run-all.sh >" \
+        "CLAUDE.md's capture recipe has no bash prefix (refused when isolated)"
+    assert_file_not_contains "$SCRIPT_DIR/README.md" "bash tests/run-all.sh >" \
+        "tests/README.md's capture recipe has no bash prefix (refused when isolated)"
 }
 
 run_test test_failure_reaches_stderr "a failing verdict reaches stderr (survives | tail)"
