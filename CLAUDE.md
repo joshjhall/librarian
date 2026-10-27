@@ -371,8 +371,12 @@ tail -45` exits **0 on a red suite**: a pipeline reports its *last* command's
 status, so the caller reads `tail`'s success. Capture instead, and read the code:
 
 ```bash
-bash tests/run-all.sh > /tmp/run.log 2>&1; echo $?
+tests/run-all.sh > /tmp/run.log 2>&1; echo $?
 ```
+
+No `bash` prefix, on purpose (#1247): a worktree-isolated golem session refuses
+`bash <script>` followed by a `$?` read, and the bare executable keeps both the
+log and the code (`next-issue/worktree-safe-recipes.md`).
 
 The runner mirrors its failure verdict — banner plus the names of the failed
 stages — to **stderr**, which a stdout-only pipe cannot swallow, so a piped run

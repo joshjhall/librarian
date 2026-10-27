@@ -217,11 +217,14 @@ test_work_docs_never_show_refused_verb() {
     assert_true "[ \"$n\" -ge 10 ]" "the doc corpus is non-empty (found $n files)"
     # shellcheck disable=SC2086  # word-split the newline-separated file list
     raw="$(command grep -nE "$md_re" $corpus || true)"
+    # #1247 adds the refusal MATRIX's own row + its explanation: a measurement
+    # of the refused spelling, not a recipe. Exact-phrase and counted, as above.
     exempt='/golem/background-work\.md:[0-9]+:(Spell it `finish`, never `complete` \(#1209\)|bash.s string-evaluating `complete` builtin)'
+    exempt="$exempt"'|/next-issue/worktree-safe-recipes\.md:[0-9]+:(\| `golem-work\.sh complete work-0-none` \| \*\*refused\*\* \||`complete` is bash.s builtin \(\*"runs a string through complete"\*\))'
     hits="$(printf '%s\n' "$raw" | command grep -vE "$exempt" | command grep . || true)"
     assert_equals "" "$hits" "no workflow doc shows the refused \`complete\` verb"
     n="$(printf '%s\n' "$raw" | command grep -cE "$exempt" || true)"
-    assert_equals "2" "$n" "exactly the two lines of the #1209 rename sentence are exempted"
+    assert_equals "4" "$n" "exactly the #1209 rename sentence + the #1247 matrix row and gloss are exempted"
     # The COMMAND form is wrong in any workflow file of any type — a schema
     # description or a script comment instructs a golem just as a skill does (the
     # orchestrate schema still named it after the markdown sweep). Only the
@@ -266,11 +269,12 @@ test_work_docs_never_show_refused_verb() {
 $(command grep -rnE "$json_re" "$root" --include='*.json' || true)"
     # The exemption is the rename note's COMMENT lines in golem-work.sh, counted —
     # not the whole file, whose usage heredoc is exactly what a golem reads.
-    local note_re='/scripts/golem-work\.sh:[0-9]+:#'
+    # Plus the #1247 refusal-matrix row, which records the refused form as measured.
+    local note_re='/scripts/golem-work\.sh:[0-9]+:#|/next-issue/worktree-safe-recipes\.md:[0-9]+:\| `golem-work\.sh complete work-0-none` \| \*\*refused\*\* \|'
     hits="$(printf '%s\n' "$raw" | command grep -vE "$note_re" | command grep . || true)"
     assert_equals "" "$hits" "no workflow file of any type spells the refused command form"
     n="$(printf '%s\n' "$raw" | command grep -cE "$note_re" || true)"
-    assert_equals "1" "$n" "exactly one golem-work.sh comment line (the rename note) is exempted"
+    assert_equals "2" "$n" "exactly the golem-work.sh rename note + the #1247 matrix row are exempted"
     # And the usage text itself advertises `finish`, never the refused command.
     RUN_OUT="$("$REAL_BASH" "$WORK" 2>&1 || true)"
     assert_contains "$RUN_OUT" "  finish <id> [--golem G]" "usage advertises the finish verb"
@@ -334,6 +338,13 @@ test_work_docs_never_show_git_in_description() {
     n="$(command grep -rhE "${call}${q}[\"']" "$root" | command grep -c . || true)"
     assert_true "[ \"$n\" -ge 5 ]" "the scan reaches documented register descriptions (found $n)"
     raw="$(command grep -rniE "$re" "$root" || true)"
+    # The one exemption: the #1247 refusal matrix records this shape AS refused —
+    # a measurement row, not a recipe. Exact-line and counted, so a second
+    # mention anywhere (that file included) still fails.
+    local exempt='/next-issue/worktree-safe-recipes\.md:[0-9]+:\| `golem-work\.sh register bash "git push \(pre-push suite\)"` \| \*\*refused\*\* \|'
+    n="$(printf '%s\n' "$raw" | command grep -cE "$exempt" || true)"
+    assert_equals "1" "$n" "exactly the #1247 matrix row is exempted"
+    raw="$(printf '%s\n' "$raw" | command grep -vE "$exempt" | command grep . || true)"
     assert_equals "" "$raw" "no workflow file shows a register description containing a git command"
 }
 
