@@ -220,7 +220,7 @@ test_work_docs_never_show_refused_verb() {
     # #1247 adds the refusal MATRIX's own row + its explanation: a measurement
     # of the refused spelling, not a recipe. Exact-phrase and counted, as above.
     exempt='/golem/background-work\.md:[0-9]+:(Spell it `finish`, never `complete` \(#1209\)|bash.s string-evaluating `complete` builtin)'
-    exempt="$exempt"'|/next-issue/worktree-safe-recipes\.md:[0-9]+:(\| `golem-work\.sh complete <id>` \| \*\*refused\*\* \||`complete` is bash.s builtin \(\*"runs a string through complete"\*\))'
+    exempt="$exempt"'|/next-issue/worktree-safe-recipes\.md:[0-9]+:(\| `golem-work\.sh complete work-0-none` \| \*\*refused\*\* \||`complete` is bash.s builtin \(\*"runs a string through complete"\*\))'
     hits="$(printf '%s\n' "$raw" | command grep -vE "$exempt" | command grep . || true)"
     assert_equals "" "$hits" "no workflow doc shows the refused \`complete\` verb"
     n="$(printf '%s\n' "$raw" | command grep -cE "$exempt" || true)"
@@ -270,7 +270,7 @@ $(command grep -rnE "$json_re" "$root" --include='*.json' || true)"
     # The exemption is the rename note's COMMENT lines in golem-work.sh, counted —
     # not the whole file, whose usage heredoc is exactly what a golem reads.
     # Plus the #1247 refusal-matrix row, which records the refused form as measured.
-    local note_re='/scripts/golem-work\.sh:[0-9]+:#|/next-issue/worktree-safe-recipes\.md:[0-9]+:\| `golem-work\.sh complete <id>` \| \*\*refused\*\* \|'
+    local note_re='/scripts/golem-work\.sh:[0-9]+:#|/next-issue/worktree-safe-recipes\.md:[0-9]+:\| `golem-work\.sh complete work-0-none` \| \*\*refused\*\* \|'
     hits="$(printf '%s\n' "$raw" | command grep -vE "$note_re" | command grep . || true)"
     assert_equals "" "$hits" "no workflow file of any type spells the refused command form"
     n="$(printf '%s\n' "$raw" | command grep -cE "$note_re" || true)"
