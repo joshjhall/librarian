@@ -211,6 +211,9 @@ test_verdict_states_the_capture_recipe() {
         "the failure verdict states the capture-not-pipe recipe"
     # #1247: `bash <script> …; echo $?` is refused in a worktree-isolated golem
     # session, so the advice the suite prints must be the bare-executable form.
+    # Pinned positively: an absence check alone passes on ANY other spelling.
+    assert_contains "$err" "instead:  tests/run-all.sh > /tmp/run.log 2>&1; echo \$?" \
+        "the verdict's capture recipe is the bare-executable form"
     assert_not_contains "$err" "bash tests/run-all.sh >" \
         "the verdict's capture recipe has no bash prefix (refused when isolated)"
 }
@@ -243,7 +246,12 @@ test_docs_carry_the_capture_recipe() {
         "CLAUDE.md documents capturing the suite rather than piping it"
     assert_file_contains "$SCRIPT_DIR/README.md" "run.log 2>&1" \
         "tests/README.md documents capturing the suite rather than piping it"
-    # #1247: the documented recipe must be one a golem can actually run.
+    # #1247: the documented recipe must be one a golem can actually run —
+    # pinned positively, since the absence checks below pass on any other form.
+    assert_file_contains "$SCRIPT_DIR/../CLAUDE.md" "^tests/run-all.sh > /tmp/run.log 2>&1; echo \\\$?" \
+        "CLAUDE.md's capture recipe is the bare-executable form"
+    assert_file_contains "$SCRIPT_DIR/README.md" "\`tests/run-all.sh > /tmp/run.log 2>&1; echo \\\$?\`" \
+        "tests/README.md's capture recipe is the bare-executable form"
     assert_file_not_contains "$SCRIPT_DIR/../CLAUDE.md" "bash tests/run-all.sh >" \
         "CLAUDE.md's capture recipe has no bash prefix (refused when isolated)"
     assert_file_not_contains "$SCRIPT_DIR/README.md" "bash tests/run-all.sh >" \
