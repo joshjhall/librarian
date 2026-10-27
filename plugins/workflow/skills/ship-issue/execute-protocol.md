@@ -97,13 +97,13 @@ Continue here once `gh pr create` / `glab mr create` has opened the PR.
    runs before any merge — there is no path that skips it. In brief:
 
    - **Monitor CI and remediate failures** (advisory; `ci-fixer` caps fixes at 3
-     attempts per check). An L3–L4 run always waits. Poll `gh pr checks` every
-     30 s, calling `scripts/ci-wait-timeout.sh` each poll for the
-     continue/extend/checkpoint/stop verdict it computes from
-     `LIBRARIAN_CI_WAIT_TIMEOUT` + `LIBRARIAN_CI_WAIT_MAX_EXTENSIONS` (L3–L4
-     auto-extends, then STOPs) — never re-derive that arithmetic by hand. A
-     poll run as a background task or `Monitor` is background work: `golem-work.sh
-     register monitor "CI wait"` before it, `finish` once checks resolve (#1203).
+     attempts per check). An L3–L4 run always waits. Run
+     `scripts/ci-wait.sh {pr} --level {N}` as a `run_in_background` Bash task —
+     the bounded poll loop as one isolation-safe command, calling
+     `scripts/ci-wait-timeout.sh` each poll (L3–L4 auto-extends, then STOPs at
+     the ceiling) (#1244). Never hand-write the loop or use `--watch` alone. It
+     is background work: `golem-work.sh register monitor "CI wait"` before it,
+     `finish` once it exits (#1203).
      On failure, **triage
      infra-flake vs real first** (classify by failing-step name vs the diff;
      auto-retry an infra flake once via `gh run rerun --failed`; collapse cascade

@@ -42,35 +42,50 @@ If the user chooses to wait:
 a. **Poll for check completion** against a wait threshold (so a stuck or
 slow CI run never blocks indefinitely):
 
-- GitHub: `gh pr checks {pr_number} --json name,state,conclusion`
-  (poll every 30 seconds until no checks have `state: "pending"`)
-- GitLab: `glab ci status` (check for completion)
-- **Threshold checkpoint** — track cumulative wait time, but do **not**
-  re-derive the threshold/extension arithmetic in your head (that drift wedged
-  three golems on the sibling wall-timeout, #327). **Call** the helper each
-  poll and act on its verdict:
+- **GitHub — run the bundled waiter (#1244).** It is the whole poll loop as one
+  plain command: it polls `gh pr checks` every 30 s and calls
+  `scripts/ci-wait-timeout.sh` each poll for the continue/extend/checkpoint/stop
+  verdict, so the `LIBRARIAN_CI_WAIT_*` ceiling (default 45 min) is enforced in
+  code. Run it as a **`run_in_background` Bash task**, registered as background
+  work (`golem-work.sh register monitor "CI wait"` before it, `finish` after;
+  `golem/background-work.md`):
+
+  ```bash
+  # substitute <skill-base-dir>: next-issue/worktree-safe-recipes.md (#815)
+  <skill-base-dir>/../../scripts/ci-wait.sh {pr_number} --level {N}
+  ```
+
+  **Do not hand-write the loop, and never use `gh pr checks --watch` alone.**
+  A loop that reads the check state into a variable (`s=$(gh pr checks …)`)
+  is refused in a worktree-isolated session, and `--watch` is accepted but has
+  **no ceiling** — it never consults `ci-wait-timeout.sh`, which is the #327
+  wedge shape. Read the waiter's exit code and its `key=value` output
+  (`result`, `verdict`, `elapsed_min`, `extensions_used`, `ceiling_min`):
+
+  | exit | Do |
+  | --- | --- |
+  | `0` | CI green — continue to step b. |
+  | `1` | A check failed (or was cancelled) — triage in step c. |
+  | `8` | `checkpoint` (L1–L2 only): prompt — **Cut short** (stop waiting; proceed to labeling, noting CI was still pending) or **Extend** (re-run with `--elapsed-min {elapsed_min} --extensions-used {extensions_used+1}`). |
+  | `9` | `stop` at the ceiling — proceed to the completion summary with a STOP note ("CI still pending after `{ceiling_min}` min — not waited further"), mirroring the L3–L4 CI-failure STOP below. |
+  | `2` / `3` | Usage error / `gh` failed or hung past `LIBRARIAN_CI_WAIT_POLL_TIMEOUT` (default 60 s per call). Report it; **never** read it as green. |
+
+  An empty check list counts as pending, not green, because a PR whose
+  workflows have not registered yet reports zero checks. L3–L4 extensions are
+  auto-granted inside the waiter. Never hang waiting on a prompt at L3–L4. The
+  `stop` verdict is a machine timer for **pending CI**, not a human gate — the
+  never-time-out rule governs human gates, not this bounded wait.
+- **GitLab** — no bundled waiter yet: poll `glab ci status` every 30 s and call
+  the verdict helper by hand each poll. Do **not** re-derive the
+  threshold/extension arithmetic in your head (that drift wedged three golems on
+  the sibling wall-timeout, #327). Act on its `verdict` as the table above does
+  (`continue`/`extend` → keep polling, carrying `extensions_used`):
 
   ```bash
   # substitute <skill-base-dir>: next-issue/worktree-safe-recipes.md (#815)
   <skill-base-dir>/../../scripts/ci-wait-timeout.sh check \
       --elapsed-min {cumulative} --level {N} --extensions-used {K}
   ```
-
-  It reads `LIBRARIAN_CI_WAIT_TIMEOUT` (default `15`) and
-  `LIBRARIAN_CI_WAIT_MAX_EXTENSIONS` (default `2` → a 45 min ceiling) and
-  returns `verdict`, `ceiling_min`, `next_deadline_min`, and
-  `extensions_used`:
-
-  | `verdict` | Do |
-  | --- | --- |
-  | `continue` | Keep polling every 30 s, up to `next_deadline_min`. |
-  | `extend` | L3–L4 auto-grant: carry the returned `extensions_used` into the next call and keep polling. |
-  | `checkpoint` | L1–L2 only: prompt — **Cut short** (stop waiting; proceed to labeling, noting CI was still pending) or **Extend** (re-call with `--extensions-used` incremented). |
-  | `stop` | Stop waiting at the ceiling — proceed to the completion summary with a STOP note ("CI still pending after `{ceiling_min}` min — not waited further"), mirroring the L3–L4 CI-failure STOP below. |
-
-  Never hang waiting on a prompt at L3–L4. The `stop` verdict is a machine
-  timer for **pending CI**, not a human gate — the never-time-out rule governs
-  human gates, not this bounded wait.
 
 b. **If all checks pass** (CI green): inform the user and proceed to the
 multi-cycle review loop below; green CI is one half of the merge invariant, and

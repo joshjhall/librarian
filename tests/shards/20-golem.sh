@@ -54,6 +54,7 @@ run_stage "golem/worktree helper scripts" bash "$SCRIPT_DIR/validate-golem-scrip
 run_stage "journal partial-recovery helper" bash "$SCRIPT_DIR/validate-recover-journal-partials.sh"
 run_stage "workflow wall-time stop decision" bash "$SCRIPT_DIR/validate-workflow-wall-timeout.sh"
 run_stage "CI-wait stop decision" bash "$SCRIPT_DIR/validate-ci-wait-timeout.sh"
+run_stage "CI-wait bounded poll loop" bash "$SCRIPT_DIR/validate-ci-wait.sh"
 run_stage "shared threshold-check library units" bash "$SCRIPT_DIR/validate-threshold-check.sh"
 run_stage "review convergence stop decision" bash "$SCRIPT_DIR/validate-review-convergence.sh"
 run_stage "review dimension engagement measurement" bash "$SCRIPT_DIR/validate-review-engagement.sh"
