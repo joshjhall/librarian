@@ -31,22 +31,37 @@ issue reported — a compound command with a heredoc, and `bash <script> > log
 2>&1` — with the "too complex to verify" message, so the harness was enforcing
 isolation while it accepted the recipe.
 
-## 2. It stops at the ceiling — DEFERRED (needs a PR with pending CI)
+## 2. It stops at the ceiling — VERIFIED (live)
 
-Not observed yet: the only green-and-pending PR this session can reach is its
-own, which does not exist until the push. The offline half is pinned by
-`tests/validate-ci-wait.sh` ("stuck CI stops at the 45-min ceiling (exit 9)",
-"LIBRARIAN_CI_WAIT_* reach the bound"), with `gh` and the clock stubbed.
-
-Recipe, from the isolated worktree, while `{pr}`'s checks are still running.
-The carried `--elapsed-min` places the wait at the ceiling, so the first
-pending poll must return `stop`:
+Run against this PR, #1245, immediately after `gh pr create`, while its CI
+checks were still running. The same isolated session and the same
+`run_in_background` shape were used. The carried `--elapsed-min` places the
+wait at the ceiling, so the first pending poll must return `stop`:
 
 ```text
-<repo>/plugins/workflow/skills/ship-issue/../../scripts/ci-wait.sh {pr} --level 4 --elapsed-min 45 --extensions-used 2
+/workspace/librarian/.worktrees/issue-1244/plugins/workflow/skills/ship-issue/../../scripts/ci-wait.sh 1245 --level 4 --elapsed-min 45 --extensions-used 2
 ```
 
-Expected: `result=pending`, `verdict=stop`, `ceiling_min=45`, exit `9`, and no
-isolation refusal. If the checks have already finished, the run exits 0 or 1
-instead, and this section stays DEFERRED. That outcome says nothing about the
-ceiling.
+Output, read from the task's own output file:
+
+```text
+result=pending
+verdict=stop
+elapsed_min=45
+extensions_used=2
+ceiling_min=45
+
+[exited with code 9]
+```
+
+The run was accepted with no isolation refusal. It read the checks as pending,
+and `ci-wait-timeout.sh`'s verdict stopped it at the default 45-minute ceiling,
+with exit 9 as documented. Note that the harness labels a non-zero background
+exit as "failed". Here exit 9 is the designed `stop` signal, so the output above
+is the authoritative record, not that label.
+
+The bound accrues over real wall time in the same loop. That part is pinned
+offline by `tests/validate-ci-wait.sh`, in "stuck CI stops at the 45-min
+ceiling (exit 9)", which uses a stubbed clock: it walks 0 → 45 minutes through
+both L4 extensions. That loop is not re-run live here, because it would hold
+CI for 45 minutes.
