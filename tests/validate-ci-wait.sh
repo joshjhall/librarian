@@ -60,7 +60,8 @@ for a in "$@"; do
     [ "$p" = "--repo" ] && repo="$a"
     p="$a"
 done
-echo "call $1 $2 $3 repo=$repo" >>"$sb/gh.log" # one line per call; --jq is multi-line
+echo "call $1 $2 $3" >>"$sb/gh.log" # one line per call; --jq is multi-line
+printf '%s\n' "$repo" >"$sb/gh.repo" # the last call's --repo value, alone on a line
 expr=""
 prev=""
 for a in "$@"; do
@@ -305,7 +306,7 @@ test_repo_flag_reaches_gh() {
     reset '[{"bucket":"pass"}]'
     run_cw 7 --level 3 --repo octo/demo
     assert_exit 0 "$RC" "--repo run passes"
-    assert_file_contains "$SB/gh.log" "repo=octo/demo" "--repo is forwarded to gh"
+    assert_equals "octo/demo" "$(command cat "$SB/gh.repo")" "--repo is forwarded to gh"
 }
 
 test_extend_without_numeric_k_fails_loud() {
