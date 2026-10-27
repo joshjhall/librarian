@@ -494,7 +494,7 @@ install_sandbox() {
 run_install() {
     command printf '%s\n' "$2" >"$1/tools.sha256"
     (cd "$1" && PATH="$1/stub:/usr/bin:/bin" TOOLS_BIN="$1/tb" TOOLS_HOME="$1/th" HOME="$1" \
-        /usr/bin/env -uBASH_ENV bash -c ". bin/helpers.sh
+        /usr/bin/env -uBASH_ENV -uTOOLS_CACHE bash -c ". bin/helpers.sh
             $4
             REQUIRED='$3'
             . bin/tail.sh" >"$1/run.log" 2>&1)
@@ -618,6 +618,29 @@ test_install_tools_cache_is_reverified() {
     assert_equals "$good" "$(sha256_file "$d/tb/conform")" "...which installs the verified bytes"
     assert_contains "$(command cat "$d/run.log")" "could not cache conform-x" "...and says the copy was lost"
     command rm -f "$c"
+
+    # A write that fails after the staging copy (mv refused) cleans up its
+    # .partial-*, so a failed write leaves nothing behind in the cache.
+    command rm -rf "$d/tb"
+    command printf '#!/usr/bin/env sh\ncase "$1" in */.partial-*) exit 1 ;; esac\nexec /bin/mv "$@"\n' >"$d/stub/mv"
+    command chmod +x "$d/stub/mv"
+    rc=0
+    run_install "$d" "conform-x $good" conform "$body" || rc=$?
+    command rm -f "$d/stub/mv"
+    assert_equals "0" "$rc" "A cache write that fails at the rename does not fail the install"
+    assert_contains "$(command cat "$d/run.log")" "could not cache conform-x" "...and says the copy was lost"
+    assert_true "[ -z \"\$(command ls -A \"$c\" | command grep '^\.partial-')\" ]" "...and removes its .partial-*"
+    assert_true "[ ! -e \"$c/conform-x\" ]" "...and publishes no entry"
+
+    # run_install scrubs an ambient TOOLS_CACHE, so the other installer cases
+    # never read or write a real cache. Exported here, it must not reach fetch.
+    command rm -rf "$c" "$d/tb"
+    command mkdir -p "$d/ambient"
+    rc=0
+    TOOLS_CACHE="$d/ambient" run_install "$d" "conform-x $good" conform \
+        "f=\$(fetch https://example.invalid/conform conform-x); put \"\$f\" conform" || rc=$?
+    assert_equals "0" "$rc" "An install with no TOOLS_CACHE in its body still installs"
+    assert_true "[ -z \"\$(command ls -A \"$d/ambient\")\" ]" "...and an exported TOOLS_CACHE never reaches fetch"
 }
 
 test_install_tools_fails_when_nothing_lands() {

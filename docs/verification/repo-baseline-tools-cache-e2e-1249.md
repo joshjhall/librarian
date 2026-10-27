@@ -46,14 +46,21 @@ rendered `.gitignore` excludes the directory.
 | Download fails its sha256, cache set | exit 1, nothing cached |
 | Entry unreadable (`cp` stub fails the read), tampered bytes | downloads and installs the good bytes; no `fails its sha256` line, so the entry was never read |
 | Cache path is a regular file, so nothing can be written | installs the verified download, logs `could not cache conform-x` |
+| Rename into the cache fails (`mv` stub) | installs, logs `could not cache conform-x`, leaves no `.partial-*` and no entry |
+| `TOOLS_CACHE` exported around `run_install` | installs, and the exported directory stays empty |
+
+The staging name is per-process (`.partial-<key>.<pid>`), so two installs
+sharing one cache cannot publish each other's half-written copy. The test
+helper `run_install` also scrubs an ambient `TOOLS_CACHE`, so the older
+installer cases never touch a real cache.
 
 The cache is an optimization, so it never fails an install: an unreadable entry
 is a miss and a failed write only loses the copy. Integrity is unaffected, since
 every byte installed still passed `tools.sha256`. That last part came out of
 pre-PR review, after the live runs below.
 
-**Mutation-tested.** Five mutants of `install-tools-head.sh.tmpl`, each run
-against the full suite and each killed:
+**Mutation-tested.** Six mutants of `install-tools-head.sh.tmpl` and one of
+the test helper, each run against the full suite and each killed:
 
 - Trusting a cache hit without re-verifying (`if true`): the cache case fails.
 - Writing to the cache before verifying the download: the cache case fails.
@@ -61,6 +68,11 @@ against the full suite and each killed:
 - Aborting when the cache read fails: the unreadable-entry case fails.
 - Using an unreadable entry without the read guard: `...without ever reading
   the entry` fails.
+- Dropping the `.partial-*` cleanup after a failed write: `...and removes its
+  .partial-*` fails.
+- Dropping `-uTOOLS_CACHE` from `run_install`: `...and an exported TOOLS_CACHE
+  never reaches fetch` fails. Without the scrub, an ambient `TOOLS_CACHE`
+  received a real `typos-x86_64` entry while the rest of the suite stayed green.
 
 The suite was green again after restoring the file, which `cmp` confirmed
 byte-identical to the pre-mutation copy.
@@ -146,9 +158,10 @@ follow-ups.
 The two probe commits (6813, 6814) edited only the project's own
 `.gitlab-ci.yml`, never the template, and 6815 edited only a comment. The
 shipped `.gitlab-ci.yml` and `.gitignore` templates are exactly what 6812 ran.
-`fetch()` in `install-tools.sh` changed afterward, to make the cache
-best-effort (see AC1). The change touches only paths where a cache read or
-write fails, and no job in 6812–6815 hit one. These pipelines therefore
+`fetch()` in `install-tools.sh` changed afterward. It made the cache
+best-effort and gave the staging file a per-process name (see AC1). The change
+touches only paths where a cache read or write fails, plus the staging
+filename, and no job in 6812–6815 hit a failure path. These pipelines therefore
 exercised the same hit and miss path that ships, but not the final bytes. The
 unit cases above cover the changed paths.
 

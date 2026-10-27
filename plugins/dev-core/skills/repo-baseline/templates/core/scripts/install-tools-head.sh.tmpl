@@ -99,12 +99,14 @@ fetch() {
         exit 1
     fi
     if [ -n "${TOOLS_CACHE:-}" ]; then
-        # Copy to a sibling, then rename: an interrupted copy leaves only a
-        # stray .partial-*, never a truncated entry under the real key.
+        # Copy to a per-process sibling, then rename: an interrupted copy, or a
+        # second install sharing this cache, leaves only a stray .partial-*,
+        # never a truncated entry under the real key.
+        local part="$TOOLS_CACHE/.partial-$2.$$"
         if ! { mkdir -p "$TOOLS_CACHE" &&
-            cp "$out" "$TOOLS_CACHE/.partial-$2" &&
-            mv "$TOOLS_CACHE/.partial-$2" "$TOOLS_CACHE/$2"; } 2>/dev/null; then
-            rm -f "$TOOLS_CACHE/.partial-$2" 2>/dev/null || true
+            cp "$out" "$part" &&
+            mv "$part" "$TOOLS_CACHE/$2"; } 2>/dev/null; then
+            rm -f "$part" 2>/dev/null || true
             echo "install-tools: could not cache $2 in $TOOLS_CACHE (continuing)" >&2
         fi
     fi
