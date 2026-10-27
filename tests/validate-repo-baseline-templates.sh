@@ -401,6 +401,7 @@ test_rendered_gitlab_tool_cache() {
     # cache), live under the project dir (GitLab caches nothing outside it), and
     # be the directory install-tools.sh is pointed at.
     local out="$WORKDIR/full" y="$WORKDIR/full/.gitlab-ci.yml"
+    assert_true "command grep -qx '.tools-cache/' \"$out/.gitignore\"" "The rendered .gitignore keeps the cache out of the tree"
     if ! command -v yq >/dev/null 2>&1; then
         skip_test "yq not installed"
         return
@@ -410,7 +411,6 @@ test_rendered_gitlab_tool_cache() {
     assert_equals ".tools-cache/" "$(yq '.default.cache.paths | join(" ")' "$y")" "...and caches .tools-cache/"
     assert_equals '$CI_PROJECT_DIR/.tools-cache' "$(yq '.variables.TOOLS_CACHE' "$y")" \
         "...which is the TOOLS_CACHE install-tools.sh reads"
-    assert_true "command grep -qx '.tools-cache/' \"$out/.gitignore\"" "The rendered .gitignore keeps the cache out of the tree"
 }
 
 test_run_sh_reports_skip_and_none() {
@@ -563,6 +563,7 @@ test_install_tools_cache_is_reverified() {
     run_install "$d" "conform-x $good" conform "$body" || rc=$?
     assert_equals "0" "$rc" "A cache hit installs with the network unreachable"
     assert_true "[ -x \"$d/tb/conform\" ]" "...from the cached bytes"
+    assert_equals "$good" "$(sha256_file "$d/tb/conform")" "...which are the verified bytes"
 
     # Tampered entry, network down: the cached bytes must NOT be installed.
     command printf tampered >"$c/conform-x"
@@ -589,6 +590,17 @@ test_install_tools_cache_is_reverified() {
     run_install "$d" "conform-x $(command printf '%064d' 0)" conform "$body" || rc=$?
     assert_equals "1" "$rc" "A mismatched download still aborts with a cache set"
     assert_true "[ ! -e \"$c/conform-x\" ]" "...and is NOT cached"
+
+    # An unusable cache (a regular file where the dir should be) costs only the
+    # copy: the verified download still installs.
+    command rm -rf "$c" "$d/tb"
+    command printf notadir >"$c"
+    rc=0
+    run_install "$d" "conform-x $good" conform "$body" || rc=$?
+    assert_equals "0" "$rc" "An unwritable cache does not fail a verified install"
+    assert_equals "$good" "$(sha256_file "$d/tb/conform")" "...which installs the verified bytes"
+    assert_contains "$(command cat "$d/run.log")" "could not cache conform-x" "...and says the copy was lost"
+    command rm -f "$c"
 }
 
 test_install_tools_fails_when_nothing_lands() {

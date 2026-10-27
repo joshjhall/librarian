@@ -78,17 +78,19 @@ fetch() {
         echo "ERROR: no sha256 for $2 in tools.sha256" >&2
         exit 1
     fi
-    if [ -n "${TOOLS_CACHE:-}" ] && [ -f "$TOOLS_CACHE/$2" ]; then
+    # The cache is an optimization: an unreadable entry is a miss, and a failed
+    # write only loses the copy — never the install.
+    if [ -n "${TOOLS_CACHE:-}" ] && [ -f "$TOOLS_CACHE/$2" ] &&
+        cp "$TOOLS_CACHE/$2" "$out" 2>/dev/null; then
         # Hash the copy in $TMP, not the cache entry, so the verified bytes
         # are the ones that get installed.
-        cp "$TOOLS_CACHE/$2" "$out"
         got="$(sha256_of "$out")"
         if [ "$got" = "$want" ]; then
             printf '%s\n' "$out"
             return 0
         fi
         echo "install-tools: cached $2 fails its sha256, downloading again" >&2
-        rm -f "$TOOLS_CACHE/$2"
+        rm -f "$TOOLS_CACHE/$2" || true
     fi
     curl -fsSL --retry 3 -o "$out" "$1"
     got="$(sha256_of "$out")"
@@ -99,9 +101,12 @@ fetch() {
     if [ -n "${TOOLS_CACHE:-}" ]; then
         # Copy to a sibling, then rename: an interrupted copy leaves only a
         # stray .partial-*, never a truncated entry under the real key.
-        mkdir -p "$TOOLS_CACHE"
-        cp "$out" "$TOOLS_CACHE/.partial-$2"
-        mv "$TOOLS_CACHE/.partial-$2" "$TOOLS_CACHE/$2"
+        if ! { mkdir -p "$TOOLS_CACHE" &&
+            cp "$out" "$TOOLS_CACHE/.partial-$2" &&
+            mv "$TOOLS_CACHE/.partial-$2" "$TOOLS_CACHE/$2"; } 2>/dev/null; then
+            rm -f "$TOOLS_CACHE/.partial-$2" 2>/dev/null || true
+            echo "install-tools: could not cache $2 in $TOOLS_CACHE (continuing)" >&2
+        fi
     fi
     printf '%s\n' "$out"
 }
