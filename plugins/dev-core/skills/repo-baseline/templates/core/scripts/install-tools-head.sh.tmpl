@@ -33,29 +33,64 @@ pin() {
     printf '%s\n' "$v"
 }
 
-# fetch <url> <dest> — download, failing on any HTTP error.
-fetch() { curl -fsSL --retry 3 -o "$2" "$1"; }
-
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
-# from_tar <url> <binary-name> — extract one binary from a tarball into TOOLS_BIN.
+# sha256_of <file> — sha256sum on Linux, shasum on a host that lacks it.
+sha256_of() {
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$1" | awk '{ print $1 }'
+    else
+        shasum -a 256 "$1" | awk '{ print $1 }'
+    fi
+}
+
+# fetch <url> <hash-key> — download into $TMP and verify the bytes against
+# tools.sha256 BEFORE anything extracts or installs them. Prints the verified
+# file's path. A missing entry fails just like a mismatch: an unpinned download
+# is exactly what this check exists to refuse.
+#
+# Always call it as a plain assignment (`f=$(fetch ...)`). Under `set -e` a
+# failing substitution aborts the script only there; used as an argument
+# (`put "$(fetch ...)"`) its exit 1 is swallowed and the caller runs on.
+fetch() {
+    local out="$TMP/$2.download" want got
+    want="$(awk -v k="$2" '$1 == k { print $2; exit }' "$ROOT/tools.sha256")"
+    if [ -z "$want" ]; then
+        echo "ERROR: no sha256 for $2 in tools.sha256" >&2
+        exit 1
+    fi
+    curl -fsSL --retry 3 -o "$out" "$1"
+    got="$(sha256_of "$out")"
+    if [ "$got" != "$want" ]; then
+        echo "ERROR: sha256 mismatch for $2 ($1): expected $want, got $got" >&2
+        exit 1
+    fi
+    printf '%s\n' "$out"
+}
+
+# put <file> <tool> — install one verified binary into TOOLS_BIN, executable.
+put() { install -m 0755 "$1" "$TOOLS_BIN/$2"; }
+
+# from_tar <url> <tool> — verify a tarball, then install the one binary named <tool>.
 from_tar() {
-    local dir="$TMP/$2"
+    local dir="$TMP/$2" archive
+    archive="$(fetch "$1" "$2-$ARCH")"
     mkdir -p "$dir"
-    fetch "$1" "$dir/a.tgz"
-    tar -xzf "$dir/a.tgz" -C "$dir"
+    tar -xzf "$archive" -C "$dir"
     find "$dir" -type f -name "$2" -exec install -m 0755 {} "$TOOLS_BIN/$2" \;
 }
 
 v=$(pin typos)
 from_tar "https://github.com/crate-ci/typos/releases/download/v$v/typos-v$v-$ARCH-unknown-linux-musl.tar.gz" typos
 v=$(pin dprint)
-fetch "https://github.com/dprint/dprint/releases/download/$v/dprint-$ARCH-unknown-linux-musl.zip" "$TMP/dprint.zip"
-unzip -oq "$TMP/dprint.zip" -d "$TOOLS_BIN"
+f=$(fetch "https://github.com/dprint/dprint/releases/download/$v/dprint-$ARCH-unknown-linux-musl.zip" "dprint-$ARCH")
+unzip -oq "$f" -d "$TMP/dprint"
+put "$TMP/dprint/dprint" dprint
 v=$(pin taplo)
-fetch "https://github.com/tamasfe/taplo/releases/download/$v/taplo-linux-$ARCH.gz" "$TMP/taplo.gz"
-gunzip -c "$TMP/taplo.gz" >"$TOOLS_BIN/taplo"
+f=$(fetch "https://github.com/tamasfe/taplo/releases/download/$v/taplo-linux-$ARCH.gz" "taplo-$ARCH")
+gunzip -c "$f" >"$TMP/taplo"
+put "$TMP/taplo" taplo
 v=$(pin rumdl)
 from_tar "https://github.com/rvben/rumdl/releases/download/v$v/rumdl-v$v-$ARCH-unknown-linux-musl.tar.gz" rumdl
 v=$(pin actionlint)
@@ -64,11 +99,12 @@ v=$(pin gitleaks)
 [ "$GOARCH" = amd64 ] && gl_arch=x64 || gl_arch=arm64
 from_tar "https://github.com/gitleaks/gitleaks/releases/download/v$v/gitleaks_${v}_linux_$gl_arch.tar.gz" gitleaks
 v=$(pin conform)
-fetch "https://github.com/siderolabs/conform/releases/download/v$v/conform-linux-$GOARCH" "$TOOLS_BIN/conform"
+f=$(fetch "https://github.com/siderolabs/conform/releases/download/v$v/conform-linux-$GOARCH" "conform-$ARCH")
+put "$f" conform
 v=$(pin lefthook)
-fetch "https://github.com/evilmartians/lefthook/releases/download/v$v/lefthook_${v}_Linux_$ARCH" "$TOOLS_BIN/lefthook"
+f=$(fetch "https://github.com/evilmartians/lefthook/releases/download/v$v/lefthook_${v}_Linux_$ARCH" "lefthook-$ARCH")
+put "$f" lefthook
 v=$(pin just)
 from_tar "https://github.com/casey/just/releases/download/$v/just-$v-$ARCH-unknown-linux-musl.tar.gz" just
-chmod 0755 "$TOOLS_BIN"/*
 
 REQUIRED="typos dprint taplo rumdl actionlint gitleaks conform lefthook just"

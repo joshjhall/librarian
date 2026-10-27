@@ -70,6 +70,26 @@ suites ran. Most of the lint job's 100 s was the image pull plus `apt-get`. The
 push used `LEFTHOOK=0` to bypass the probe repo's own pre-push hook: that hook
 had already passed locally (AC1), and this run tests the pipeline.
 
+**Changed after this run: download verification.** The pre-PR review found that
+`install-tools.sh` pinned versions but not content, so a re-tagged release would
+have run unverified in CI. Every download is now checked against `tools.sha256`
+before it is installed (`templates/README.md`). Pipeline 6779 ran the
+pre-verification script. A re-run on the instance was not possible because the
+scratch project had already been removed. The replacement evidence:
+
+- **aarch64, real run:** a full install verified and installed all 14 tools. A
+  tampered digest and a missing entry each aborted with the tool **not**
+  installed, on both the direct-binary and the tarball path.
+- **x86_64, `uname` faked:** every x86_64 artifact the script downloads matched
+  its digest and installed. Exit 0, all 14 tools.
+- **Digests cross-checked:** 18 of the 27 recorded digests match upstream's own
+  published checksums. typos, taplo, shfmt, shellcheck and bats publish none.
+- **Offline gate:** `tests/validate-repo-baseline-templates.sh` pins the
+  verification, and mutation-testing it killed every variant.
+
+The one unexercised combination is the new script on a real x86_64 runner.
+Pipeline 6779 already ran the same binaries there.
+
 **Defect found and fixed by this run.** The rendered `gitlab-ci-lint`
 pre-commit hook had two problems:
 

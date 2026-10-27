@@ -287,17 +287,36 @@ test_render_refuses_bad_manifest() {
     rc=0
     RENDER_MANIFEST="$m/manifest.tsv" "$RENDER" --out "$WORKDIR/bm2" >/dev/null 2>&1 || rc=$?
     assert_equals "2" "$rc" "A target escaping the output dir exits 2"
+    assert_true "[ ! -e \"$WORKDIR/bm2\" ] && [ ! -e \"$WORKDIR/escape.txt\" ]" "...and writes nothing, in or out of the output dir"
 
+    command cp "$MANIFEST" "$m/manifest.tsv"
+    command printf '/tmp/abs.txt\tcore\talways\tcore/tools.versions\n' >>"$m/manifest.tsv"
+    rc=0
+    RENDER_MANIFEST="$m/manifest.tsv" "$RENDER" --out "$WORKDIR/bm5" >/dev/null 2>&1 || rc=$?
+    assert_equals "2" "$rc" "An absolute target exits 2"
+    assert_true "[ ! -e \"$WORKDIR/bm5\" ]" "...and writes nothing"
+
+    command cp "$MANIFEST" "$m/manifest.tsv"
+    command printf 'x.txt\tcore\talways\n' >>"$m/manifest.tsv"
+    rc=0
+    RENDER_MANIFEST="$m/manifest.tsv" "$RENDER" --out "$WORKDIR/bm6" >/dev/null 2>&1 || rc=$?
+    assert_equals "2" "$rc" "A row with fewer than 4 columns exits 2"
+    assert_true "[ ! -e \"$WORKDIR/bm6\" ]" "...and writes nothing"
+
+    # The bad row is LAST, after every good row: render.sh must validate the
+    # whole manifest before writing, not write rows as it goes.
     command cp "$MANIFEST" "$m/manifest.tsv"
     command printf 'x.txt\tcore\talways\tcore/nope\n' >>"$m/manifest.tsv"
     rc=0
     RENDER_MANIFEST="$m/manifest.tsv" "$RENDER" --out "$WORKDIR/bm3" >/dev/null 2>&1 || rc=$?
     assert_equals "2" "$rc" "A missing source exits 2"
+    assert_true "[ ! -e \"$WORKDIR/bm3\" ]" "...and writes nothing, though every earlier row was valid"
 
     command printf '# only a comment\n' >"$m/manifest.tsv"
     rc=0
     RENDER_MANIFEST="$m/manifest.tsv" "$RENDER" --out "$WORKDIR/bm4" >/dev/null 2>&1 || rc=$?
     assert_equals "2" "$rc" "An empty manifest exits 2 rather than rendering nothing"
+    assert_true "[ ! -e \"$WORKDIR/bm4\" ]" "...and writes nothing"
 }
 
 # --- Validity of the rendered files --------------------------------------------
@@ -334,6 +353,8 @@ test_rendered_files_parse() {
         for f in _typos.toml .rumdl.toml .taplo.toml .gitleaks.toml ruff.toml uv.toml; do
             assert_true "taplo check \"$out/$f\" >/dev/null 2>&1" "$f parses as TOML"
         done
+    else
+        skip_test "taplo not installed"
     fi
     assert_true "python3 -c 'import json,sys; json.load(open(sys.argv[1]))' \"$out/dprint.json\"" "dprint.json parses as JSON"
 }
@@ -349,10 +370,14 @@ test_rendered_files_lint() {
     fi
     if command -v actionlint >/dev/null 2>&1; then
         assert_true "(cd \"$out\" && actionlint .github/workflows/ci.yml >/dev/null)" "The rendered GitHub workflow is actionlint-clean"
+    else
+        skip_test "actionlint not installed"
     fi
     if command -v just >/dev/null 2>&1; then
         assert_equals "default install-hooks lint test" "$(cd "$out" && just --summary)" \
             "The rendered justfile parses, with lint and test recipes"
+    else
+        skip_test "just not installed"
     fi
 }
 
@@ -399,6 +424,64 @@ test_run_sh_reports_skip_and_none() {
     o="$(run_runner "")" && rc=0 || rc=$?
     assert_contains "$o" "[FAIL] python (pytest) (exit 3)" "A failing stage is reported [FAIL]"
     assert_equals "1" "$rc" "A failing stage fails the run"
+}
+
+# --- install-tools.sh integrity ------------------------------------------------
+
+test_every_download_has_a_hash() {
+    # Each `fetch ... "<key>"` / `from_tar ... <tool>` call names a hash key; a
+    # tool added without its tools.sha256 row would abort CI, so catch it here.
+    local out="$WORKDIR/full" a key missing=""
+    for a in x86_64 aarch64; do
+        for key in typos dprint taplo rumdl actionlint gitleaks conform lefthook just \
+            shfmt shellcheck ruff uv; do
+            command grep -q "^$key-$a " "$out/tools.sha256" || missing="$missing $key-$a"
+        done
+    done
+    command grep -q '^bats-any ' "$out/tools.sha256" || missing="$missing bats-any"
+    assert_equals "" "$missing" "tools.sha256 has a 64-hex sha256 for every tool and arch install-tools.sh fetches"
+    assert_equals "" "$(command awk '!/^#/ && NF && $2 !~ /^[0-9a-f]{64}$/' "$out/tools.sha256")" \
+        "Every tools.sha256 entry is a 64-hex digest"
+}
+
+test_install_tools_verifies_before_install() {
+    # Offline: a stub curl writes fixed bytes, so the gate never fetches. The
+    # rendered fetch() must install bytes whose hash matches, and must abort
+    # BEFORE installing on a mismatch or a missing entry.
+    local d="$WORKDIR/integrity" stub="$WORKDIR/integrity-bin" good rc
+    render_to "$d" --ci github >/dev/null
+    command mkdir -p "$stub"
+    command printf '#!/usr/bin/env sh\nwhile [ "$#" -gt 0 ]; do [ "$1" = -o ] && { printf payload >"$2"; exit 0; }; shift; done\nexit 1\n' >"$stub/curl"
+    command chmod +x "$stub/curl"
+    # Cut the rendered script at the first install line: keep the helpers only,
+    # then call fetch/put directly against a one-entry tools.sha256.
+    command awk '/^v=\$\(pin typos\)/ { exit } { print }' "$d/bin/install-tools.sh" >"$d/bin/helpers.sh"
+    good="$(command printf payload | { command -v sha256sum >/dev/null 2>&1 && sha256sum || shasum -a 256; } | command awk '{ print $1 }')"
+    probe() { # <tools.sha256 line> -> runs fetch+put for key "conform-x"
+        command printf '%s\n' "$1" >"$d/tools.sha256"
+        command rm -rf "$d/tb"
+        (cd "$d" && PATH="$stub:/usr/bin:/bin" TOOLS_BIN="$d/tb" HOME="$d" /usr/bin/env -uBASH_ENV bash -c '
+            . bin/helpers.sh
+            f=$(fetch https://example.invalid/conform conform-x)
+            put "$f" conform' >"$d/probe.log" 2>&1)
+    }
+    rc=0
+    probe "conform-x $good" || rc=$?
+    assert_equals "0" "$rc" "Bytes matching tools.sha256 install"
+    assert_true "[ -x \"$d/tb/conform\" ]" "...and land executable in TOOLS_BIN"
+    rc=0
+    probe "conform-x $(command printf '%064d' 0)" || rc=$?
+    assert_equals "1" "$rc" "A sha256 mismatch aborts the install"
+    assert_contains "$(command cat "$d/probe.log")" "sha256 mismatch for conform-x" "...naming the tool"
+    assert_true "[ ! -e \"$d/tb/conform\" ]" "...and installs NOTHING"
+    rc=0
+    probe "other-x $good" || rc=$?
+    assert_equals "1" "$rc" "A download with no tools.sha256 entry aborts"
+    # Named, not inferred: with no entry the digest comparison ALSO fails, so
+    # the exit code alone cannot show the missing-entry guard fired.
+    assert_contains "$(command cat "$d/probe.log")" "no sha256 for conform-x in tools.sha256" \
+        "...with the missing-entry error, before any download"
+    assert_true "[ ! -e \"$d/tb/conform\" ]" "...and installs nothing"
 }
 
 # --- AC1: the rendered hooks pass on a clean checkout --------------------------
@@ -470,6 +553,8 @@ run_test test_rendered_files_parse "Every rendered file parses"
 run_test test_rendered_files_lint "Rendered scripts, workflow, and justfile lint clean"
 run_test test_rendered_ci_pins "Rendered CI pins images and actions"
 run_test test_run_sh_reports_skip_and_none "The rendered tests/run.sh reports SKIP, none, and FAIL honestly"
+run_test test_every_download_has_a_hash "Every tool install-tools.sh fetches has a pinned sha256"
+run_test test_install_tools_verifies_before_install "install-tools.sh verifies each download before installing it"
 run_test test_live_hooks_pass "AC1: a rendered shell+python repo passes its own hooks and CI recipes"
 
 generate_report

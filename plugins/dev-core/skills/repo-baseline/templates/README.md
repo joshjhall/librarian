@@ -81,11 +81,20 @@ if they were. A complete file keeps its real extension.
   source: `ruff.toml` via `bin/ruff-version.sh`, `uv.toml`), installs into
   `$TOOLS_BIN` (default `~/.local/bin`), and fails if any tool did not land.
   Linux x86_64/aarch64 only.
+- **`tools.sha256`** holds the sha256 of every artifact `install-tools.sh`
+  downloads, keyed `<tool>-<arch>`. Each download is verified **before** it is
+  extracted or installed, and a mismatch or a missing entry aborts the run. A
+  version pin alone does not stop a re-tagged or compromised release. Several of
+  these tools publish no checksums, so the digests are recorded here rather than
+  fetched from the same release they would vouch for.
 
 ## After rendering
 
 Edit every line marked `# per-repo:`, then `lefthook install`. The pins and
-action SHAs are current as of the template; bump them per `core.md` § 4.
+action SHAs are current as of the template; bump them per `core.md` § 4. A
+version bump also needs the matching `tools.sha256` rows, for both arches, in
+the same commit: download the new artifacts, then record `sha256sum` of each.
+Where upstream publishes checksums, cross-check against them.
 
 ## Adding a slice
 
