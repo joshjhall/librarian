@@ -592,12 +592,13 @@ test_install_tools_cache_is_reverified() {
     assert_true "[ ! -e \"$c/conform-x\" ]" "...and is NOT cached"
 
     # An unreadable entry is a miss, not an abort: the download still installs.
-    # A cp stub fails reads of the entry (chmod 000 would not stop root), and
+    # A cp stub fails reads of the entry (chmod 000 would not stop root) and
+    # defers every other copy to `command -p cp`, which skips this stub dir;
     # the entry holds bad bytes, so a read that got through would log the sha
     # warning — the fallback path must not.
     command mkdir -p "$c"
     command printf tampered >"$c/conform-x"
-    command printf '#!/usr/bin/env sh\n[ "$1" = "%s" ] && exit 1\nexec /bin/cp "$@"\n' \
+    command printf '#!/usr/bin/env sh\n[ "$1" = "%s" ] && exit 1\ncommand -p cp "$@"\n' \
         "$c/conform-x" >"$d/stub/cp"
     command chmod +x "$d/stub/cp"
     command rm -rf "$d/tb"
@@ -622,7 +623,7 @@ test_install_tools_cache_is_reverified() {
     # A write that fails after the staging copy (mv refused) cleans up its
     # .partial-*, so a failed write leaves nothing behind in the cache.
     command rm -rf "$d/tb"
-    command printf '#!/usr/bin/env sh\ncase "$1" in */.partial-*) exit 1 ;; esac\nexec /bin/mv "$@"\n' >"$d/stub/mv"
+    command printf '#!/usr/bin/env sh\ncase "$1" in */.partial-*) exit 1 ;; esac\ncommand -p mv "$@"\n' >"$d/stub/mv"
     command chmod +x "$d/stub/mv"
     rc=0
     run_install "$d" "conform-x $good" conform "$body" || rc=$?
