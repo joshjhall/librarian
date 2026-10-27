@@ -285,7 +285,8 @@ $(command grep -rnE "$json_re" "$root" --include='*.json' || true)"
 # before `git` is spelled as a class, not `\b`, to stay BSD-clean; each quote
 # style bounds its own description, so an apostrophe inside "..." still matches.
 # Line-oriented: a description wrapped onto the line after `register <kind>` is
-# out of scope (no doc wraps one today).
+# out of scope (no doc wraps one today). It keys on `git <word>`, not a bare
+# `git`: measured live, isolation accepted `register bash "push via git"`.
 test_work_docs_never_show_git_in_description() {
     local root="$REPO_ROOT/plugins/workflow" re raw n line
     local git='git[[:space:]]+[a-z]' edge='[^[:alnum:]_-]'
@@ -305,6 +306,7 @@ test_work_docs_never_show_git_in_description() {
         'golem-work.sh register bash "pre-push suite" --pid {pid}' \
         'golem-work.sh register workflow "review harness"' \
         'golem-work.sh register bash "Digit sum"' \
+        'golem-work.sh register bash "push via git" --pid {pid}' \
         "golem-work.sh register bash \"golem's suite\" --pid {pid}" \
         'golem-work.sh register bash "run-all.sh" --pid 12345'; do
         n="$(printf '%s\n' "$line" | command grep -ciE "$re" || true)"
