@@ -284,15 +284,19 @@ $(command grep -rnE "$json_re" "$root" --include='*.json' || true)"
 # plugins/workflow of any type, as for the command form above. The word boundary
 # before `git` is spelled as a class, not `\b`, to stay BSD-clean; each quote
 # style bounds its own description, so an apostrophe inside "..." still matches.
+# Keyed on SHAPE, not on argument order: `register`, then a kind from its closed
+# set (`bash|monitor|workflow`), then the first quoted argument, with
+# no quote in between. `register` takes its flags anywhere, so this covers every
+# flag placement at once — patching one order at a time missed a new placement
+# each review cycle. Optional `\` before a quote covers a JSON-escaped string.
 # Line-oriented: a description wrapped onto the line after `register <kind>` is
 # out of scope (no doc wraps one today). It keys on `git <word-or-flag>`, not a
 # bare `git`: measured live, isolation accepted `register bash "push via git"`.
-# `register` takes its flags anywhere, so flag/value pairs may precede the kind.
 test_work_docs_never_show_git_in_description() {
     local root="$REPO_ROOT/plugins/workflow" re raw n line
-    local git='git[[:space:]]+[a-z-]' edge='[^[:alnum:]_-]'
-    local flags='([[:space:]]+--[a-z-]+[[:space:]]+[^[:space:]]+)*'
-    re="register${flags}[[:space:]]+[a-z]+[[:space:]]+(\"([^\"]*$edge)?$git|'([^']*$edge)?$git)"
+    local git='git[[:space:]]+[a-z-]' edge='[^[:alnum:]_-]' q='\\?'
+    local call="register[[:space:]]+[^\"']*(bash|monitor|workflow)[^\"']*"
+    re="${call}(${q}\"([^\"]*$edge)?$git|${q}'([^']*$edge)?$git)"
     # shellcheck disable=SC2016  # literal fixture lines, never expanded
     for line in \
         '<skill-base-dir>/../../scripts/golem-work.sh register bash "git push" --pid {pid}' \
@@ -303,7 +307,9 @@ test_work_docs_never_show_git_in_description() {
         'golem-work.sh register bash "git -C repo push" --pid {pid}' \
         'golem-work.sh register bash "git --no-pager log"' \
         'golem-work.sh register --pid {pid} bash "git push"' \
-        'golem-work.sh register --golem golem-7 --pid 42 monitor "git fetch"'; do
+        'golem-work.sh register --golem golem-7 --pid 42 monitor "git fetch"' \
+        'golem-work.sh register bash --pid {pid} "git push"' \
+        '"description": "run `golem-work.sh register bash \"git push\"` first"'; do
         n="$(printf '%s\n' "$line" | command grep -ciE "$re" || true)"
         assert_equals "1" "$n" "git-in-description regex fires on: $line"
     done
@@ -314,6 +320,9 @@ test_work_docs_never_show_git_in_description() {
         'golem-work.sh register bash "Digit sum"' \
         'golem-work.sh register bash "push via git" --pid {pid}' \
         'golem-work.sh register --pid {pid} bash "pre-push suite"' \
+        'golem-work.sh register bash --pid {pid} "pre-push suite"' \
+        '"description": "run `golem-work.sh register bash \"pre-push suite\"` first"' \
+        '# get an exemption for having just seen git register the path. "git had it a' \
         "golem-work.sh register bash \"golem's suite\" --pid {pid}" \
         'golem-work.sh register bash "run-all.sh" --pid 12345'; do
         n="$(printf '%s\n' "$line" | command grep -ciE "$re" || true)"
@@ -322,7 +331,7 @@ test_work_docs_never_show_git_in_description() {
     # Vacuity control: the walk must reach register calls that HAVE a quoted
     # description, or a wrong $root reads as a clean tree. Floor = the count at
     # #1241; a doc dropping an example lowers it deliberately, in the same diff.
-    n="$(command grep -rhE "register${flags}[[:space:]]+[a-z]+[[:space:]]+[\"']" "$root" | command grep -c . || true)"
+    n="$(command grep -rhE "${call}${q}[\"']" "$root" | command grep -c . || true)"
     assert_true "[ \"$n\" -ge 5 ]" "the scan reaches documented register descriptions (found $n)"
     raw="$(command grep -rniE "$re" "$root" || true)"
     assert_equals "" "$raw" "no workflow file shows a register description containing a git command"
