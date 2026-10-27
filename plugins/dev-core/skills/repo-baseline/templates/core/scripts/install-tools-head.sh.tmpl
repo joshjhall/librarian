@@ -43,7 +43,10 @@ pin() {
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 STAGE="$TMP/stage"
-mkdir -p "$STAGE"
+# Multi-file tools stage their whole prefix here; see HOME_TOOLS in the tail.
+STAGE_HOME="$TMP/stage-home"
+HOME_TOOLS=""
+mkdir -p "$STAGE" "$STAGE_HOME"
 
 # sha256_of <file> — sha256sum on Linux, shasum on a host that lacks it.
 sha256_of() {

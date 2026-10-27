@@ -564,6 +564,46 @@ test_install_tools_fails_when_nothing_lands() {
     assert_contains "$(command cat "$d/run.log")" "did not install: faketool" "...naming it"
 }
 
+test_install_tools_multi_file_tool_is_atomic() {
+    # A multi-file tool (bats-core) stages its whole prefix and is moved into
+    # TOOLS_HOME, then linked into TOOLS_BIN, only after every tool landed. Two
+    # properties: the link works and survives a re-run; and a run that FAILS on
+    # a later tool leaves the previous prefix and link untouched (cycle-4 review
+    # found the prefix being replaced before the check).
+    local d="$WORKDIR/multi" rc body
+    command printf payload >"$WORKDIR/multi.payload"
+    install_sandbox "$d" "$WORKDIR/multi.payload"
+    # A fake multi-file tool: launcher + a sibling file it needs, so a broken
+    # move (launcher without its tree) cannot pass.
+    body='mkdir -p "$STAGE_HOME/mft-1/bin" "$STAGE_HOME/mft-1/lib"
+            echo VERSION >"$STAGE_HOME/mft-1/lib/data"
+            printf "#!/usr/bin/env sh\nd=\$(dirname \"\$(readlink \"\$0\" || echo \"\$0\")\")\ncat \"\$d/../lib/data\"\n" >"$STAGE_HOME/mft-1/bin/mft"
+            chmod +x "$STAGE_HOME/mft-1/bin/mft"
+            HOME_TOOLS="$HOME_TOOLS mft:mft-1/bin/mft"'
+    rc=0
+    run_install "$d" "" "" "${body//VERSION/v1}" || rc=$?
+    assert_equals "0" "$rc" "A staged multi-file tool installs"
+    assert_true "[ -L \"$d/tb/mft\" ]" "...linked into TOOLS_BIN (a symlink, not a copy)"
+    assert_equals "v1" "$("$d/tb/mft" 2>/dev/null)" "...and runs from TOOLS_HOME with its sibling files"
+    rc=0
+    run_install "$d" "" "" "${body//VERSION/v1b}" || rc=$?
+    assert_equals "0" "$rc" "Re-running over an installed multi-file tool succeeds"
+    assert_equals "v1b" "$("$d/tb/mft" 2>/dev/null)" "...and TOOLS_BIN runs THIS run's copy"
+
+    # Same tool staged fine, but a REQUIRED single-file tool never lands.
+    rc=0
+    run_install "$d" "" "nevertool" "${body//VERSION/v2}" || rc=$?
+    assert_equals "1" "$rc" "A run with a missing tool fails"
+    assert_equals "v1b" "$("$d/tb/mft" 2>/dev/null)" "...and leaves the earlier multi-file install working, untouched"
+
+    # The multi-file tool itself fails to stage its launcher.
+    rc=0
+    run_install "$d" "" "" 'HOME_TOOLS="$HOME_TOOLS mft:mft-9/bin/mft"' || rc=$?
+    assert_equals "1" "$rc" "A multi-file tool whose launcher did not stage fails"
+    assert_contains "$(command cat "$d/run.log")" "did not install: mft" "...naming it"
+    assert_equals "v1b" "$("$d/tb/mft" 2>/dev/null)" "...and leaves the earlier install working"
+}
+
 # --- AC1: the rendered hooks pass on a clean checkout --------------------------
 
 test_live_hooks_pass() {
@@ -636,6 +676,7 @@ run_test test_run_sh_reports_skip_and_none "The rendered tests/run.sh reports SK
 run_test test_every_download_has_a_hash "Every tool install-tools.sh fetches has a pinned sha256"
 run_test test_install_tools_verifies_before_install "install-tools.sh verifies each download before installing it"
 run_test test_install_tools_fails_when_nothing_lands "install-tools.sh fails when a pinned binary did not land in TOOLS_BIN"
+run_test test_install_tools_multi_file_tool_is_atomic "install-tools.sh moves a multi-file tool only after every tool landed"
 run_test test_live_hooks_pass "AC1: a rendered shell+python repo passes its own hooks and CI recipes"
 
 generate_report

@@ -84,8 +84,9 @@ if they were. A complete file keeps its real extension.
   and `$TOOLS_BIN` is updated only once **every** tool is present there. A stale
   binary from an earlier run, or a preinstalled copy on `PATH`, can never pass
   for this run's install, and a failed run leaves `$TOOLS_BIN` as it was.
-  Multi-file tools (bats-core) live under `$TOOLS_HOME` (default
-  `~/.local/share/repo-baseline-tools`) with a symlink in `$TOOLS_BIN`.
+  Multi-file tools (bats-core) stage their whole prefix the same way. Once every
+  tool has landed, the prefix moves under `$TOOLS_HOME` (default
+  `~/.local/share/repo-baseline-tools`) and a symlink is placed in `$TOOLS_BIN`.
 - **`tools.sha256`** holds the sha256 of every artifact `install-tools.sh`
   downloads, keyed `<tool>-<arch>`. Each download is verified **before** it is
   extracted or installed, and a mismatch or a missing entry aborts the run. A
