@@ -237,6 +237,11 @@ These env vars toggle non-default behavior; all are opt-in:
   `LIBRARIAN_CI_WAIT_TIMEOUT` to compute the ceiling
   (`TIMEOUT × (MAX_EXTENSIONS + 1)`); `0` makes the first checkpoint the ceiling
   (no auto-extend, even at L4).
+- `LIBRARIAN_CI_WAIT_POLL_TIMEOUT` — integer **seconds**, default `60`. How long
+  one `gh pr checks` call inside `scripts/ci-wait.sh` (the bundled CI-wait loop,
+  #1244) may take before it is killed and the wait fails loud (exit 3). The pair
+  above bounds the loop; this bounds each poll, so one hung network call cannot
+  wedge the wait under the ceiling.
 - `LIBRARIAN_WORKFLOW_WALL_TIMEOUT` — integer **minutes**, default `20`. Max
   wall-time the skill awaits a **single `Workflow` tool invocation** (the pre-PR /
   post-PR review fan-out, `ci-fixer`) before hitting a checkpoint — the

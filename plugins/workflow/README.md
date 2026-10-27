@@ -129,6 +129,7 @@ them as `${CLAUDE_PLUGIN_ROOT}/scripts/<name>.sh`.
 | `review-convergence.sh check …` | Decide whether the review loop has converged or should run another cycle — the ordered rule list that replaced the bare `REVIEW_MAX_CYCLES` counter (#596) |
 | `review-engagement.sh <transcript-dir> <result.json>` | Measure each review dimension's tool calls and output tokens from the Workflow transcript and mark a code-reading dimension that answered `findings: []` without investigating as unengaged, so the cycle cannot read clean (#1111) |
 | `review-route.sh check …` | Decide whether a review cycle needs the full fan-out or the cheap doc-only path — an ordered rule list whose every ambiguity resolves to `full` (#550). Inert until a caller passes its verdict to the harness |
+| `ci-wait.sh <pr> --level L` | The bounded CI-wait poll loop as one worktree-isolation-safe command: polls `gh pr checks` and calls `ci-wait-timeout.sh` each poll; exits 0 pass / 1 fail / 8 checkpoint / 9 stop (#1244) |
 | `ci-wait-timeout.sh check …` | Decide whether to keep polling pending CI, extend, checkpoint, or stop — mechanizes the `LIBRARIAN_CI_WAIT_*` bound that was prose-only until #588 |
 | `workflow-wall-timeout.sh check …` | The same decision for one bounded `Workflow` invocation, over `LIBRARIAN_WORKFLOW_WALL_*` (#327) |
 | `threshold-check.sh` | Shared verdict arithmetic behind the two above (sourced) |
@@ -229,5 +230,6 @@ prose-only variable.
 | `LIBRARIAN_REVIEW_ROUTE_MAX_LINES` | `2000` | `review-route.sh` | Diff-line ceiling above which the cheap path is refused even for a doc-only diff. Can only ever force `full`, never produce `cheap` |
 | `LIBRARIAN_CI_WAIT_TIMEOUT` | `15 min` | `ci-wait-timeout.sh` | CI-wait threshold; at the checkpoint, prompt cut-short/extend (at L3–L4: auto-extend up to `LIBRARIAN_CI_WAIT_MAX_EXTENSIONS` times then stop). A machine timer for _pending CI_, not a human gate — the never-time-out rule governs human gates, not this bounded wait |
 | `LIBRARIAN_CI_WAIT_MAX_EXTENSIONS` | `2` | `ci-wait-timeout.sh` | L3–L4 only: extra `LIBRARIAN_CI_WAIT_TIMEOUT` intervals before giving up on pending CI (no hang) |
+| `LIBRARIAN_CI_WAIT_POLL_TIMEOUT` | `60 s` | `ci-wait.sh` | Max seconds for one `gh pr checks` call in the CI-wait loop; past it the wait fails loud (exit 3) rather than hang |
 | `LIBRARIAN_WORKFLOW_WALL_TIMEOUT` | `20 min` | `workflow-wall-timeout.sh` | Max wall-time for a single `Workflow` invocation (review fan-out, `ci-fixer`) before a checkpoint; at L3–L4 auto-extend up to `LIBRARIAN_WORKFLOW_WALL_MAX_EXTENSIONS` then `TaskStop` and proceed with recovered partials. Bounds a spinning agent the token budget can't (#224); a timed-out cycle is partial, never `clean` |
 | `LIBRARIAN_WORKFLOW_WALL_MAX_EXTENSIONS` | `1` | `workflow-wall-timeout.sh` | L3–L4 only: extra `LIBRARIAN_WORKFLOW_WALL_TIMEOUT` intervals a hung `Workflow` invocation gets before it is stopped (no hang) |
