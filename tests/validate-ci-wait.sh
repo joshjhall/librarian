@@ -74,6 +74,8 @@ line="$(sed -n "${n}p" "$sb/states")"
 case "$line" in
     ERROR) echo "HTTP 502: bad gateway" >&2; exit 1 ;;
     NOCHECKS) echo "no checks reported on the 'feature/x' branch" >&2; exit 1 ;;
+    NOCHECKS_RC2) echo "no checks reported on the 'feature/x' branch" >&2; exit 2 ;;
+    EMBEDDED) echo "HTTP 500: upstream said no checks reported on the branch" >&2; exit 1 ;;
     HANG) exec sleep 600 ;;
 esac
 out="$(printf '%s' "$line" | jq -r "$expr")" || exit 4
@@ -288,6 +290,16 @@ test_no_checks_reported_is_pending() {
     assert_equals "2" "$(polls)" "it kept polling past the not-yet-registered state"
 }
 
+test_no_checks_match_is_anchored_and_rc_gated() {
+    reset 'NOCHECKS_RC2'
+    run_cw 7 --level 3
+    assert_exit 3 "$RC" "the no-checks message at an exit other than 1 fails loud"
+    reset 'EMBEDDED'
+    run_cw 7 --level 3
+    assert_exit 3 "$RC" "a real error that merely contains the phrase fails loud"
+    assert_not_contains "$OUT" "result=" "neither case emitted a result"
+}
+
 test_repo_flag_reaches_gh() {
     need_jq || return 0
     reset '[{"bucket":"pass"}]'
@@ -352,6 +364,7 @@ run_test test_bad_level_fails_loud_via_helper "bad --level fails loud via the he
 run_test test_gh_error_is_exit_3_not_pass "gh error -> exit 3, never pass"
 run_test test_hung_gh_is_bounded "a hung gh call is bounded -> exit 3"
 run_test test_no_checks_reported_is_pending "gh 'no checks reported' -> pending"
+run_test test_no_checks_match_is_anchored_and_rc_gated "no-checks match is anchored and rc-gated"
 run_test test_repo_flag_reaches_gh "--repo is forwarded to gh"
 run_test test_extend_without_numeric_k_fails_loud "extend with no numeric K -> exit 3"
 run_test test_usage_errors "usage errors -> exit 2 before any poll"
