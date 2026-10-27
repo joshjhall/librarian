@@ -277,6 +277,40 @@ $(command grep -rnE "$json_re" "$root" --include='*.json' || true)"
     assert_not_contains "$RUN_OUT" "golem-work.sh complete" "usage never shows the refused command"
 }
 
+# Same class as #1209 with a different trigger: an argument VALUE, not the verb
+# (#1241). A worktree-isolated session refuses any command whose text contains a
+# git operation it cannot verify stays in-tree, quoted description included, so
+# `register bash "git push"` never runs in a golem. Corpus = every file under
+# plugins/workflow of any type, as for the command form above. The word boundary
+# before `git` is spelled as a class, not `\b`, to stay BSD-clean.
+test_work_docs_never_show_git_in_description() {
+    local root="$REPO_ROOT/plugins/workflow" re raw n line
+    re="register[[:space:]]+[a-z]+[[:space:]]+[\"']([^\"']*[^[:alnum:]_-])?git[[:space:]]+[a-z]"
+    # shellcheck disable=SC2016  # literal fixture lines, never expanded
+    for line in \
+        '<skill-base-dir>/../../scripts/golem-work.sh register bash "git push" --pid {pid}' \
+        '`golem-work.sh register monitor "wait on git fetch"` then `finish {id}`' \
+        "golem-work.sh register bash 'git push -u origin HEAD'"; do
+        n="$(printf '%s\n' "$line" | command grep -cE "$re" || true)"
+        assert_equals "1" "$n" "git-in-description regex fires on: $line"
+    done
+    # shellcheck disable=SC2016  # literal fixture lines, never expanded
+    for line in \
+        'golem-work.sh register bash "pre-push suite" --pid {pid}' \
+        'golem-work.sh register workflow "review harness"' \
+        'golem-work.sh register bash "digit sum"' \
+        'golem-work.sh register bash "run-all.sh" --pid 12345'; do
+        n="$(printf '%s\n' "$line" | command grep -cE "$re" || true)"
+        assert_equals "0" "$n" "git-in-description regex stays quiet on: $line"
+    done
+    # Vacuity control: the walk must reach register calls that HAVE a quoted
+    # description (5 at #1241), or a wrong $root reads as a clean tree.
+    n="$(command grep -rhE "register[[:space:]]+[a-z]+[[:space:]]+[\"']" "$root" | command grep -c . || true)"
+    assert_true "[ \"$n\" -ge 3 ]" "the scan reaches documented register descriptions (found $n)"
+    raw="$(command grep -rnE "$re" "$root" || true)"
+    assert_equals "" "$raw" "no workflow file shows a register description containing a git command"
+}
+
 # Two opens and one close leaves exactly one — the reduction matches on id, so a
 # close cannot take the wrong item with it.
 test_work_multiple_items_counted_independently() {

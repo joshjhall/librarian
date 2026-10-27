@@ -54,6 +54,11 @@ Spell it `finish`, never `complete` (#1209): the old verb still works, but a
 worktree-isolated session refuses any command containing that token — it reads as
 bash's string-evaluating `complete` builtin — so in a golem it never runs.
 
+The description is free text, but keep any git command out of it (#1241):
+isolation reads `"git push"` in an argument as a git operation it cannot verify
+stays in-tree, and refuses the whole call. Name the work instead —
+`"pre-push suite"`.
+
 ### Pass `--pid` whenever you have it
 
 ```bash

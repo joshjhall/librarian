@@ -58,7 +58,7 @@ procedure in one file instead of breaking mid-sequence across two.
 
    ```bash
    # substitute <skill-base-dir>: next-issue/worktree-safe-recipes.md (#815)
-   <skill-base-dir>/../../scripts/golem-work.sh register bash "git push" --pid {pid}
+   <skill-base-dir>/../../scripts/golem-work.sh register bash "pre-push suite" --pid {pid}
    # -> id=work-…   read it from the output; when the push returns:
    <skill-base-dir>/../../scripts/golem-work.sh finish {id}
    ```
@@ -443,7 +443,7 @@ Proceed with the steps below only when the review ran and came back `clean`.
    ```
 
    Same pre-push suite as Option 1's push, so the same rule: backgrounded, it is
-   `golem-work.sh register bash "git push" --pid {pid}` then `finish {id}`
+   `golem-work.sh register bash "pre-push suite" --pid {pid}` then `finish {id}`
    (`golem/background-work.md`, #1203).
 
 1. **Remove `status/in-progress` label**:

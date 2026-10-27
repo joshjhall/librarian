@@ -487,7 +487,7 @@ test_push_and_poll_triggers() {
    ```bash
    git push -u origin HEAD
    ```
-   Backgrounded: `golem-work.sh register bash "git push" --pid {pid}`.
+   Backgrounded: `golem-work.sh register bash "pre-push suite" --pid {pid}`.
 
 ## Inline push step
    - Commit `fix(ci): {summary}`, `git push`, and re-poll CI.
