@@ -44,12 +44,23 @@ rendered `.gitignore` excludes the directory.
 | Tampered entry, `curl` failing | exit 1, `cached conform-x fails its sha256`, nothing installed, entry dropped |
 | Tampered entry, `curl` working | re-downloads, installs the good bytes, replaces the entry |
 | Download fails its sha256, cache set | exit 1, nothing cached |
+| Entry unreadable (`cp` stub fails the read), tampered bytes | downloads and installs the good bytes; no `fails its sha256` line, so the entry was never read |
+| Cache path is a regular file, so nothing can be written | installs the verified download, logs `could not cache conform-x` |
 
-**Mutation-tested.** Two mutants of `install-tools-head.sh.tmpl`, each run
-against the full suite:
+The cache is an optimization, so it never fails an install: an unreadable entry
+is a miss and a failed write only loses the copy. Integrity is unaffected, since
+every byte installed still passed `tools.sha256`. That last part came out of
+pre-PR review, after the live runs below.
+
+**Mutation-tested.** Five mutants of `install-tools-head.sh.tmpl`, each run
+against the full suite and each killed:
 
 - Trusting a cache hit without re-verifying (`if true`): the cache case fails.
 - Writing to the cache before verifying the download: the cache case fails.
+- Aborting when the cache write fails: the unwritable-cache case fails.
+- Aborting when the cache read fails: the unreadable-entry case fails.
+- Using an unreadable entry without the read guard: `...without ever reading
+  the entry` fails.
 
 The suite was green again after restoring the file, which `cmp` confirmed
 byte-identical to the pre-mutation copy.
@@ -134,7 +145,12 @@ follow-ups.
 
 The two probe commits (6813, 6814) edited only the project's own
 `.gitlab-ci.yml`, never the template, and 6815 edited only a comment. The
-shipped template is exactly what 6812 ran.
+shipped `.gitlab-ci.yml` and `.gitignore` templates are exactly what 6812 ran.
+`fetch()` in `install-tools.sh` changed afterward, to make the cache
+best-effort (see AC1). The change touches only paths where a cache read or
+write fails, and no job in 6812–6815 hit one. These pipelines therefore
+exercised the same hit and miss path that ships, but not the final bytes. The
+unit cases above cover the changed paths.
 
 To re-run on another instance, use the recipe in
 `repo-baseline-templates-e2e-1219.md` § AC3, then push a second commit and look
