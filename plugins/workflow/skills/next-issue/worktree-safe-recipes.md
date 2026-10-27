@@ -96,7 +96,7 @@ re-measure against the copy you are actually running.
 The interpreter rows are the ones a golem hits first, because `CLAUDE.md`'s
 capture-don't-pipe rule (#854) used to be spelled `bash tests/run-all.sh >
 /tmp/run.log 2>&1; echo $?`. The redirect is not the trigger — a `bash <script>`
-call **followed by a `$?` read** is. Drop the prefix: every `tests/*.sh` is
+call **followed by a `$?` read** is. Drop the prefix — `run-all.sh` is
 executable, so
 
 ```bash
@@ -104,6 +104,13 @@ tests/run-all.sh > /tmp/run.log 2>&1; echo $?
 ```
 
 keeps the log and the exit code in an isolated session and outside one alike.
+
+Not every gate is executable (14 of the 132 top-level `tests/*.sh` are mode
+`100644` — check with `git ls-files -s`); a bare call to one exits `126`,
+"Permission denied", having run nothing. For those, run `bash <gate> > log
+2>&1` with **no** `$?` read and take the verdict from the gate's own
+`Summary`/`FAIL` lines in the log. Never trust a background task's exit code
+instead: it is the wrapper's, and reports `0` over a gate that never ran.
 
 `CLAUDE_PLUGIN_ROOT` additionally is **not exported into the Bash environment**
 at all (`env | grep -c CLAUDE_PLUGIN_ROOT` → 0), so that spelling has two
