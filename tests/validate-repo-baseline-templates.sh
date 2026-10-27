@@ -429,17 +429,29 @@ test_run_sh_reports_skip_and_none() {
 # --- install-tools.sh integrity ------------------------------------------------
 
 test_every_download_has_a_hash() {
-    # Each `fetch ... "<key>"` / `from_tar ... <tool>` call names a hash key; a
-    # tool added without its tools.sha256 row would abort CI, so catch it here.
-    local out="$WORKDIR/full" a key missing=""
-    for a in x86_64 aarch64; do
-        for key in typos dprint taplo rumdl actionlint gitleaks conform lefthook just \
-            shfmt shellcheck ruff uv; do
-            command grep -q "^$key-$a " "$out/tools.sha256" || missing="$missing $key-$a"
-        done
+    # Derive the hash keys from the RENDERED script, never from a list kept
+    # here: a list would let a newly added download pass this test and abort CI.
+    # `from_tar <url> <tool>` keys as <tool>-<arch>; `fetch <url> "<key>"` names
+    # its key directly, with `$ARCH` standing for each arch.
+    local out="$WORKDIR/full" keys a key missing="" n
+    keys="$(command awk '
+        /^[[:space:]]*from_tar / { print $NF "-$ARCH"; next }
+        /fetch "/ { k = $NF; gsub(/[")]/, "", k); print k }
+    ' "$out/bin/install-tools.sh" | command grep -v '^\$' | command sort -u)"
+    n="$(command printf '%s\n' "$keys" | command grep -c .)"
+    assert_true "[ \"$n\" -ge 14 ]" "The rendered install-tools.sh yields every download's hash key (got $n)"
+    for key in $keys; do
+        case "$key" in
+            *'$ARCH')
+                for a in x86_64 aarch64; do
+                    command grep -q "^${key%\$ARCH}$a " "$out/tools.sha256" ||
+                        missing="$missing ${key%\$ARCH}$a"
+                done
+                ;;
+            *) command grep -q "^$key " "$out/tools.sha256" || missing="$missing $key" ;;
+        esac
     done
-    command grep -q '^bats-any ' "$out/tools.sha256" || missing="$missing bats-any"
-    assert_equals "" "$missing" "tools.sha256 has a 64-hex sha256 for every tool and arch install-tools.sh fetches"
+    assert_equals "" "$missing" "tools.sha256 has a sha256 for every key the rendered install-tools.sh fetches, both arches"
     assert_equals "" "$(command awk '!/^#/ && NF && $2 !~ /^[0-9a-f]{64}$/' "$out/tools.sha256")" \
         "Every tools.sha256 entry is a 64-hex digest"
 }
@@ -482,6 +494,42 @@ test_install_tools_verifies_before_install() {
     assert_contains "$(command cat "$d/probe.log")" "no sha256 for conform-x in tools.sha256" \
         "...with the missing-entry error, before any download"
     assert_true "[ ! -e \"$d/tb/conform\" ]" "...and installs nothing"
+}
+
+test_install_tools_fails_when_nothing_lands() {
+    # Two ways an install can "succeed" with no pinned binary in TOOLS_BIN, both
+    # measured live in review: from_tar's `find -exec` exits 0 on no match, and a
+    # `command -v` tail check is satisfied by a runner's preinstalled copy.
+    local d="$WORKDIR/nothing-lands" stub="$WORKDIR/nothing-lands-bin" sum rc
+    render_to "$d" --ci github >/dev/null
+    command mkdir -p "$stub" "$d/arch/other"
+    # A tarball that verifies but holds no file named `typos`.
+    command printf 'not the tool\n' >"$d/arch/other/README"
+    (cd "$d/arch" && command tar -czf "$d/payload.tgz" other)
+    command printf '#!/usr/bin/env sh\nwhile [ "$#" -gt 0 ]; do [ "$1" = -o ] && { cat "%s" >"$2"; exit 0; }; shift; done\nexit 1\n' \
+        "$d/payload.tgz" >"$stub/curl"
+    command chmod +x "$stub/curl"
+    command awk '/^v=\$\(pin typos\)/ { exit } { print }' "$d/bin/install-tools.sh" >"$d/bin/helpers.sh"
+    sum="$({ command -v sha256sum >/dev/null 2>&1 && sha256sum "$d/payload.tgz"; } || shasum -a 256 "$d/payload.tgz")"
+    sum="${sum%% *}"
+    rc=0
+    (cd "$d" && PATH="$stub:/usr/bin:/bin" TOOLS_BIN="$d/tb" HOME="$d" ARCH=x86_64 /usr/bin/env -uBASH_ENV bash -c '
+        . bin/helpers.sh
+        printf "typos-%s %s\n" "$ARCH" "'"$sum"'" >tools.sha256
+        from_tar https://example.invalid/typos.tgz typos' >"$d/tar.log" 2>&1) || rc=$?
+    assert_equals "1" "$rc" "from_tar fails when a verified archive holds no binary of that name"
+    assert_contains "$(command cat "$d/tar.log")" "no file named typos" "...naming the missing binary"
+
+    # The tail: `faketool` is on PATH (a preinstalled copy) but not in TOOLS_BIN.
+    command printf '#!/usr/bin/env sh\nexit 0\n' >"$stub/faketool"
+    command chmod +x "$stub/faketool"
+    command mkdir -p "$d/tb2"
+    command awk '/^# Fail, never skip/ { on = 1 } on' "$d/bin/install-tools.sh" >"$d/bin/tail.sh"
+    rc=0
+    (cd "$d" && PATH="$stub:/usr/bin:/bin" TOOLS_BIN="$d/tb2" REQUIRED=faketool \
+        /usr/bin/env -uBASH_ENV bash bin/tail.sh >"$d/tail.log" 2>&1) || rc=$?
+    assert_equals "1" "$rc" "The post-install check fails when a tool is on PATH but not in TOOLS_BIN"
+    assert_contains "$(command cat "$d/tail.log")" "did not install: faketool" "...naming it"
 }
 
 # --- AC1: the rendered hooks pass on a clean checkout --------------------------
@@ -555,6 +603,7 @@ run_test test_rendered_ci_pins "Rendered CI pins images and actions"
 run_test test_run_sh_reports_skip_and_none "The rendered tests/run.sh reports SKIP, none, and FAIL honestly"
 run_test test_every_download_has_a_hash "Every tool install-tools.sh fetches has a pinned sha256"
 run_test test_install_tools_verifies_before_install "install-tools.sh verifies each download before installing it"
+run_test test_install_tools_fails_when_nothing_lands "install-tools.sh fails when a pinned binary did not land in TOOLS_BIN"
 run_test test_live_hooks_pass "AC1: a rendered shell+python repo passes its own hooks and CI recipes"
 
 generate_report

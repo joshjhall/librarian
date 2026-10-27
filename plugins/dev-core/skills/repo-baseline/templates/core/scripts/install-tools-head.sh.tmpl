@@ -78,7 +78,13 @@ from_tar() {
     archive="$(fetch "$1" "$2-$ARCH")"
     mkdir -p "$dir"
     tar -xzf "$archive" -C "$dir"
+    # `find -exec` exits 0 when nothing matches, so check the result: an archive
+    # whose layout changed must fail here, not install nothing.
     find "$dir" -type f -name "$2" -exec install -m 0755 {} "$TOOLS_BIN/$2" \;
+    if [ ! -x "$TOOLS_BIN/$2" ]; then
+        echo "ERROR: no file named $2 in $1" >&2
+        exit 1
+    fi
 }
 
 v=$(pin typos)
