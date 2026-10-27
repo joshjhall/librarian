@@ -93,6 +93,13 @@ if they were. A complete file keeps its real extension.
   version pin alone does not stop a re-tagged or compromised release. Several of
   these tools publish no checksums, so the digests are recorded here rather than
   fetched from the same release they would vouch for.
+- **`TOOLS_CACHE`** (optional) names a directory of verified downloads, keyed
+  like `tools.sha256`. A cached file is verified exactly like a download: a
+  match skips the network, and a mismatch is discarded and downloaded again.
+  Only bytes that passed the check are written there, so the cache is never
+  trusted on its own. The GitLab template sets it to `.tools-cache/` (gitignored)
+  and caches that path, keyed on `tools.versions` + `tools.sha256`, so a pin bump
+  starts a fresh cache.
 
 ## After rendering
 

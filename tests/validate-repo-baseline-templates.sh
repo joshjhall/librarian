@@ -396,6 +396,23 @@ test_rendered_ci_pins() {
     assert_contains "$(command cat "$out/.github/workflows/ci.yml")" "if: always()" "The merge gate runs if: always()"
 }
 
+test_rendered_gitlab_tool_cache() {
+    # The cache must be keyed on BOTH pin files (a bump to either starts a fresh
+    # cache), live under the project dir (GitLab caches nothing outside it), and
+    # be the directory install-tools.sh is pointed at.
+    local out="$WORKDIR/full" y="$WORKDIR/full/.gitlab-ci.yml"
+    assert_true "command grep -qx '.tools-cache/' \"$out/.gitignore\"" "The rendered .gitignore keeps the cache out of the tree"
+    if ! command -v yq >/dev/null 2>&1; then
+        skip_test "yq not installed"
+        return
+    fi
+    assert_equals "tools.versions tools.sha256" "$(yq '.default.cache.key.files | join(" ")' "$y")" \
+        "The GitLab cache key hashes tools.versions and tools.sha256"
+    assert_equals ".tools-cache/" "$(yq '.default.cache.paths | join(" ")' "$y")" "...and caches .tools-cache/"
+    assert_equals '$CI_PROJECT_DIR/.tools-cache' "$(yq '.variables.TOOLS_CACHE' "$y")" \
+        "...which is the TOOLS_CACHE install-tools.sh reads"
+}
+
 test_run_sh_reports_skip_and_none() {
     # The rendered runner's contract, exercised: a missing runner is [SKIP]
     # (exit 0 locally, 1 under CI=true); a slice with no test files is [none].
@@ -477,7 +494,7 @@ install_sandbox() {
 run_install() {
     command printf '%s\n' "$2" >"$1/tools.sha256"
     (cd "$1" && PATH="$1/stub:/usr/bin:/bin" TOOLS_BIN="$1/tb" TOOLS_HOME="$1/th" HOME="$1" \
-        /usr/bin/env -uBASH_ENV bash -c ". bin/helpers.sh
+        /usr/bin/env -uBASH_ENV -uTOOLS_CACHE bash -c ". bin/helpers.sh
             $4
             REQUIRED='$3'
             . bin/tail.sh" >"$1/run.log" 2>&1)
@@ -517,6 +534,114 @@ test_install_tools_verifies_before_install() {
     assert_contains "$(command cat "$d/run.log")" "no sha256 for conform-x in tools.sha256" \
         "...with the missing-entry error, before any download"
     assert_true "[ ! -e \"$d/tb/conform\" ]" "...and installs nothing"
+}
+
+test_install_tools_cache_is_reverified() {
+    # TOOLS_CACHE (set by the GitLab template) holds verified downloads. A hit
+    # skips the network; a tampered entry is re-downloaded and replaced; bytes
+    # that fail tools.sha256 never reach the cache.
+    local d="$WORKDIR/cache" c good rc body
+    c="$d/tc"
+    command mkdir -p "$d"
+    command printf payload >"$WORKDIR/cache.payload"
+    install_sandbox "$d" "$WORKDIR/cache.payload"
+    good="$(sha256_file "$WORKDIR/cache.payload")"
+    body="TOOLS_CACHE='$c'
+            f=\$(fetch https://example.invalid/conform conform-x)
+            put \"\$f\" conform"
+    rc=0
+    run_install "$d" "conform-x $good" conform "$body" || rc=$?
+    assert_equals "0" "$rc" "A cache miss downloads and installs"
+    assert_equals "$good" "$(sha256_file "$c/conform-x")" "...and stores the verified bytes under the hash key"
+    assert_true "[ -z \"\$(command ls -A \"$c\" | command grep '^\.partial-')\" ]" "...leaving no .partial-* behind"
+
+    # Hit: curl now fails for every URL, so success proves no download ran.
+    command cp "$d/stub/curl" "$d/stub/curl.real"
+    command printf '#!/usr/bin/env sh\nexit 1\n' >"$d/stub/curl"
+    command rm -rf "$d/tb"
+    rc=0
+    run_install "$d" "conform-x $good" conform "$body" || rc=$?
+    assert_equals "0" "$rc" "A cache hit installs with the network unreachable"
+    assert_true "[ -x \"$d/tb/conform\" ]" "...from the cached bytes"
+    assert_equals "$good" "$(sha256_file "$d/tb/conform")" "...which are the verified bytes"
+
+    # Tampered entry, network down: the cached bytes must NOT be installed.
+    command printf tampered >"$c/conform-x"
+    command rm -rf "$d/tb"
+    rc=0
+    run_install "$d" "conform-x $good" conform "$body" || rc=$?
+    assert_equals "1" "$rc" "A cache entry failing its sha256 is not trusted"
+    assert_contains "$(command cat "$d/run.log")" "cached conform-x fails its sha256" "...and says so"
+    assert_true "[ ! -e \"$d/tb/conform\" ]" "...and installs nothing from it"
+    assert_true "[ ! -e \"$c/conform-x\" ]" "...and drops the bad entry"
+
+    # Tampered entry, network up: re-download, install, and repair the cache.
+    command mv "$d/stub/curl.real" "$d/stub/curl"
+    command printf tampered >"$c/conform-x"
+    rc=0
+    run_install "$d" "conform-x $good" conform "$body" || rc=$?
+    assert_equals "0" "$rc" "A tampered cache entry is downloaded again"
+    assert_equals "$good" "$(sha256_file "$d/tb/conform")" "...installing the verified bytes"
+    assert_equals "$good" "$(sha256_file "$c/conform-x")" "...and replacing the bad entry"
+
+    # A download that fails its check never enters the cache.
+    command rm -rf "$c" "$d/tb"
+    rc=0
+    run_install "$d" "conform-x $(command printf '%064d' 0)" conform "$body" || rc=$?
+    assert_equals "1" "$rc" "A mismatched download still aborts with a cache set"
+    assert_true "[ ! -e \"$c/conform-x\" ]" "...and is NOT cached"
+
+    # An unreadable entry is a miss, not an abort: the download still installs.
+    # A cp stub fails reads of the entry (chmod 000 would not stop root) and
+    # defers every other copy to `command -p cp`, which skips this stub dir;
+    # the entry holds bad bytes, so a read that got through would log the sha
+    # warning — the fallback path must not.
+    command mkdir -p "$c"
+    command printf tampered >"$c/conform-x"
+    command printf '#!/usr/bin/env sh\n[ "$1" = "%s" ] && exit 1\ncommand -p cp "$@"\n' \
+        "$c/conform-x" >"$d/stub/cp"
+    command chmod +x "$d/stub/cp"
+    command rm -rf "$d/tb"
+    rc=0
+    run_install "$d" "conform-x $good" conform "$body" || rc=$?
+    command rm -f "$d/stub/cp"
+    assert_equals "0" "$rc" "An unreadable cache entry falls back to a download"
+    assert_equals "$good" "$(sha256_file "$d/tb/conform")" "...which installs the verified bytes"
+    assert_not_contains "$(command cat "$d/run.log")" "fails its sha256" "...without ever reading the entry"
+
+    # An unusable cache (a regular file where the dir should be) costs only the
+    # copy: the verified download still installs.
+    command rm -rf "$c" "$d/tb"
+    command printf notadir >"$c"
+    rc=0
+    run_install "$d" "conform-x $good" conform "$body" || rc=$?
+    assert_equals "0" "$rc" "An unwritable cache does not fail a verified install"
+    assert_equals "$good" "$(sha256_file "$d/tb/conform")" "...which installs the verified bytes"
+    assert_contains "$(command cat "$d/run.log")" "could not cache conform-x" "...and says the copy was lost"
+    command rm -f "$c"
+
+    # A write that fails after the staging copy (mv refused) cleans up its
+    # .partial-*, so a failed write leaves nothing behind in the cache.
+    command rm -rf "$d/tb"
+    command printf '#!/usr/bin/env sh\ncase "$1" in */.partial-*) exit 1 ;; esac\ncommand -p mv "$@"\n' >"$d/stub/mv"
+    command chmod +x "$d/stub/mv"
+    rc=0
+    run_install "$d" "conform-x $good" conform "$body" || rc=$?
+    command rm -f "$d/stub/mv"
+    assert_equals "0" "$rc" "A cache write that fails at the rename does not fail the install"
+    assert_contains "$(command cat "$d/run.log")" "could not cache conform-x" "...and says the copy was lost"
+    assert_true "[ -z \"\$(command ls -A \"$c\" | command grep '^\.partial-')\" ]" "...and removes its .partial-*"
+    assert_true "[ ! -e \"$c/conform-x\" ]" "...and publishes no entry"
+
+    # run_install scrubs an ambient TOOLS_CACHE, so the other installer cases
+    # never read or write a real cache. Exported here, it must not reach fetch.
+    command rm -rf "$c" "$d/tb"
+    command mkdir -p "$d/ambient"
+    rc=0
+    TOOLS_CACHE="$d/ambient" run_install "$d" "conform-x $good" conform \
+        "f=\$(fetch https://example.invalid/conform conform-x); put \"\$f\" conform" || rc=$?
+    assert_equals "0" "$rc" "An install with no TOOLS_CACHE in its body still installs"
+    assert_true "[ -z \"\$(command ls -A \"$d/ambient\")\" ]" "...and an exported TOOLS_CACHE never reaches fetch"
 }
 
 test_install_tools_fails_when_nothing_lands() {
@@ -672,9 +797,11 @@ run_test test_render_refuses_bad_manifest "render.sh refuses a bad manifest with
 run_test test_rendered_files_parse "Every rendered file parses"
 run_test test_rendered_files_lint "Rendered scripts, workflow, and justfile lint clean"
 run_test test_rendered_ci_pins "Rendered CI pins images and actions"
+run_test test_rendered_gitlab_tool_cache "Rendered GitLab CI caches tool downloads keyed on the pin files"
 run_test test_run_sh_reports_skip_and_none "The rendered tests/run.sh reports SKIP, none, and FAIL honestly"
 run_test test_every_download_has_a_hash "Every tool install-tools.sh fetches has a pinned sha256"
 run_test test_install_tools_verifies_before_install "install-tools.sh verifies each download before installing it"
+run_test test_install_tools_cache_is_reverified "install-tools.sh re-verifies every TOOLS_CACHE hit and caches only verified bytes"
 run_test test_install_tools_fails_when_nothing_lands "install-tools.sh fails when a pinned binary did not land in TOOLS_BIN"
 run_test test_install_tools_multi_file_tool_is_atomic "install-tools.sh moves a multi-file tool only after every tool landed"
 run_test test_live_hooks_pass "AC1: a rendered shell+python repo passes its own hooks and CI recipes"

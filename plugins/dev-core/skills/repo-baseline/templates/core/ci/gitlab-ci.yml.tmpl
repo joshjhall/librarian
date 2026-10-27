@@ -6,6 +6,14 @@ stages: [lint, test, security]
 default:
   # Pinned tag, never :latest. Debian-based so bin/install-tools.sh has bash.
   image: debian:trixie-20261005-slim
+  # Tool downloads, kept across jobs and pipelines. GitLab caches only paths
+  # inside the project dir, so this is not ~/.local/bin. The key is a hash of
+  # both pin files, so any pin bump starts a fresh cache, and
+  # install-tools.sh re-verifies every cached file against tools.sha256.
+  cache:
+    key:
+      files: [tools.versions, tools.sha256]
+    paths: [.tools-cache/]
   before_script:
     - apt-get update -qq
     - apt-get install -y -qq --no-install-recommends bash ca-certificates curl git unzip xz-utils >/dev/null
@@ -14,6 +22,7 @@ default:
 
 variables:
   CI: "true" # tests/run.sh fails a skipped stage under CI
+  TOOLS_CACHE: $CI_PROJECT_DIR/.tools-cache # read by bin/install-tools.sh
 
 lint:
   stage: lint
