@@ -1,0 +1,9 @@
+# Spell-check config for the crate-ci/typos binary.
+# Docs: https://github.com/crate-ci/typos/blob/master/docs/reference.md
+
+[files]
+# per-repo: vendored trees and generated files that are not hand-authored prose.
+extend-exclude = ["node_modules/**", "vendor/**", "CHANGELOG.md"]
+
+[default.extend-words]
+# per-repo: a deliberate spelling, one per line, each with the reason above it.

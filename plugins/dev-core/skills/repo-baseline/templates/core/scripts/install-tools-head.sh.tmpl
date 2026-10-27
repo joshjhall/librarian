@@ -1,0 +1,129 @@
+#!/usr/bin/env bash
+# Install every pinned tool (core § 4) into $TOOLS_BIN and FAIL if one does not
+# land. CI calls this before `just lint` / `just test`; a contributor may too.
+#
+# Pins come from tools.versions (plus each slice's own single source); nothing
+# here hardcodes a version. Linux x86_64 / aarch64 only — on a Mac use the
+# package manager, then check `<tool> --version` against tools.versions.
+#
+# Every tool lands in a fresh, empty $STAGE first. Only when every tool is
+# present there does the tail move them into TOOLS_BIN, so a stale binary
+# already in TOOLS_BIN can never pass for this run's install, and a failed run
+# leaves TOOLS_BIN untouched.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+TOOLS_BIN="${TOOLS_BIN:-$HOME/.local/bin}"
+# Tools that ship more than one file (bats) live here, outside TOOLS_BIN.
+TOOLS_HOME="${TOOLS_HOME:-$HOME/.local/share/repo-baseline-tools}"
+mkdir -p "$TOOLS_BIN" "$TOOLS_HOME"
+case ":$PATH:" in *":$TOOLS_BIN:"*) ;; *) PATH="$TOOLS_BIN:$PATH" ;; esac
+[ -n "${GITHUB_PATH:-}" ] && echo "$TOOLS_BIN" >>"$GITHUB_PATH"
+
+case "$(uname -s)-$(uname -m)" in
+    Linux-x86_64) ARCH=x86_64 GOARCH=amd64 ;;
+    Linux-aarch64 | Linux-arm64) ARCH=aarch64 GOARCH=arm64 ;;
+    *)
+        echo "ERROR: install-tools.sh supports Linux x86_64/aarch64 only" >&2
+        exit 1
+        ;;
+esac
+
+# pin <name> — the version tools.versions records for <name>; fails loud.
+pin() {
+    local v
+    v="$(awk -F= -v k="$1" '$1 == k { print $2; exit }' "$ROOT/tools.versions")"
+    if [ -z "$v" ]; then
+        echo "ERROR: no pin for $1 in tools.versions" >&2
+        exit 1
+    fi
+    printf '%s\n' "$v"
+}
+
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+STAGE="$TMP/stage"
+# Multi-file tools stage their whole prefix here; see HOME_TOOLS in the tail.
+STAGE_HOME="$TMP/stage-home"
+HOME_TOOLS=""
+mkdir -p "$STAGE" "$STAGE_HOME"
+
+# sha256_of <file> — sha256sum on Linux, shasum on a host that lacks it.
+sha256_of() {
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$1" | awk '{ print $1 }'
+    else
+        shasum -a 256 "$1" | awk '{ print $1 }'
+    fi
+}
+
+# fetch <url> <hash-key> — download into $TMP and verify the bytes against
+# tools.sha256 BEFORE anything extracts or installs them. Prints the verified
+# file's path. A missing entry fails just like a mismatch: an unpinned download
+# is exactly what this check exists to refuse.
+#
+# Always call it as a plain assignment (`f=$(fetch ...)`). Under `set -e` a
+# failing substitution aborts the script only there; used as an argument
+# (`put "$(fetch ...)"`) its exit 1 is swallowed and the caller runs on.
+fetch() {
+    local out="$TMP/$2.download" want got
+    want="$(awk -v k="$2" '$1 == k { print $2; exit }' "$ROOT/tools.sha256")"
+    if [ -z "$want" ]; then
+        echo "ERROR: no sha256 for $2 in tools.sha256" >&2
+        exit 1
+    fi
+    curl -fsSL --retry 3 -o "$out" "$1"
+    got="$(sha256_of "$out")"
+    if [ "$got" != "$want" ]; then
+        echo "ERROR: sha256 mismatch for $2 ($1): expected $want, got $got" >&2
+        exit 1
+    fi
+    printf '%s\n' "$out"
+}
+
+# put <file> <tool> — stage one verified binary, executable. The tail moves
+# staged tools into TOOLS_BIN once every one of them has landed.
+put() { install -m 0755 "$1" "$STAGE/$2"; }
+
+# from_tar <url> <tool> — verify a tarball, then stage the one binary named <tool>.
+from_tar() {
+    local dir="$TMP/$2" archive
+    archive="$(fetch "$1" "$2-$ARCH")"
+    mkdir -p "$dir"
+    tar -xzf "$archive" -C "$dir"
+    # `find -exec` exits 0 when nothing matches, so check the result. $STAGE
+    # starts empty, so only this run's install can satisfy the check.
+    find "$dir" -type f -name "$2" -exec install -m 0755 {} "$STAGE/$2" \;
+    if [ ! -x "$STAGE/$2" ]; then
+        echo "ERROR: no file named $2 in $1" >&2
+        exit 1
+    fi
+}
+
+v=$(pin typos)
+from_tar "https://github.com/crate-ci/typos/releases/download/v$v/typos-v$v-$ARCH-unknown-linux-musl.tar.gz" typos
+v=$(pin dprint)
+f=$(fetch "https://github.com/dprint/dprint/releases/download/$v/dprint-$ARCH-unknown-linux-musl.zip" "dprint-$ARCH")
+unzip -oq "$f" -d "$TMP/dprint"
+put "$TMP/dprint/dprint" dprint
+v=$(pin taplo)
+f=$(fetch "https://github.com/tamasfe/taplo/releases/download/$v/taplo-linux-$ARCH.gz" "taplo-$ARCH")
+gunzip -c "$f" >"$TMP/taplo"
+put "$TMP/taplo" taplo
+v=$(pin rumdl)
+from_tar "https://github.com/rvben/rumdl/releases/download/v$v/rumdl-v$v-$ARCH-unknown-linux-musl.tar.gz" rumdl
+v=$(pin actionlint)
+from_tar "https://github.com/rhysd/actionlint/releases/download/v$v/actionlint_${v}_linux_$GOARCH.tar.gz" actionlint
+v=$(pin gitleaks)
+[ "$GOARCH" = amd64 ] && gl_arch=x64 || gl_arch=arm64
+from_tar "https://github.com/gitleaks/gitleaks/releases/download/v$v/gitleaks_${v}_linux_$gl_arch.tar.gz" gitleaks
+v=$(pin conform)
+f=$(fetch "https://github.com/siderolabs/conform/releases/download/v$v/conform-linux-$GOARCH" "conform-$ARCH")
+put "$f" conform
+v=$(pin lefthook)
+f=$(fetch "https://github.com/evilmartians/lefthook/releases/download/v$v/lefthook_${v}_Linux_$ARCH" "lefthook-$ARCH")
+put "$f" lefthook
+v=$(pin just)
+from_tar "https://github.com/casey/just/releases/download/$v/just-$v-$ARCH-unknown-linux-musl.tar.gz" just
+
+REQUIRED="typos dprint taplo rumdl actionlint gitleaks conform lefthook just"

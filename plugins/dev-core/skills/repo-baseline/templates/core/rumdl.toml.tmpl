@@ -1,0 +1,19 @@
+# rumdl configuration — markdown linting.
+
+respect-gitignore = true
+
+exclude = ["node_modules/**", ".git/**"]
+
+# Rules that need project-specific data or a document template to be useful.
+disable = [
+  "MD043", # required heading structure (needs a template)
+  "MD044", # proper names capitalization (needs a names list)
+  "MD060", # table column alignment
+  "MD061", # forbidden terms (needs a term list)
+  "MD073", # TOC matches document headings (needs a TOC)
+]
+
+[MD013]
+line_length = 120
+code_blocks = false
+tables = false

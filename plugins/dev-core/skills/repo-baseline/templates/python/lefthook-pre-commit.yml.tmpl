@@ -1,0 +1,13 @@
+
+    ruff-format:
+      glob: "*.py"
+      skip:
+        - run: "! command -v ruff >/dev/null 2>&1"
+      run: ruff format {staged_files}
+      stage_fixed: true
+
+    ruff-check:
+      glob: "*.py"
+      skip:
+        - run: "! command -v ruff >/dev/null 2>&1"
+      run: ruff check {staged_files}

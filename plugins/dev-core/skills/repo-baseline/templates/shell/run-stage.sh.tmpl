@@ -1,0 +1,8 @@
+
+# --- shell slice: bats-core over tests/*.bats ---
+bats_stage() {
+    command -v bats >/dev/null 2>&1 || return 77
+    compgen -G 'tests/*.bats' >/dev/null || return 78
+    bats tests/
+}
+stage "shell (bats)" bats_stage

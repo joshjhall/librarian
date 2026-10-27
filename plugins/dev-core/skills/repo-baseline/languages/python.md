@@ -138,6 +138,10 @@ uv run --no-project --with-requirements tests/requirements.txt \
     python -m pytest tests/ "$@"
 ```
 
+This is the single-slice runner. `templates/` renders the composed one: the
+same `uv run` line as one stage beside the other slices', with per-stage
+`[ok]`/`[SKIP]`/`[none]` reporting.
+
 `--no-project` keeps uv from creating or reading a project venv: there is no
 `pyproject.toml` to resolve, and the same command runs in the hook, in CI, and
 by hand.
@@ -201,6 +205,10 @@ and a hook must never block a machine without an optional tool; run directly,
 `tests/run.sh` reports the missing `uv` as `77`.
 
 ## CI job
+
+These are the **single-slice** jobs. A repo rendered from `templates/` runs the
+same tools through `just lint` and `tests/run.sh` inside core's `lint`/`test`
+jobs instead (`templates/README.md`).
 
 GitHub Actions — `lint` and `test` stages:
 

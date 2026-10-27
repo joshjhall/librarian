@@ -1,0 +1,52 @@
+# Lefthook configuration — rendered from librarian's repo-baseline templates.
+# Install hooks: lefthook install
+# Optional tools carry a `skip:` guard so a bare host passes over them; CI
+# installs and runs every one with no skips (bin/install-tools.sh).
+
+pre-commit:
+  parallel: true
+  commands:
+    check-merge-conflict:
+      run: |
+        if grep -lE '^(<{7} |>{7} |={7}$)' {staged_files} 2>/dev/null; then
+          echo "ERROR: merge conflict markers found in the above file(s)"
+          exit 1
+        fi
+
+    large-file:
+      run: |
+        status=0
+        for f in {staged_files}; do
+          [ -f "$f" ] || continue
+          size=$(wc -c <"$f")
+          if [ "$size" -gt 1048576 ]; then
+            echo "ERROR: $f is over 1 MB ($size bytes)"
+            status=1
+          fi
+        done
+        exit "$status"
+
+    gitleaks:
+      skip:
+        - run: "! command -v gitleaks >/dev/null 2>&1"
+      run: gitleaks protect --staged --redact
+
+    dprint:
+      glob: "*.{json,yml,yaml}"
+      skip:
+        - run: "! command -v dprint >/dev/null 2>&1"
+      run: dprint fmt {staged_files}
+      stage_fixed: true
+
+    taplo:
+      glob: "*.toml"
+      skip:
+        - run: "! command -v taplo >/dev/null 2>&1"
+      run: taplo fmt {staged_files}
+      stage_fixed: true
+
+    rumdl:
+      glob: "*.md"
+      skip:
+        - run: "! command -v rumdl >/dev/null 2>&1"
+      run: rumdl check {staged_files}

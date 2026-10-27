@@ -1,0 +1,20 @@
+
+# --- shell slice: shfmt, shellcheck and bats-core, each verified before install ---
+v=$(pin shfmt)
+f=$(fetch "https://github.com/mvdan/sh/releases/download/v$v/shfmt_v${v}_linux_$GOARCH" "shfmt-$ARCH")
+put "$f" shfmt
+v=$(pin shellcheck)
+f=$(fetch "https://github.com/koalaman/shellcheck/releases/download/v$v/shellcheck-v$v.linux.$ARCH.tar.xz" "shellcheck-$ARCH")
+tar -xJf "$f" -C "$TMP"
+put "$TMP/shellcheck-v$v/shellcheck" shellcheck
+# bats-core is a launcher plus libexec/ and lib/, not one binary, so its whole
+# prefix is staged under $STAGE_HOME and registered in HOME_TOOLS as
+# <tool>:<launcher path within STAGE_HOME>. The tail moves the prefix into
+# TOOLS_HOME and links the launcher into TOOLS_BIN only after every tool has
+# landed. The prefix is relocatable: bats resolves libexec through its own path.
+v=$(pin bats)
+f=$(fetch "https://github.com/bats-core/bats-core/archive/refs/tags/v$v.tar.gz" "bats-any")
+tar -xzf "$f" -C "$TMP"
+"$TMP/bats-core-$v/install.sh" "$STAGE_HOME/bats-core-$v" >/dev/null
+HOME_TOOLS="$HOME_TOOLS bats:bats-core-$v/bin/bats"
+REQUIRED="$REQUIRED shellcheck shfmt"

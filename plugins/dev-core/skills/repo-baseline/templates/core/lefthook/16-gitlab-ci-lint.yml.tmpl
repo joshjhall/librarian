@@ -1,0 +1,13 @@
+
+    gitlab-ci-lint:
+      glob: ".gitlab-ci.yml"
+      # The server-side lint needs glab and a remote naming the project. A freshly
+      # scaffolded repo has no remote yet, so that case skips rather than blocking
+      # the first commit. Do NOT guard on `glab auth status`: it checks EVERY
+      # configured host, so one stale entry made this hook skip silently on a
+      # machine logged in to the project's own instance. A missing login for the
+      # project's host fails loudly in `glab ci lint` instead.
+      skip:
+        - run: "! command -v glab >/dev/null 2>&1"
+        - run: "[ -z \"$(git remote)\" ]"
+      run: glab ci lint .gitlab-ci.yml

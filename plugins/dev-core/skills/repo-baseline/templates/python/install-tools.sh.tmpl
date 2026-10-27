@@ -1,0 +1,11 @@
+
+# --- python slice: ruff + uv, each read from its own single source ---
+v=$(bash "$ROOT/bin/ruff-version.sh")
+from_tar "https://github.com/astral-sh/ruff/releases/download/$v/ruff-$ARCH-unknown-linux-musl.tar.gz" ruff
+v=$(awk -F'"==' '/^required-version/ { sub(/".*/, "", $2); print $2; exit }' "$ROOT/uv.toml")
+[ -n "$v" ] || {
+    echo "ERROR: no required-version pin in uv.toml" >&2
+    exit 1
+}
+from_tar "https://github.com/astral-sh/uv/releases/download/$v/uv-$ARCH-unknown-linux-musl.tar.gz" uv
+REQUIRED="$REQUIRED ruff uv"

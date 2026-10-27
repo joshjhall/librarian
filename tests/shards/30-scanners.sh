@@ -59,6 +59,7 @@ run_stage "review-harness authority + loud skip" bash "$SCRIPT_DIR/validate-revi
 run_stage "status/pr-pending label lifecycle" bash "$SCRIPT_DIR/validate-label-lifecycle.sh"
 run_stage "Pre-scan empty/missing-input robustness" bash "$SCRIPT_DIR/validate-prescans.sh"
 run_stage "repo-baseline slice contract conformance" bash "$SCRIPT_DIR/validate-repo-baseline-slices.sh"
+run_stage "repo-baseline scaffold templates" bash "$SCRIPT_DIR/validate-repo-baseline-templates.sh"
 run_stage "pre-review-gates scan categories + skip policy" bash "$SCRIPT_DIR/validate-pre-review-gates.sh"
 run_stage "review-lens sizing scanner (growth-aware)" bash "$SCRIPT_DIR/validate-sizing-scanner.sh"
 run_stage "plan-lens sizing scanner (projection-aware)" bash "$SCRIPT_DIR/validate-plan-lens.sh"

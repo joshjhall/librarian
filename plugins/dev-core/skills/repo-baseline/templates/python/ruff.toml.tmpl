@@ -1,0 +1,14 @@
+# Must stay TOP-LEVEL — under [format] ruff rejects it as an unknown field.
+required-version = "==0.16.10"
+
+# per-repo: the oldest Python the scripts run on; must match .python-version.
+target-version = "py311"
+line-length = 88
+
+[lint]
+# per-repo: add "UP" (pyupgrade) when target-version is the current Python —
+# on an older floor it suggests syntax the floor cannot run.
+select = ["F", "E", "W", "I", "B"]
+
+[format]
+quote-style = "double"

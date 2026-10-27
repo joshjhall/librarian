@@ -1,0 +1,60 @@
+# Rendered from librarian's repo-baseline templates (core § 3).
+# CI and the hooks call the same entry points: bin/install-tools.sh, then
+# `just lint` / `just test`. Every tool is installed and run with no skips.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read # least privilege; widen per job only where a job needs it
+
+jobs:
+  lint:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: bash bin/install-tools.sh
+      - run: just lint
+
+  test:
+    needs: lint
+    runs-on: ubuntu-24.04
+    env:
+      CI: "true" # tests/run.sh fails a skipped stage under CI
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: bash bin/install-tools.sh
+      - run: just test
+
+  security:
+    needs: lint
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - run: bash bin/install-tools.sh
+      - name: Secret scan (PR range, else full history)
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ -n "$BASE_SHA" ]; then
+            gitleaks detect --redact --log-opts="$BASE_SHA..HEAD"
+          else
+            gitleaks detect --redact # no PR base: scan everything, never just HEAD~1
+          fi
+
+  merge-gate:
+    if: always() # a skipped required check counts as PASSED — never let it skip
+    needs: [lint, test, security]
+    runs-on: ubuntu-24.04
+    steps:
+      - env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          for r in $RESULTS; do
+            [ "$r" = success ] || { echo "a stage did not succeed: $r"; exit 1; }
+          done

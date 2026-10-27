@@ -1,0 +1,28 @@
+policies:
+  - type: commit
+    spec:
+      header:
+        length: 89
+        invalidLastCharacters: .
+      body:
+        required: false
+      dco: false
+      gpg:
+        required: false
+      conventional:
+        types:
+          - build
+          - chore
+          - ci
+          - docs
+          - feat
+          - fix
+          - perf
+          - refactor
+          - revert
+          - style
+          - test
+        # per-repo: the subsystem scopes this repo accepts. An empty list
+        # accepts any scope; add `^name$` entries to restrict them.
+        scopes: []
+        descriptionLength: 72

@@ -1,0 +1,45 @@
+# repo-baseline scaffold manifest — format: templates/README.md.
+# target	slice	when	source
+# Every row whose slice is selected and whose `when` holds is rendered; rows
+# that share a target are CONCATENATED in this file's order.
+lefthook.yml	core	always	core/lefthook/10-pre-commit.yml.tmpl
+lefthook.yml	core	ci=github	core/lefthook/15-actionlint.yml.tmpl
+lefthook.yml	core	ci=gitlab	core/lefthook/16-gitlab-ci-lint.yml.tmpl
+lefthook.yml	shell	always	shell/lefthook-pre-commit.yml.tmpl
+lefthook.yml	python	always	python/lefthook-pre-commit.yml.tmpl
+lefthook.yml	core	always	core/lefthook/30-commit-msg-pre-push.yml.tmpl
+lefthook.yml	python	always	python/lefthook-pre-push.yml.tmpl
+justfile	core	always	core/justfile/10-head.just
+justfile	core	ci=github	core/justfile/15-actionlint.just
+justfile	shell	always	shell/justfile-lint.just
+justfile	python	always	python/justfile-lint.just
+justfile	core	always	core/justfile/90-tail.just
+tests/run.sh	core	always	core/scripts/run-head.sh.tmpl
+tests/run.sh	shell	always	shell/run-stage.sh.tmpl
+tests/run.sh	python	always	python/run-stage.sh.tmpl
+tests/run.sh	core	always	core/scripts/run-tail.sh.tmpl
+bin/install-tools.sh	core	always	core/scripts/install-tools-head.sh.tmpl
+bin/install-tools.sh	shell	always	shell/install-tools.sh.tmpl
+bin/install-tools.sh	python	always	python/install-tools.sh.tmpl
+bin/install-tools.sh	core	always	core/scripts/install-tools-tail.sh.tmpl
+tools.versions	core	always	core/tools.versions
+tools.versions	shell	always	shell/tools.versions
+tools.sha256	core	always	core/tools.sha256
+tools.sha256	shell	always	shell/tools.sha256
+tools.sha256	python	always	python/tools.sha256
+.github/workflows/ci.yml	core	ci=github	core/ci/github-ci.yml.tmpl
+.gitlab-ci.yml	core	ci=gitlab	core/ci/gitlab-ci.yml.tmpl
+_typos.toml	core	always	core/typos.toml.tmpl
+dprint.json	core	always	core/dprint.json.tmpl
+.rumdl.toml	core	always	core/rumdl.toml.tmpl
+.taplo.toml	core	always	core/taplo.toml.tmpl
+.conform.yaml	core	always	core/conform.yaml.tmpl
+.gitleaks.toml	core	always	core/gitleaks.toml.tmpl
+.gitignore	core	always	core/gitignore.tmpl
+.shellcheckrc	shell	always	shell/shellcheckrc.tmpl
+ruff.toml	python	always	python/ruff.toml.tmpl
+bin/ruff-version.sh	python	always	python/ruff-version.sh
+uv.toml	python	always	python/uv.toml.tmpl
+.python-version	python	always	python/python-version.tmpl
+tests/requirements.txt	python	always	python/requirements.txt
+tests/conftest.py	python	always	python/conftest.py.tmpl

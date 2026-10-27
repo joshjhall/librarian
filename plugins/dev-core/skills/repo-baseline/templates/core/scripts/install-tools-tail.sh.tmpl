@@ -1,0 +1,40 @@
+
+# Fail, never skip: a tool that did not land is a broken install (core § 1).
+# Check $STAGE and $STAGE_HOME, which this run created empty, so neither a
+# stale copy in TOOLS_BIN/TOOLS_HOME nor a preinstalled copy on PATH can stand
+# in for this run's install. HOME_TOOLS entries are <tool>:<launcher path
+# within STAGE_HOME>.
+missing=""
+for t in $REQUIRED; do
+    [ -x "$STAGE/$t" ] || missing="$missing $t"
+done
+for entry in $HOME_TOOLS; do
+    [ -x "$STAGE_HOME/${entry#*:}" ] || missing="$missing ${entry%%:*}"
+done
+if [ -n "$missing" ]; then
+    echo "ERROR: install-tools.sh did not install:$missing" >&2
+    exit 1
+fi
+
+# Every tool landed. Only now is anything outside $TMP touched.
+for t in $REQUIRED; do
+    rm -f "$TOOLS_BIN/$t"
+    cp "$STAGE/$t" "$TOOLS_BIN/$t"
+done
+# A multi-file prefix is swapped by rename. $TMP and TOOLS_HOME are often on
+# different filesystems, so the cross-device copy goes to a sibling (.new-*)
+# while the live prefix is untouched; the swap itself is then two same-
+# filesystem renames. An interrupted copy leaves only a stray .new-* behind.
+for entry in $HOME_TOOLS; do
+    t="${entry%%:*}"
+    launcher="${entry#*:}"
+    prefix="${launcher%%/*}"
+    rm -rf "${TOOLS_HOME:?}/.new-$prefix" "${TOOLS_HOME:?}/.old-$prefix"
+    mv "$STAGE_HOME/$prefix" "$TOOLS_HOME/.new-$prefix"
+    [ ! -e "$TOOLS_HOME/$prefix" ] || mv "$TOOLS_HOME/$prefix" "$TOOLS_HOME/.old-$prefix"
+    mv "$TOOLS_HOME/.new-$prefix" "$TOOLS_HOME/$prefix"
+    rm -rf "${TOOLS_HOME:?}/.old-$prefix"
+    rm -f "$TOOLS_BIN/$t"
+    ln -s "$TOOLS_HOME/$launcher" "$TOOLS_BIN/$t"
+done
+echo "install-tools: ok ($REQUIRED$(for e in $HOME_TOOLS; do printf ' %s' "${e%%:*}"; done))"
