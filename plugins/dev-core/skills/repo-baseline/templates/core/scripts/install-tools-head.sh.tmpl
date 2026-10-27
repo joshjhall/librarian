@@ -65,6 +65,12 @@ sha256_of() {
 # Always call it as a plain assignment (`f=$(fetch ...)`). Under `set -e` a
 # failing substitution aborts the script only there; used as an argument
 # (`put "$(fetch ...)"`) its exit 1 is swallowed and the caller runs on.
+#
+# With TOOLS_CACHE set (CI sets it to a cached directory), a cached copy of
+# <hash-key> is tried first and verified exactly like a download: a match skips
+# the network, a mismatch is discarded and downloaded again. Only bytes that
+# passed the check are ever written to the cache, so a cache hit never trusts
+# the cache — tools.sha256 decides every time.
 fetch() {
     local out="$TMP/$2.download" want got
     want="$(awk -v k="$2" '$1 == k { print $2; exit }' "$ROOT/tools.sha256")"
@@ -72,11 +78,30 @@ fetch() {
         echo "ERROR: no sha256 for $2 in tools.sha256" >&2
         exit 1
     fi
+    if [ -n "${TOOLS_CACHE:-}" ] && [ -f "$TOOLS_CACHE/$2" ]; then
+        # Hash the copy in $TMP, not the cache entry, so the verified bytes
+        # are the ones that get installed.
+        cp "$TOOLS_CACHE/$2" "$out"
+        got="$(sha256_of "$out")"
+        if [ "$got" = "$want" ]; then
+            printf '%s\n' "$out"
+            return 0
+        fi
+        echo "install-tools: cached $2 fails its sha256, downloading again" >&2
+        rm -f "$TOOLS_CACHE/$2"
+    fi
     curl -fsSL --retry 3 -o "$out" "$1"
     got="$(sha256_of "$out")"
     if [ "$got" != "$want" ]; then
         echo "ERROR: sha256 mismatch for $2 ($1): expected $want, got $got" >&2
         exit 1
+    fi
+    if [ -n "${TOOLS_CACHE:-}" ]; then
+        # Copy to a sibling, then rename: an interrupted copy leaves only a
+        # stray .partial-*, never a truncated entry under the real key.
+        mkdir -p "$TOOLS_CACHE"
+        cp "$out" "$TOOLS_CACHE/.partial-$2"
+        mv "$TOOLS_CACHE/.partial-$2" "$TOOLS_CACHE/$2"
     fi
     printf '%s\n' "$out"
 }
