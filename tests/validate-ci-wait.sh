@@ -54,7 +54,13 @@ REAL_SLEEP="$(command -v sleep)"
 command cat >"$STUB_BIN/gh" <<'STUB'
 #!/usr/bin/env bash
 sb="${CIW_SB:?}"
-echo "call $1 $2 $3" >>"$sb/gh.log" # one line per call; the --jq arg is multi-line
+repo=""
+p=""
+for a in "$@"; do
+    [ "$p" = "--repo" ] && repo="$a"
+    p="$a"
+done
+echo "call $1 $2 $3 repo=$repo" >>"$sb/gh.log" # one line per call; --jq is multi-line
 expr=""
 prev=""
 for a in "$@"; do
@@ -67,6 +73,7 @@ total="$(wc -l <"$sb/states")"; total=$((total))
 line="$(sed -n "${n}p" "$sb/states")"
 case "$line" in
     ERROR) echo "HTTP 502: bad gateway" >&2; exit 1 ;;
+    NOCHECKS) echo "no checks reported on the 'feature/x' branch" >&2; exit 1 ;;
     HANG) exec sleep 600 ;;
 esac
 out="$(printf '%s' "$line" | jq -r "$expr")" || exit 4
@@ -273,6 +280,22 @@ test_hung_gh_is_bounded() {
     assert_contains "$OUT" "did not answer" "the timeout is named"
 }
 
+test_no_checks_reported_is_pending() {
+    need_jq || return 0
+    reset 'NOCHECKS' '[{"bucket":"pass"}]'
+    run_cw 7 --level 3
+    assert_exit 0 "$RC" "gh's 'no checks reported' error is pending, not exit 3"
+    assert_equals "2" "$(polls)" "it kept polling past the not-yet-registered state"
+}
+
+test_repo_flag_reaches_gh() {
+    need_jq || return 0
+    reset '[{"bucket":"pass"}]'
+    run_cw 7 --level 3 --repo octo/demo
+    assert_exit 0 "$RC" "--repo run passes"
+    assert_file_contains "$SB/gh.log" "repo=octo/demo" "--repo is forwarded to gh"
+}
+
 test_usage_errors() {
     reset '[{"bucket":"pass"}]'
     run_cw --level 3
@@ -311,6 +334,8 @@ run_test test_verdict_comes_from_the_timeout_helper "verdict is delegated to ci-
 run_test test_bad_level_fails_loud_via_helper "bad --level fails loud via the helper"
 run_test test_gh_error_is_exit_3_not_pass "gh error -> exit 3, never pass"
 run_test test_hung_gh_is_bounded "a hung gh call is bounded -> exit 3"
+run_test test_no_checks_reported_is_pending "gh 'no checks reported' -> pending"
+run_test test_repo_flag_reaches_gh "--repo is forwarded to gh"
 run_test test_usage_errors "usage errors -> exit 2 before any poll"
 run_test test_bad_poll_timeout_env_fails_loud "bad LIBRARIAN_CI_WAIT_POLL_TIMEOUT -> exit 2"
 

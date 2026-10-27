@@ -165,6 +165,10 @@ poll_state() {
     esac
     case "$out" in
         pass | fail | pending) command printf '%s' "$out" ;;
+        # A PR whose workflows have not registered yet makes gh exit 1 with this
+        # diagnostic instead of printing `[]`. It is the same race the empty-list
+        # rule covers, so it is pending, never a hard failure on poll 1.
+        *"no checks reported"*) command printf 'pending' ;;
         *)
             command printf 'ci-wait: unreadable check state from gh: %s\n' "$out" >&2
             return 3
@@ -231,7 +235,15 @@ while :; do
 
     case "$verdict" in
         continue) ;;
-        extend) ext_used="$new_ext" ;;
+        extend)
+            # Never carry an unparsed value forward: an empty K would make the
+            # next helper call a usage error mid-wait.
+            is_nonneg_int "$new_ext" || {
+                command printf 'ci-wait: extend without a numeric extensions_used: %s\n' "$decision" >&2
+                exit 3
+            }
+            ext_used="$new_ext"
+            ;;
         checkpoint)
             emit pending
             exit 8
