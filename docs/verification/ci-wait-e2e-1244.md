@@ -31,6 +31,22 @@ issue reported — a compound command with a heredoc, and `bash <script> > log
 2>&1` — with the "too complex to verify" message, so the harness was enforcing
 isolation while it accepted the recipe.
 
-## 2. It stops at the ceiling — see below
+## 2. It stops at the ceiling — DEFERRED (needs a PR with pending CI)
 
-Recorded against this PR's own pending CI, after the push.
+Not observed yet: the only green-and-pending PR this session can reach is its
+own, which does not exist until the push. The offline half is pinned by
+`tests/validate-ci-wait.sh` ("stuck CI stops at the 45-min ceiling (exit 9)",
+"LIBRARIAN_CI_WAIT_* reach the bound"), with `gh` and the clock stubbed.
+
+Recipe, from the isolated worktree, while `{pr}`'s checks are still running.
+The carried `--elapsed-min` places the wait at the ceiling, so the first
+pending poll must return `stop`:
+
+```text
+<repo>/plugins/workflow/skills/ship-issue/../../scripts/ci-wait.sh {pr} --level 4 --elapsed-min 45 --extensions-used 2
+```
+
+Expected: `result=pending`, `verdict=stop`, `ceiling_min=45`, exit `9`, and no
+isolation refusal. If the checks have already finished, the run exits 0 or 1
+instead, and this section stays DEFERRED. That outcome says nothing about the
+ceiling.

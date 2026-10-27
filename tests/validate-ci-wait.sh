@@ -296,6 +296,23 @@ test_repo_flag_reaches_gh() {
     assert_file_contains "$SB/gh.log" "repo=octo/demo" "--repo is forwarded to gh"
 }
 
+test_extend_without_numeric_k_fails_loud() {
+    need_jq || return 0
+    reset '[{"bucket":"pending"}]'
+    # A copy of the waiter beside a helper that answers `extend` with no K —
+    # SCRIPT_DIR resolves the sibling, so no test-only override is needed.
+    local d="$SB/badhelper"
+    command mkdir -p "$d"
+    command cp "$CW" "$REPO_ROOT/plugins/workflow/scripts/bounded-run.sh" "$d/"
+    command printf '#!/usr/bin/env bash\necho verdict=extend\necho ceiling_min=45\necho extensions_used=\n' \
+        >"$d/ci-wait-timeout.sh"
+    command chmod +x "$d/ci-wait-timeout.sh" "$d/ci-wait.sh"
+    RC=0
+    OUT="$(cw_env "$d/ci-wait.sh" 7 --level 3 --interval 0 2>&1)" || RC=$?
+    assert_exit 3 "$RC" "an extend with an empty extensions_used fails loud"
+    assert_contains "$OUT" "without a numeric extensions_used" "the guard names the problem"
+}
+
 test_usage_errors() {
     reset '[{"bucket":"pass"}]'
     run_cw --level 3
@@ -336,6 +353,7 @@ run_test test_gh_error_is_exit_3_not_pass "gh error -> exit 3, never pass"
 run_test test_hung_gh_is_bounded "a hung gh call is bounded -> exit 3"
 run_test test_no_checks_reported_is_pending "gh 'no checks reported' -> pending"
 run_test test_repo_flag_reaches_gh "--repo is forwarded to gh"
+run_test test_extend_without_numeric_k_fails_loud "extend with no numeric K -> exit 3"
 run_test test_usage_errors "usage errors -> exit 2 before any poll"
 run_test test_bad_poll_timeout_env_fails_loud "bad LIBRARIAN_CI_WAIT_POLL_TIMEOUT -> exit 2"
 

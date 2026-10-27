@@ -168,7 +168,11 @@ poll_state() {
         # A PR whose workflows have not registered yet makes gh exit 1 with this
         # diagnostic instead of printing `[]`. It is the same race the empty-list
         # rule covers, so it is pending, never a hard failure on poll 1.
-        *"no checks reported"*) command printf 'pending' ;;
+        "no checks reported on the "*)
+            [ "$rc" -eq 1 ] && command printf 'pending' && return 0
+            command printf 'ci-wait: unexpected gh output (exit %s): %s\n' "$rc" "$out" >&2
+            return 3
+            ;;
         *)
             command printf 'ci-wait: unreadable check state from gh: %s\n' "$out" >&2
             return 3
