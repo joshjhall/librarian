@@ -21,12 +21,19 @@ for t in $REQUIRED; do
     rm -f "$TOOLS_BIN/$t"
     cp "$STAGE/$t" "$TOOLS_BIN/$t"
 done
+# A multi-file prefix is swapped by rename. $TMP and TOOLS_HOME are often on
+# different filesystems, so the cross-device copy goes to a sibling (.new-*)
+# while the live prefix is untouched; the swap itself is then two same-
+# filesystem renames. An interrupted copy leaves only a stray .new-* behind.
 for entry in $HOME_TOOLS; do
     t="${entry%%:*}"
     launcher="${entry#*:}"
     prefix="${launcher%%/*}"
-    rm -rf "${TOOLS_HOME:?}/$prefix"
-    mv "$STAGE_HOME/$prefix" "$TOOLS_HOME/$prefix"
+    rm -rf "${TOOLS_HOME:?}/.new-$prefix" "${TOOLS_HOME:?}/.old-$prefix"
+    mv "$STAGE_HOME/$prefix" "$TOOLS_HOME/.new-$prefix"
+    [ ! -e "$TOOLS_HOME/$prefix" ] || mv "$TOOLS_HOME/$prefix" "$TOOLS_HOME/.old-$prefix"
+    mv "$TOOLS_HOME/.new-$prefix" "$TOOLS_HOME/$prefix"
+    rm -rf "${TOOLS_HOME:?}/.old-$prefix"
     rm -f "$TOOLS_BIN/$t"
     ln -s "$TOOLS_HOME/$launcher" "$TOOLS_BIN/$t"
 done
