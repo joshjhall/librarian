@@ -35,6 +35,7 @@ to every task, not just this topic.
 - [rumdl: never start a line with #NNN](rumdl-issue-ref-line-start.md) — a leading issue ref = MD018 malformed heading; reword
 - [rumdl scope depends on invocation](rumdl-scope-depends-on-invocation.md) — over-reports on an explicit .sh, under-reports on a walk
 - [Splitting a file surfaces masked lint](splitting-a-file-surfaces-masked-lint.md) — per-file linters find real bugs the monolith hid; triage first
+- [agnix reads `<word>` as XML](agnix-reads-angle-bracket-placeholders-as-xml.md) — some placeholders in skill prose error as unclosed tags, even in backticks; write a concrete path (#1247)
 
 ## Skills, agents & packaging
 
