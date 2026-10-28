@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.18.0] - 2026-10-28
+
+### Added
+
+- Record the shell test-framework decision and fix .shellcheckrc (#1225)
+- Add repo-baseline core spec and slice contract (#1224)
+- Settle the shell slice's tooling and gate its .shellcheckrc (#1228)
+- Add the repo-baseline Python slice (#1231)
+- Add repo-baseline scaffold templates and renderer (#1248)
+- Cache verified tool downloads in the rendered GitLab CI (#1252)
+
+### Fixed
+
+- Stop gate-watch reporting a busy golem as idle (#1232)
+- Add a finish verb to golem-work.sh, refused-free in golem worktrees (#1237)
+- Keep git commands out of golem-work register descriptions (#1242)
+- Bundle a bounded, worktree-safe CI-wait loop (#1245)
+- Record the refused isolated-session shapes and respell the suite capture (#1251)
+
+### Miscellaneous
+
+- Bump containers submodule to v4.21.0 (#1207)
+- Allowlist slash-joined prose in gitleaks config (#1227)
+
 ## [0.17.0] - 2026-10-08
 
 ### Added
@@ -1072,6 +1096,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Relocate skill/agent quality gates + fixtures (#12)
 
+[0.18.0]: https://github.com/joshjhall/librarian/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/joshjhall/librarian/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/joshjhall/librarian/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/joshjhall/librarian/compare/v0.14.0...v0.15.0
