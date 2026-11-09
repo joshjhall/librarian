@@ -26,9 +26,8 @@
 
 ## Scanners & pre-scan tools
 
-- [#471/#472 agnix config trust](issue-471-472-agnix-config-trust.md) — never read the audited repo's config; `--config` is GLOBAL
 - [#470 agnix dedup hardening](issue-470-agnix-dedup-hardening.md) — severity→certainty sent EVERY row down the HIGH fast path
-- [#399 agnix SARIF CI gate](issue-399-agnix-sarif-ci.md) — separate workflow; validate `jq -e .runs` before upload
+- [`|| true` on a findings exit hides a crash](or-true-on-findings-exit-hides-a-crash.md) — tolerate the status, VALIDATE the artifact (`-s` + `jq -e .runs`), warn on empty
 - [#402 precedence dedup](issue-402-precedence-dedup.md) — match PER UNDERLYING ISSUE, not line/category
 - [#435 check-lifecycle scanner](issue-435-check-lifecycle.md) — how to add a check-* domain; MEDIUM-certainty pre-scan
 - [check-docs-staleness colon parity](check-docs-staleness-ifs-colon-parity.md) — a shim cloned the bug into 7 ports, so parity was green on wrong output
@@ -37,7 +36,6 @@
 - [pre-review-gates needs filelist](pre-review-gates-needs-filelist.md) — takes changed files as positional args; bare call errors
 - [pre-review-gates project root](pre-review-gates-project-root.md) — resolves via git rev-parse; tests need a GIT_*-scrubbed sandbox
 - [Prescan bash↔python equivalence](prescan-bash-python-equivalence.md) — truncation is CHARACTER-based; a non-UTF-8 locale fakes a divergence
-- [#503 large-file decompose](issue-503-large-file-decompose.md) — file-length is a Pass-2 LLM lens; workflow.js can't split (#90/#91)
 
 ## Coverage
 
@@ -53,6 +51,6 @@
 - [Deprecated autonomy flags removed](deprecated-autonomy-flags-removed.md) — `--level N` is the sole dial; resolver EMITS plan_gated/perm_mode
 - [Autonomy vs plan-gate flags](autonomy-vs-plangate-flags.md) — orthogonal; 3 unrelated `--auto` spellings never to rename
 - [Read issue comments not just body](next-issue-read-issue-comments.md) — `--json body` omits comments; a comment can INVERT the plan, not just extend it (#467)
-- [#400 cross-repo coordination](issue-400-cross-repo-coordination.md) — real fix owned by containers#769; Closes-vs-unmet-AC catch
+- [Check what already shipped before scoping](check-what-already-shipped-before-scoping.md) — map each named mode to merged code first; #446 closed with no PR
 - [Workflow args must be a JSON object](workflow-args-must-be-json-object.md) — a stringified args silently mislabels the cycle and drops the diff
 - [Convergence needs every --prev-result](review-convergence-needs-prev-results.md) — omit them and all findings score novel; repeatable by design

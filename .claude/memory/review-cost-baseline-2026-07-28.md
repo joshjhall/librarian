@@ -3,8 +3,6 @@ name: review-cost-baseline-2026-07-28
 description: "BASELINE: measured ship-issue review cost before the #553/#550/#551 changes — per-cycle and per-dimension, for before/after comparison"
 type: project
 status: stable
-stale_after: 2026-10-31
-stale_check: "a frozen measurement, valid only as the BEFORE half of the #553/#550/#551 comparison — do not read as current cost"
 metadata:
   node_type: memory
   originSessionId: b03da476-855a-4340-a1de-499a566aea26

@@ -59,4 +59,4 @@ Both new test families were **revert-verified** to fail without the fix
 ([[issue-392-token-signal-coverage]]'s tautology lesson).
 `checker.md` hit 631 lines (over `AGENT_HIGH=400`) — recorded on #503 rather
 than extracted here, since that would move the prose under review out from
-under its own assertions. See [[issue-503-large-file-decompose]].
+under its own assertions. See #503 (closed).

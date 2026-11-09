@@ -3,8 +3,6 @@ name: review-cost-after-2026-07-28
 description: "AFTER measurement for #559 — review harness cost/recall once #553/#556/#557 shipped in v0.8.2; per-cycle output fell 5-31x, recall unproven at n=2"
 type: project
 status: stable
-stale_after: 2026-10-31
-stale_check: "a frozen measurement at v0.8.2; recall was unproven at n=2 — re-measure before citing as current cost"
 metadata:
   node_type: memory
   originSessionId: ea401363-2ee0-40ee-95f3-eac14055d50b

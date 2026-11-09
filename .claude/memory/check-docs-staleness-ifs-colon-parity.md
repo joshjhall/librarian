@@ -98,4 +98,4 @@ that should have caught it was neutralized by a shim.
 behavior, ask whether both sides could be wrong together — if a helper exists
 whose job is to make impl B match impl A's quirk, the gate is measuring
 agreement, not correctness. Pin the output value, not just the delta. Related:
-[[codebase-audit-prescan-location]], [[issue-471-472-agnix-config-trust]].
+[[codebase-audit-prescan-location]], [[stub-built-around-the-bug-only-confirms-it]].

@@ -488,7 +488,10 @@ test_permissive_conformance() {
     # test_memory_missing_why, where a missing **Why:** is the point.
     command printf -- '---\ntype: reference\nstale_after: 2026-10-31\nstale_check: "what specifically rots"\nwholly_invented_key: 42\n---\n\nBody.\n' >"$b/ext.md"
     list="$(make_list "$b/../../../l" "$b/ext.md")"
-    assert_no_rows "$list" "okf: unrecognized extra keys incl. a stale_check extension are conformant"
+    # OKF_TODAY pinned BEFORE stale_after: unpinned, this case read the real
+    # clock and began firing memory-stale on 2026-10-31 — a staleness row in a
+    # case about extra keys. Staleness itself is pinned by test_memory_stale.
+    OKF_TODAY=2026-01-01 assert_no_rows "$list" "okf: unrecognized extra keys incl. a stale_check extension are conformant"
 
     # §11/§12: a bundle-root index.md with NO okf_version is fine — declaring one
     # is optional.

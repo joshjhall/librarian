@@ -49,7 +49,6 @@ human gate) live in the root [MEMORY.md](MEMORY.md).
 
 ## Status/liveness — shipped work (all issues CLOSED; reference only)
 
-- [#446 BLOCKED reliability](issue-446-golem-status-reliability.md) — 2 of 4 modes covered; #446 still open
 - [#248 transcript liveness](issue-248-transcript-liveness.md) — reads last assistant stop_reason; `working` needs an mtime gate
 - [#447 turn-end pane push](issue-447-turn-end-pane-push.md) — two-poll debounce; state in `$(...)` is discarded
 - [#283 checkpoint table](issue-283-checkpoint-table.md) — DURABLE FIX = run-all.sh unsets GIT_DIR at entry
