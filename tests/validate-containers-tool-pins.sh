@@ -47,7 +47,7 @@ make_case() {
     local T="$_sp/plugins/dev-core/skills/repo-baseline/templates"
     command mkdir -p "$T/core" "$T/shell" "$T/python"
     command printf '%b' "$core" >"$T/core/tools.versions"
-    command printf '# shell slice\n' >"$T/shell/tools.versions"
+    command printf '# shell slice\nshfmt=3.14.1\n' >"$T/shell/tools.versions"
     command printf 'required-version = "==%s"\n' "$uv" >"$T/python/uv.toml.tmpl"
     command printf 'required-version = "==%s"\n' "$ruff" >"$T/python/ruff.toml.tmpl"
     g -C "$_sp" add -A

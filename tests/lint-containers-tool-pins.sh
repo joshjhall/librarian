@@ -93,7 +93,9 @@ for t in ruff uv; do
         exit 1
     fi
 done
-if [ "$(command awk 'END { print NR }' "$WORK/template")" -le 2 ]; then
+# Count CORE pins directly — the template list also carries shell pins and
+# ruff/uv, so a total-row threshold could be met with an empty core file.
+if [ "$(command awk -F= '/^[a-z]/ { n++ } END { print n + 0 }' "$T/core/tools.versions")" -eq 0 ]; then
     command printf 'lint-containers-tool-pins: parsed no tools.versions pins under %s — the format no longer matches\n' "$T" >&2
     exit 1
 fi
