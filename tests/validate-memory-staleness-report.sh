@@ -162,6 +162,35 @@ test_unrunnable_scan_exits_two() {
     assert_equals "1" "$RC" "a negative window is a usage error"
 }
 
+# The scheduled job's real output is the step summary — a reporter that printed
+# to stdout but wrote nothing there would look healthy in every local run.
+test_step_summary_mirrors_stdout() {
+    local b sum
+    make_bundle b
+    memory "$b" old 'stale_after: 2026-10-31\n'
+    sum="$WORKDIR/summary.md"
+    : >"$sum"
+    RC=0
+    OUT="$(GITHUB_STEP_SUMMARY="$sum" OKF_TODAY=2026-11-09 OKF_BUNDLE_ROOT="$b" \
+        bash "$REPORT" 2>/dev/null)" || RC=$?
+    assert_equals "$OUT" "$(command cat "$sum")" "the step summary carries exactly what stdout printed"
+    assert_contains "$(command cat "$sum")" "old.md" "including the finding"
+}
+
+# In a git bundle only TRACKED memories count — gitignored per-session scratch
+# is not repo content, matching validate-okf-bundle.sh's scope.
+test_untracked_memory_is_out_of_scope() {
+    local b
+    make_bundle b
+    memory "$b" tracked 'stale_after: 2026-10-31\n'
+    /usr/bin/env -uGIT_DIR -uGIT_WORK_TREE -uGIT_INDEX_FILE git -C "$b" init -q
+    /usr/bin/env -uGIT_DIR -uGIT_WORK_TREE -uGIT_INDEX_FILE git -C "$b" add MEMORY.md tracked.md
+    memory "$b" scratch 'stale_after: 2026-10-31\n'
+    run_report "$b" 2026-11-09
+    assert_contains "$OUT" "tracked.md" "a tracked expired memory is reported"
+    assert_not_contains "$OUT" "scratch.md" "an untracked one is not"
+}
+
 # THE ROOT-CAUSE PIN. Without this case the clock pin in validate-okf-bundle.sh
 # could be deleted and every other assertion here would stay green.
 test_commit_time_gate_ignores_the_clock() {
@@ -197,6 +226,8 @@ run_test test_window_crosses_a_leap_day "pure-bash date math counts Feb 29"
 run_test test_deprecated_is_left_to_the_gate "status: deprecated is the gate's, not the reporter's"
 run_test test_stale_check_text_is_never_printed "no memory content reaches the CI log"
 run_test test_unrunnable_scan_exits_two "an unrunnable scan exits 2, never 0"
+run_test test_step_summary_mirrors_stdout "GITHUB_STEP_SUMMARY mirrors stdout"
+run_test test_untracked_memory_is_out_of_scope "git bundle: untracked memories are out of scope"
 run_test test_commit_time_gate_ignores_the_clock "validate-okf-bundle.sh's verdict is clock-free by default"
 
 generate_report

@@ -168,11 +168,16 @@ scan_at() {
         command sed 's/^/  /' "$WORKDIR/err" >&2
         fail2 "scanner failed (exit $rc) at OKF_TODAY=$1"
     fi
+    # FILTER TO THE FILE LIST: the scanner's whole-bundle pass enumerates the
+    # bundle ROOT (os.listdir), not the list it was handed, so an untracked
+    # scratch memory still yields a memory-stale row. Keep only listed paths so
+    # "tracked files only" is enforced here rather than merely asserted.
     command awk -F'\t' '
-        $3 == "memory-stale" && index($4, "past its stale_after date (") {
+        NR == FNR { listed[$0] = 1; next }
+        ($1 in listed) && $3 == "memory-stale" && index($4, "past its stale_after date (") {
             d = substr($4, index($4, "date (") + 6, 10)
             print $1 "\t" d
-        }' "$WORKDIR/raw" | command sort -u >"$2"
+        }' "$WORKDIR/files" "$WORKDIR/raw" | command sort -u >"$2"
 }
 
 # The scanner's comparison is strict (`stale_after < today`), so a memory dated
