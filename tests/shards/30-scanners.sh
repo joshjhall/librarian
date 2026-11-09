@@ -206,6 +206,10 @@ run_stage "Shared workflow.js prelude sync" bash "$SCRIPT_DIR/validate-prelude-s
 run_stage "Markdown lint (.claude/memory/)" bash "$SCRIPT_DIR/lint-markdown.sh"
 run_stage "OKF bundle conformance + health (.claude/memory/)" bash "$SCRIPT_DIR/validate-okf-bundle.sh"
 run_stage "OKF bundle gate behavior" bash "$SCRIPT_DIR/validate-okf-bundle-gate.sh"
+# The TIME-driven half (memory stale_after). The gate above pins its date so a
+# tree's verdict never changes overnight; real-date staleness is reported weekly
+# by .github/workflows/memory-staleness.yml, and only its BEHAVIOR is gated here.
+run_stage "Memory staleness reporter + clock-free OKF gate" bash "$SCRIPT_DIR/validate-memory-staleness-report.sh"
 run_stage "Memory baseline pre-commit guard" bash "$SCRIPT_DIR/validate-check-memory-baselines.sh"
 
 # --- Balance-motivated arrivals (#964) --------------------------------------

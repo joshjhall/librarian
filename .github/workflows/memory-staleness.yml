@@ -1,0 +1,52 @@
+name: memory staleness
+
+# The TIME-driven half of the OKF memory-bundle check. tests/validate-okf-bundle.sh
+# (pre-commit, pre-push, CI) pins its date so its verdict is a function of the
+# tree alone; date-driven `memory-stale` is reported here instead. Before that
+# split, seven memories passing `stale_after: 2026-10-31` turned the 30-scanners
+# shard red for every branch on the same day, an unrelated dependabot action bump
+# included.
+#
+# This job looks AHEAD (bin/memory-staleness-report.sh --window 30), so a memory
+# is named weeks before it expires, and it goes red while anything is expired or
+# expiring — a red scheduled run plus a step summary, the same posture as
+# label-vocab-reconcile.yml. ALL LOGIC LIVES IN THE SCRIPT so
+# tests/validate-memory-staleness-report.sh can execute it against fixtures.
+#
+# NOT A MERGE GATE: not in ci.yml's merge-gate aggregation, not a run-all.sh
+# stage, and it cannot red a PR.
+
+on:
+  schedule:
+    # 06:41 UTC Mondays: weekly, off the hour, after label-vocab-reconcile (06:23).
+    # A 30-day window on a 7-day cadence names each memory on ~4 runs before it
+    # expires.
+    - cron: "41 6 * * 1"
+  # The schedule fires only on the default branch; this is the way to run it
+  # from a branch or re-check after a refresh.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Schedules coalesce; a dispatch someone is waiting on is never cancelled (see
+# label-vocab-reconcile.yml for the full reasoning).
+concurrency:
+  group: memory-staleness-${{ github.event_name }}
+  cancel-in-progress: ${{ github.event_name == 'schedule' }}
+
+jobs:
+  report:
+    name: memory stale_after (expired + next 30 days)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # Forks inherit the schedule; the bundle is ours to curate, not theirs.
+    if: github.repository == 'joshjhall/librarian'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Report expired and expiring memories
+        run: bash bin/memory-staleness-report.sh --window 30

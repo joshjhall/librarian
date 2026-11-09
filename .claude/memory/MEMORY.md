@@ -142,11 +142,14 @@ frontmatter keys (OKF, see #631). Top-level, like `type:` and for the same
 
 ```yaml
 status: stable          # draft | stable | deprecated
-stale_after: 2026-10-31 # stale once today >= this date
+stale_after: 2026-10-31 # stale from the day AFTER this date
 stale_check: "what specifically rots, and how to re-derive it"
 ```
 
 `stale_check` matters more than the date: it names the sentence to re-verify, so
-a stale memory gets that one line refreshed instead of being distrusted whole. A
+a stale memory gets that one line refreshed instead of being distrusted whole. Expiry
+never reds a commit: the pre-commit/CI gate pins its date, and the weekly
+`memory-staleness` workflow names memories expired **or expiring within 30 days**
+(`bin/memory-staleness-report.sh` locally). A
 durable lesson needs none of this — being old is not being wrong. Prefer writing
 the fact so it cannot rot at all (say how to look the version up, don't paste it).
