@@ -284,8 +284,14 @@ changing it, re-verify with `claude plugin details <name>@librarian` showing
   still spawning subagents, which takes the cost of both and the benefit of
   neither. Also honor the narrowing: after cycle 1, review the **fix delta**
   (#492), not the full diff.
-- **The `containers` submodule is pinned** (`update = none`). It exists only to
-  build the devcontainer (`build.context: ../containers`). Bump it deliberately.
+- **The `containers` submodule is pinned** (`update = none`). It builds the
+  devcontainer (`build.context: ../containers`), and its `<TOOL>_VERSION`
+  defaults are the reference for the `repo-baseline` template tool pins: a
+  shared tool must carry the **same** version in both, or the image's tool fails
+  the rendered repo's version gate in every pre-push.
+  `tests/lint-containers-tool-pins.sh` enforces it against the exact recorded
+  submodule commit (77 in CI, which has no submodule). Bump the submodule
+  deliberately, and move the template pins with it in the same PR.
 - **A gitleaks hit on prose is a false positive with a sanctioned fix** (#872).
   The pre-commit `gitleaks protect --staged` auto-discovers the root
   `.gitleaks.toml`, which extends the stock rules with **one** allowlist:

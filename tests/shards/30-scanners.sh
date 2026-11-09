@@ -60,6 +60,10 @@ run_stage "status/pr-pending label lifecycle" bash "$SCRIPT_DIR/validate-label-l
 run_stage "Pre-scan empty/missing-input robustness" bash "$SCRIPT_DIR/validate-prescans.sh"
 run_stage "repo-baseline slice contract conformance" bash "$SCRIPT_DIR/validate-repo-baseline-slices.sh"
 run_stage "repo-baseline scaffold templates" bash "$SCRIPT_DIR/validate-repo-baseline-templates.sh"
+# The template tool pins must agree with the containers build at the pinned
+# submodule commit, or the devcontainer's tools fail the rendered repo's own
+# version gates (AC1 above, in pre-push). 77 where the submodule is absent (CI).
+run_stage "repo-baseline pins agree with the containers build" bash "$SCRIPT_DIR/lint-containers-tool-pins.sh"
 run_stage "pre-review-gates scan categories + skip policy" bash "$SCRIPT_DIR/validate-pre-review-gates.sh"
 run_stage "review-lens sizing scanner (growth-aware)" bash "$SCRIPT_DIR/validate-sizing-scanner.sh"
 run_stage "plan-lens sizing scanner (projection-aware)" bash "$SCRIPT_DIR/validate-plan-lens.sh"
