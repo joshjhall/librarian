@@ -9,6 +9,7 @@
 #   containers pins a tool twice    -> 1   (the image's version is undefined)
 #   containers lib/ parses 0 pins   -> 1   (the floor, not a vacuous pass)
 #   template parses 0 core pins     -> 1   (the template-side floor)
+#   ruff/uv pin unparseable         -> 1   (the python-pin floor)
 #   no tool matches (mapping broke) -> 1   (everything "unpinned" must not pass)
 #   recorded commit not available   -> 77, never 0
 
@@ -104,6 +105,7 @@ test_unparseable_containers_lib_fails() {
     make_case sp 'export UV=0.13.7\n' "$CORE_OK"
     run_gate "$sp"
     assert_equals "1" "$RC" "0 parsed containers pins fails rather than comparing nothing"
+    assert_contains "$OUT" "parsed 0 version defaults" "and it is the containers floor that fired"
 }
 
 test_empty_template_fails() {
@@ -117,11 +119,23 @@ test_empty_template_fails() {
     assert_contains "$OUT" "parsed no tools.versions pins" "and it is the template floor that fired"
 }
 
+test_unparseable_python_pin_fails() {
+    local sp
+    make_case sp "$LIB_OK" "$CORE_OK"
+    # Break ruff's line in the fixture so it no longer matches the parser.
+    command printf 'required-version="0.17.4"\n' \
+        >"$sp/plugins/dev-core/skills/repo-baseline/templates/python/ruff.toml.tmpl"
+    run_gate "$sp" 0
+    assert_equals "1" "$RC" "an unparseable ruff required-version fails rather than being skipped"
+    assert_contains "$OUT" "no ruff required-version parsed" "and it is the python-pin floor that fired"
+}
+
 test_no_shared_tools_fails() {
     local sp
     make_case sp 'OTHER_VERSION="${OTHER_VERSION:-1.0.0}"\n' 'typos=1.52.0\njust=1.59.0\n' 0.13.7
     run_gate "$sp" 2
     assert_equals "1" "$RC" "everything 'not pinned by containers' must not pass as agreement"
+    assert_contains "$OUT" "matched a containers pin (got 0)" "and it is the shared-count floor that fired"
 }
 
 test_absent_commit_skips_with_77() {
@@ -150,6 +164,7 @@ run_test test_python_pin_drift_fails "python required-version drift -> 1"
 run_test test_duplicate_containers_default_fails "duplicate containers default -> 1"
 run_test test_unparseable_containers_lib_fails "0 containers pins -> 1"
 run_test test_empty_template_fails "0 template pins -> 1"
+run_test test_unparseable_python_pin_fails "unparseable python pin -> 1"
 run_test test_no_shared_tools_fails "no tool matched -> 1"
 run_test test_absent_commit_skips_with_77 "absent submodule commit -> 77"
 run_test test_live_tree_is_aligned_or_skips "live tree aligned or skipped"

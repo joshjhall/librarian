@@ -28,6 +28,8 @@
 #
 # Offline by construction: reads only local git objects, never the network.
 # bash-3.2 / BSD clean per CLAUDE.md § Runtime policy.
+# NOTE: tests/lib/harness.sh (sourced below) enables `set -e` as well, so every
+# expected non-zero status in this file must be absorbed explicitly.
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -59,9 +61,13 @@ fi
 WORK="$(command mktemp -d)" || exit 2
 trap 'command rm -rf "$WORK"' EXIT
 
-command git -C "$SUB" grep -h -E \
+# `git grep` exits 1 on NO match, and tests/lib/harness.sh (sourced above)
+# turns on `set -e` + pipefail — so a zero-match grep would abort this script
+# silently, before the floor below could say why. Tolerate exactly that status;
+# a real git error (2+) still aborts loudly.
+{ command git -C "$SUB" grep -h -E \
     '^[[:space:]]*[A-Z0-9_]+_VERSION="\$\{[A-Z0-9_]+_VERSION:-[^}]+\}"' \
-    "$PIN" -- 'lib/' 2>/dev/null |
+    "$PIN" -- 'lib/' 2>/dev/null || [ "$?" -eq 1 ]; } |
     command sed -E 's/^[[:space:]]*([A-Z0-9_]+)_VERSION="\$\{[A-Z0-9_]+_VERSION:-([^}]+)\}".*/\1 \2/' |
     command sort -u >"$WORK/containers"
 
