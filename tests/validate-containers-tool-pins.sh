@@ -120,14 +120,27 @@ test_empty_template_fails() {
 }
 
 test_unparseable_python_pin_fails() {
+    local sp t
+    # BOTH halves of the python-pin floor: a deleted or typo'd uv arm must fail
+    # just as surely as a ruff one.
+    for t in ruff uv; do
+        make_case sp "$LIB_OK" "$CORE_OK"
+        command printf 'required-version="0.0.0"\n' \
+            >"$sp/plugins/dev-core/skills/repo-baseline/templates/python/$t.toml.tmpl"
+        run_gate "$sp" 0
+        assert_equals "1" "$RC" "an unparseable $t required-version fails rather than being skipped"
+        assert_contains "$OUT" "no $t required-version parsed" "and it is the $t floor that fired"
+    done
+}
+
+# ruff is "not pinned by containers" in the real tree, so a fixture that never
+# pins RUFF_VERSION would leave ruff drift unexercised forever.
+test_ruff_drift_fails_when_containers_pins_it() {
     local sp
-    make_case sp "$LIB_OK" "$CORE_OK"
-    # Break ruff's line in the fixture so it no longer matches the parser.
-    command printf 'required-version="0.17.4"\n' \
-        >"$sp/plugins/dev-core/skills/repo-baseline/templates/python/ruff.toml.tmpl"
-    run_gate "$sp" 0
-    assert_equals "1" "$RC" "an unparseable ruff required-version fails rather than being skipped"
-    assert_contains "$OUT" "no ruff required-version parsed" "and it is the python-pin floor that fired"
+    make_case sp "${LIB_OK}RUFF_VERSION=\"\${RUFF_VERSION:-0.16.10}\"\n" "$CORE_OK"
+    run_gate "$sp"
+    assert_equals "1" "$RC" "ruff drift fails once containers pins ruff"
+    assert_contains "$OUT" "ruff: template 0.17.4" "naming the template value"
 }
 
 test_no_shared_tools_fails() {
@@ -164,7 +177,8 @@ run_test test_python_pin_drift_fails "python required-version drift -> 1"
 run_test test_duplicate_containers_default_fails "duplicate containers default -> 1"
 run_test test_unparseable_containers_lib_fails "0 containers pins -> 1"
 run_test test_empty_template_fails "0 template pins -> 1"
-run_test test_unparseable_python_pin_fails "unparseable python pin -> 1"
+run_test test_unparseable_python_pin_fails "unparseable ruff or uv pin -> 1"
+run_test test_ruff_drift_fails_when_containers_pins_it "ruff drift -> 1"
 run_test test_no_shared_tools_fails "no tool matched -> 1"
 run_test test_absent_commit_skips_with_77 "absent submodule commit -> 77"
 run_test test_live_tree_is_aligned_or_skips "live tree aligned or skipped"
