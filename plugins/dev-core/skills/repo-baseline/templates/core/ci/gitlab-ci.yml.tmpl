@@ -5,7 +5,7 @@ stages: [lint, test, security]
 
 default:
   # Pinned tag, never :latest. Debian-based so bin/install-tools.sh has bash.
-  image: debian:trixie-20261005-slim
+  image: debian:trixie-20261104-slim
   # Tool downloads, kept across jobs and pipelines. GitLab caches only paths
   # inside the project dir, so this is not ~/.local/bin. The key is a hash of
   # both pin files, so any pin bump starts a fresh cache, and

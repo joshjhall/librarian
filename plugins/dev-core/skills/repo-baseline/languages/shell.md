@@ -27,7 +27,7 @@ to run the scripts without it.
 `.shellcheckrc` — required.
 
 ```ini
-# No severity key: .shellcheckrc cannot carry one (shellcheck 0.10.0 silently
+# No severity key: .shellcheckrc cannot carry one (shellcheck 0.10.0 and 0.11.0 silently
 # ignores `severity=`), so the floor is --severity=warning on every command line.
 
 shell=bash
@@ -98,7 +98,7 @@ GitLab CI — `lint` stage:
 ```yaml
 shell-lint:
   stage: lint
-  image: koalaman/shellcheck-alpine:v0.10.0 # pinned tag, never :latest
+  image: koalaman/shellcheck-alpine:v0.11.0 # pinned tag, never :latest
   script:
     - apk add --no-cache bash
     - bash tests/lint-shellcheck.sh
