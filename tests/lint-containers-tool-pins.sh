@@ -83,6 +83,21 @@ fi
     done
 } >"$WORK/template"
 
+# The same floor on the template side. A format change (an uppercase key, a
+# leading space, a renamed required-version line) yields zero template rows, and
+# a zero-row comparison passes with no drift — a green gate over nothing. Both
+# python pins are required, and the core list must be non-empty.
+for t in ruff uv; do
+    if ! command awk -v k="$t" '$1 == k { f = 1 } END { exit !f }' "$WORK/template"; then
+        command printf 'lint-containers-tool-pins: no %s required-version parsed from %s/python/%s.toml.tmpl\n' "$t" "$T" "$t" >&2
+        exit 1
+    fi
+done
+if [ "$(command awk 'END { print NR }' "$WORK/template")" -le 2 ]; then
+    command printf 'lint-containers-tool-pins: parsed no tools.versions pins under %s — the format no longer matches\n' "$T" >&2
+    exit 1
+fi
+
 test_containers_pins_are_unambiguous() {
     local dup
     dup="$(command awk '{ print $1 }' "$WORK/containers" | command uniq -d)"
@@ -107,7 +122,23 @@ test_template_pins_match_containers() {
         "every template tool pin matches the containers build at the pinned submodule commit"
 }
 
+# "Not pinned by containers" is allowed per tool, so a broken name mapping would
+# route EVERY tool there and pass with no drift. Require a floor of tools that
+# actually matched a containers pin — today 11 of 14; MIN_SHARED is well below.
+MIN_SHARED="${CONTAINERS_PINS_MIN_SHARED:-5}"
+test_enough_tools_were_compared() {
+    local tool ver upper shared=0
+    while read -r tool ver; do
+        upper="$(command printf '%s' "$tool" | command tr '[:lower:]-' '[:upper:]_')"
+        command awk -v k="$upper" '$1 == k { f = 1 } END { exit !f }' "$WORK/containers" &&
+            shared=$((shared + 1))
+    done <"$WORK/template"
+    assert_true "[ $shared -ge $MIN_SHARED ]" \
+        "at least $MIN_SHARED template tools matched a containers pin (got $shared) — fewer means the mapping broke, not that the pin sets diverged"
+}
+
 run_test test_containers_pins_are_unambiguous "containers pins each shared tool once"
 run_test test_template_pins_match_containers "template pins match containers@pin"
+run_test test_enough_tools_were_compared "enough tools were actually compared"
 
 generate_report

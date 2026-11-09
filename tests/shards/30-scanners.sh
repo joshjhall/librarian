@@ -62,8 +62,10 @@ run_stage "repo-baseline slice contract conformance" bash "$SCRIPT_DIR/validate-
 run_stage "repo-baseline scaffold templates" bash "$SCRIPT_DIR/validate-repo-baseline-templates.sh"
 # The template tool pins must agree with the containers build at the pinned
 # submodule commit, or the devcontainer's tools fail the rendered repo's own
-# version gates (AC1 above, in pre-push). 77 where the submodule is absent (CI).
+# version gates (the rendered-repo hooks case in the stage above, in pre-push).
+# 77 where the submodule is absent (CI).
 run_stage "repo-baseline pins agree with the containers build" bash "$SCRIPT_DIR/lint-containers-tool-pins.sh"
+run_stage "containers tool-pin gate behavior" bash "$SCRIPT_DIR/validate-containers-tool-pins.sh"
 run_stage "pre-review-gates scan categories + skip policy" bash "$SCRIPT_DIR/validate-pre-review-gates.sh"
 run_stage "review-lens sizing scanner (growth-aware)" bash "$SCRIPT_DIR/validate-sizing-scanner.sh"
 run_stage "plan-lens sizing scanner (projection-aware)" bash "$SCRIPT_DIR/validate-plan-lens.sh"
