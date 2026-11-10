@@ -12,9 +12,9 @@ validated on two script repos (ruff + pytest-via-uv, green in hooks and CI).
 
 | Tool   | Purpose                  | Pinned version | Single source / accessor                               | Class    |
 | ------ | ------------------------ | -------------- | ------------------------------------------------------ | -------- |
-| ruff   | lint + format (auto-fix) | 0.16.10        | `ruff.toml` `required-version` / `bin/ruff-version.sh` | optional |
-| uv     | runs pytest with no venv | 0.12.23        | `uv.toml` `required-version`                           | optional |
-| pytest | test framework           | 9.1.1          | `tests/requirements.txt`                               | optional |
+| ruff   | lint + format (auto-fix) | 0.17.4         | `ruff.toml` `required-version` / `bin/ruff-version.sh` | optional |
+| uv     | runs pytest with no venv | 0.13.7         | `uv.toml` `required-version`                           | optional |
+| pytest | test framework           | 9.2.0          | `tests/requirements.txt`                               | optional |
 | python | runtime                  | 3.11 (floor)   | `.python-version`                                      | required |
 
 ruff and uv both **refuse to run** when the binary disagrees with their
@@ -33,7 +33,7 @@ tests run on the floor, not on whatever is newest), and `ruff.toml`'s
 
 ```toml
 # Must stay TOP-LEVEL — under [format] ruff rejects it as an unknown field.
-required-version = "==0.16.10"
+required-version = "==0.17.4"
 
 # per-repo: the oldest Python the scripts run on; must match .python-version.
 target-version = "py311"
@@ -59,7 +59,7 @@ librarian's `bin/ruff-version.sh` verbatim.
 `uv.toml` — required.
 
 ```toml
-required-version = "==0.12.23"
+required-version = "==0.13.7"
 ```
 
 `.python-version` — required.
@@ -71,7 +71,7 @@ required-version = "==0.12.23"
 `tests/requirements.txt` — required.
 
 ```text
-pytest==9.1.1
+pytest==9.2.0
 ```
 
 `tests/conftest.py` — required in a script repo. Scripts keep their hyphenated,
@@ -242,14 +242,14 @@ GitLab CI — `lint` and `test` stages:
 ```yaml
 python-lint:
   stage: lint
-  image: ghcr.io/astral-sh/ruff:0.16.10-alpine # pinned tag, never :latest
+  image: ghcr.io/astral-sh/ruff:0.17.4-alpine # pinned tag, never :latest
   script:
     - ruff check .
     - ruff format --check .
 
 python-test:
   stage: test
-  image: ghcr.io/astral-sh/uv:0.12.23-trixie-slim # Debian: has bash
+  image: ghcr.io/astral-sh/uv:0.13.7-trixie-slim # Debian: has bash
   script:
     - bash tests/run.sh
 ```

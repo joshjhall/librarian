@@ -107,8 +107,9 @@ severity = "Warning"
 # (CC-AG-*, CC-SK-*, CC-HK-*, CC-MCP-*/MCP-*, CC-PL-*, non-bloat CC-MEM-*) stay
 # agnix-owned and must keep firing.
 #   CC-MEM-014 — CLAUDE.md exceeds line limit
-#   CC-MEM-009 — token count exceeded
-disabled_rules = ["CC-MEM-014", "CC-MEM-009"]
+#   (CC-MEM-009, token count, was retired in agnix 0.59.0 — its budget had
+#   no source — and agnix now warns if it is listed here.)
+disabled_rules = ["CC-MEM-014"]
 
 # ---------------------------------------------------------------------------
 # Per-file rule suppressions (issue #734)

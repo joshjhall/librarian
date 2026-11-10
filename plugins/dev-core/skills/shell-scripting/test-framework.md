@@ -51,7 +51,7 @@ both exemplars learned the hard way:
 ## Lint baseline
 
 - **shellcheck at `--severity=warning`, on the command line.** `.shellcheckrc`
-  cannot set severity: shellcheck 0.10.0 silently ignores a `severity=` key
+  cannot set severity: shellcheck 0.10.0 and 0.11.0 silently ignores a `severity=` key
   (`severity=error` still prints notes). Both exemplar repos carried
   `severity=info` in their rc files and enforced `warning` in every gate, so
   the "difference" #1212 set out to reconcile was one dead line in each.

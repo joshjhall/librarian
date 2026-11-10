@@ -1,7 +1,7 @@
 # ShellCheck configuration for librarian (bundled workflow scripts).
 # See https://github.com/koalaman/shellcheck/wiki/Directive for details.
 
-# No severity key: .shellcheckrc cannot set one. shellcheck (0.10.0) silently
+# No severity key: .shellcheckrc cannot set one. shellcheck (0.10.0, 0.11.0) silently
 # ignores a `severity=` line here — `severity=error` still prints notes — so the
 # floor lives on the command line, and every gate passes --severity=warning
 # (lefthook, tests/lint-shellcheck.sh, actionlint). This file used to say
