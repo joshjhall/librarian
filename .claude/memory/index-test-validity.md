@@ -34,6 +34,7 @@ evidence a fix works, and before reporting a mutation round's verdict.
 - [Prose contract anchored to prose](prose-contract-anchored-to-prose.md) — heading/sentence anchors block the extraction they should survive; use contract ids
 - [Side effect invisible to the assertion](side-effect-invisible-to-the-assertion.md) — a test corrupted the live golem feed while every stdout check passed; isolate, then probe for delta 0 (#782)
 - [Stale artifact makes the stub pass](stale-artifact-makes-the-stub-pass.md) — a leftover output file satisfied the check a no-output stub should have failed
+- [Stub built around the bug only confirms it](stub-built-around-the-bug-only-confirms-it.md) — a stub modeling the CURRENT call order passed `validate --config` the real agnix rejects; derive the contract from the real tool
 - [Collect-all assertions must not throw](collect-all-test-assertions-must-not-throw.md) — bare `.field` on a missing entry masks later assertions; use `?.`
 
 ## The test never ran at all

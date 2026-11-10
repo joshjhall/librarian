@@ -52,5 +52,5 @@ judgment the checker agent can make.
   wraps at ~80 cols and `assert_contains` matches literal substrings, so a phrase
   split across a line break fails the gate. Reword to keep asserted tokens intact.
 
-Related: [[issue-400-cross-repo-coordination]] (ADR-0001 spine),
+Related: [[umbrella-issue-closes-vs-contributes]] (cross-repo variant),
 [[check-ai-config-bloat-scan]], [[ship-review-diff-must-be-faithful]].

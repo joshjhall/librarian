@@ -116,6 +116,12 @@ but every fixture injects, because a staleness test pinned to the real clock
 stops testing what it claims the moment the date rolls past its fixture — the
 failure mode is a silent false pass, not a red test.
 
+A commit-time gate over a real bundle should pin `$OKF_TODAY` too, for the
+opposite reason: judged against the real date, a tree that passed yesterday fails
+today with no change. Report date-driven staleness on a schedule instead, with a
+look-ahead window — this repo's `bin/memory-staleness-report.sh` is the worked
+example. `status: deprecated` is a property of the file, so it stays in the gate.
+
 ## Bundle discovery
 
 The bundle root is resolved from the environment, not hardcoded:

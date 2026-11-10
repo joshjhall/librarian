@@ -101,6 +101,28 @@
 #
 #   OKF_BUNDLE_GATE_MODE=blocking tests/validate-okf-bundle.sh
 #   OKF_BUNDLE_ROOT=path/to/bundle tests/validate-okf-bundle.sh
+#
+# ---------------------------------------------------------------------------
+# THE VERDICT IS A FUNCTION OF THE TREE, NEVER OF THE CLOCK
+# ---------------------------------------------------------------------------
+#
+# Date-driven `memory-stale` is the one finding a commit cannot cause: a memory
+# with `stale_after: D` is clean on D-1 and a finding on D with no byte changed.
+# Judged against the real date, that turned this gate red on 2026-10-31 for
+# EVERY branch at once — a dependabot action bump included — and the failure
+# landed on whoever pushed next rather than on whoever owned the memory.
+#
+# So this gate pins $OKF_TODAY to OKF_GATE_EPOCH, which no real `stale_after`
+# precedes: date-driven staleness never fires here, and the same tree gets the
+# same verdict on any day. `status: deprecated` STILL fires — that one is a
+# property of the file, written by a commit, so it belongs to commit-time gates.
+#
+# Time-driven staleness is reported where time is the trigger:
+# bin/memory-staleness-report.sh, run weekly by
+# .github/workflows/memory-staleness.yml, which also looks AHEAD so a memory is
+# flagged before it expires rather than on the day. An explicit $OKF_TODAY still
+# wins, for a caller that genuinely wants a dated verdict.
+OKF_GATE_EPOCH=1970-01-01
 
 set -uo pipefail
 
@@ -293,7 +315,10 @@ fi
 # MEMORY_BUNDLE_ROOT (not OKF_BUNDLE_ROOT) so an operator's OKF_BUNDLE_ROOT
 # override, already folded into $BUNDLE_ROOT above, is not applied twice.
 scan_rc=0
-MEMORY_BUNDLE_ROOT="$BUNDLE_ROOT" command bash "$SCANNER" "$FILE_LIST" \
+# OKF_TODAY: the caller's if set, else the epoch — see "THE VERDICT IS A
+# FUNCTION OF THE TREE" in the header.
+OKF_TODAY="${OKF_TODAY:-$OKF_GATE_EPOCH}" \
+    MEMORY_BUNDLE_ROOT="$BUNDLE_ROOT" command bash "$SCANNER" "$FILE_LIST" \
     >"$SCAN_OUT" 2>"$SCAN_ERR" || scan_rc=$?
 
 # The scanner's own contract: a non-conformant BUNDLE is exit 0 with findings; a
