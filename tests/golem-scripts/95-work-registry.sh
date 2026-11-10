@@ -804,6 +804,53 @@ test_work_observer_ignores_ambient_golem_id() {
         "a --worktree read answers about the SUBJECT even when \$GOLEM_ID names another golem"
 }
 
+# --- the writer's identity ladder (work_default_golem) ----------------------
+#
+# Salvaged from #890's unlanded cycle-3 stash, re-measured against today's code:
+# deleting the GOLEM_ID rung, or making an underivable id fall through to a
+# default instead of failing, left this whole suite GREEN. Either defect files a
+# registration under the wrong golem, so liveness reads that golem as idle while
+# it is busy — #890's own false-idle shape, arriving with no test to stop it.
+# (The issue-N rung is covered by the writer/observer round trip above.)
+
+# GOLEM_ID (stamped by golem-launch.sh's `tmux -e`) outranks the path. Path says
+# 42, GOLEM_ID says 99: the writer must file under 99, and ONLY 99.
+test_work_writer_honors_golem_id_over_path() {
+    local sb wt
+    new_sandbox sb
+    wt="$(make_golem_worktree "$sb" 42)" || {
+        skip_test "git worktree add unavailable"
+        return 0
+    }
+    RUN_RC=0
+    RUN_OUT="$(cd "$wt" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" "${WORK_ID_SCRUB[@]/#/-u}" \
+            HOME="$sb" \
+            GOLEM_WORKTREE_DIR=.worktrees \
+            GOLEM_STATUS_DIR=.worktrees/.status \
+            GOLEM_ID=golem-99 \
+            "$REAL_BASH" "$WORK" register bash "env wins" 2>&1)" || RUN_RC=$?
+    assert_exit 0 "$RUN_RC" "register with GOLEM_ID set succeeds (got '$RUN_OUT')"
+    assert_true "[ -s '$sb/.worktrees/.status/golem-99.work.jsonl' ]" \
+        "the item lands under GOLEM_ID's golem-99"
+    assert_true "[ ! -e '$sb/.worktrees/.status/golem-42.work.jsonl' ]" \
+        "and NOT under the path-derived golem-42"
+}
+
+# No --golem, no GOLEM_ID/AGENT_ID, and a cwd whose repo root is neither
+# issue-* nor golem-*: refuse loudly rather than file under an id no liveness
+# read would ever match. The sandbox root is `sandbox.XXXXXX`, so every rung of
+# the ladder misses.
+test_work_underivable_golem_id_fails_loud() {
+    local sb
+    new_sandbox sb
+    run_work "$sb" register bash "nowhere"
+    assert_exit 2 "$RUN_RC" "an underivable golem id exits 2 (got '$RUN_OUT')"
+    assert_contains "$RUN_OUT" "cannot derive a golem id" "the error says what to pass"
+    assert_equals "" "$(command ls "$sb/.worktrees/.status" 2>/dev/null)" \
+        "and nothing was written under any id"
+}
+
 # --- input validation -------------------------------------------------------
 
 test_work_rejects_invalid_kind() {

@@ -651,6 +651,8 @@ run_fragment_test test_work_list_observer_flags "golem-work: list's observer fla
 run_fragment_test test_work_complete_rejects_malformed_id "golem-work: complete rejects a malformed / traversal / duplicate id (#949)"
 run_fragment_test test_work_list_rejects_positional_argument "golem-work: list rejects a stray positional argument (#949)"
 run_fragment_test test_work_compact_truncates_when_empty "golem-work: the registry FILE is truncated once nothing is open (#949)"
+run_fragment_test test_work_writer_honors_golem_id_over_path "golem-work: the writer files under GOLEM_ID, not the path-derived id (#890 salvage)"
+run_fragment_test test_work_underivable_golem_id_fails_loud "golem-work: an underivable golem id exits 2 and writes nothing (#890 salvage)"
 run_fragment_test test_work_status_dir_flag_and_precedence "golem-work: --status-dir works standalone and wins over --worktree (#949)"
 run_fragment_test test_scrape_and_status_zero_tokens "golem-token-scrape/status: an all-sidechain transcript is a real 0, not tokens unknown (#392)"
 run_fragment_test test_status_no_jq_skips_token_block "golem-status: no jq on PATH skips the TOP-LEVEL TOKENS block, still exits 0 (#392)"
