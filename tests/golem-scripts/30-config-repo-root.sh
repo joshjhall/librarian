@@ -233,9 +233,12 @@ _assert_config_injection_scrubbed() {
     # (a) Bare git under the taint reads the INJECTED value — proves the vector is
     # live and reaches this repo (guards against a test that passes vacuously). The
     # bare git's own exit code is irrelevant here; only the value it reads matters.
+    # Unset BASH_ENV in both probes: on a devcontainer, /etc/bash_env sources
+    # /etc/bashrc.d/*, and a credential provider there (drumknott) re-exports its
+    # own GIT_CONFIG_COUNT/KEY_0=user.name, clobbering the taint before git runs.
     local bare
     bare="$(cd "$sb" &&
-        /usr/bin/env "$@" "$REAL_BASH" -c 'git config --get user.name' 2>&1)" || true
+        /usr/bin/env -uBASH_ENV "$@" "$REAL_BASH" -c 'git config --get user.name' 2>&1)" || true
     assert_equals "INJECTED" "$bare" \
         "$label: bare git honors the injected user.name (the taint is real)"
 
@@ -243,7 +246,7 @@ _assert_config_injection_scrubbed() {
     # the injection. This FAILS (reads INJECTED) if the scrub is dropped.
     local scrubbed rc_b=0
     scrubbed="$(cd "$sb" &&
-        /usr/bin/env "$@" "$REAL_BASH" -c '. "$1"; _repo_root_git config --get user.name' \
+        /usr/bin/env -uBASH_ENV "$@" "$REAL_BASH" -c '. "$1"; _repo_root_git config --get user.name' \
             _ "$CONFIG" 2>&1)" || rc_b=$?
     assert_exit 0 "$rc_b" "$label: _repo_root_git config exits 0 despite the taint"
     assert_equals "REALNAME" "$scrubbed" \
