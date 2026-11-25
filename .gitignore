@@ -126,3 +126,7 @@ coverage/
 # one subdirectory rather than a bare `tools/`, so a future tool the repo
 # genuinely wants tracked is not silently swallowed by the ignore.
 tools/api-capture/
+
+# Local-only devcontainer wiring (e.g. drumknott: `dk container-mount <profile>`).
+# Machine-specific paths; never committed.
+.devcontainer/docker-compose.override.yml
