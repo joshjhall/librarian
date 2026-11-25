@@ -13,7 +13,7 @@ validated on two script repos (ruff + pytest-via-uv, green in hooks and CI).
 | Tool   | Purpose                  | Pinned version | Single source / accessor                               | Class    |
 | ------ | ------------------------ | -------------- | ------------------------------------------------------ | -------- |
 | ruff   | lint + format (auto-fix) | 0.17.4         | `ruff.toml` `required-version` / `bin/ruff-version.sh` | optional |
-| uv     | runs pytest with no venv | 0.13.7         | `uv.toml` `required-version`                           | optional |
+| uv     | runs pytest with no venv | 0.13.10        | `uv.toml` `required-version`                           | optional |
 | pytest | test framework           | 9.2.0          | `tests/requirements.txt`                               | optional |
 | python | runtime                  | 3.11 (floor)   | `.python-version`                                      | required |
 
@@ -59,7 +59,7 @@ librarian's `bin/ruff-version.sh` verbatim.
 `uv.toml` — required.
 
 ```toml
-required-version = "==0.13.7"
+required-version = "==0.13.10"
 ```
 
 `.python-version` — required.
@@ -249,7 +249,7 @@ python-lint:
 
 python-test:
   stage: test
-  image: ghcr.io/astral-sh/uv:0.13.7-trixie-slim # Debian: has bash
+  image: ghcr.io/astral-sh/uv:0.13.10-trixie-slim # Debian: has bash
   script:
     - bash tests/run.sh
 ```

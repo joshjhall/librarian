@@ -1,12 +1,12 @@
 # Pinned tool versions — the single source bin/install-tools.sh reads (core § 4).
 # One `name=version` per line. Bump a pin in its own commit, then run
 # `just lint` and `just test`.
-typos=1.52.0
-dprint=0.64.3
+typos=1.52.2
+dprint=0.65.0
 taplo=0.10.0
-rumdl=0.3.2
+rumdl=0.3.6
 actionlint=1.7.12
 gitleaks=8.30.1
-conform=0.1.0-alpha.32
-lefthook=2.2.2
+conform=0.1.0-alpha.33
+lefthook=2.2.3
 just=1.59.0
