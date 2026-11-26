@@ -1,6 +1,6 @@
 {
   "name": "Librarian Development",
-  "dockerComposeFile": "docker-compose.yml",
+  "dockerComposeFile": ["docker-compose.yml", "docker-compose.override.yml"],
   "service": "devcontainer",
   "workspaceFolder": "/workspace/librarian",
 
@@ -14,6 +14,19 @@
   // as $0: it reads empty stdin and exits 0, and the hook silently does nothing.
   // That is how a Zed-built container came up with no ruff. The array form
   // survives the round-trip and is equally valid for VS Code / devcontainer CLI.
+
+  // docker-compose.override.yml is gitignored local wiring (machine-specific
+  // mounts, e.g. drumknott), but Compose refuses a missing file. This runs on
+  // the HOST before Compose and writes a no-op stub only when the file is
+  // absent, so a fresh clone or golem worktree still opens. An existing
+  // override is never touched. (An empty file is not enough: Compose rejects it.)
+  "initializeCommand": [
+    "sh",
+    "-c",
+    "test -e \"$1\" || printf 'services:\\n  devcontainer: {}\\n' > \"$1\"",
+    "sh",
+    "${localWorkspaceFolder}/.devcontainer/docker-compose.override.yml"
+  ],
 
   // Install dependencies once when the container is first created.
   "postCreateCommand": ["bash", "/workspace/librarian/.devcontainer/post-create.sh"],
