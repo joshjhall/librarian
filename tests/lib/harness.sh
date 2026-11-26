@@ -22,6 +22,11 @@
 
 set -euo pipefail
 
+# Make a local run as hermetic as CI: drop BASH_ENV and env-injected git config
+# before any test spawns a child (#1274). See the file for the why.
+# shellcheck source=tests/lib/hermetic-env.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-env.sh"
+
 # --- Counters / state -------------------------------------------------------
 
 TESTS_RUN=0

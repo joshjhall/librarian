@@ -33,6 +33,12 @@ for _gv in GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_PREFIX \
 done
 unset _gv
 
+# Same idea for the developer shell: BASH_ENV and env-injected git config, which
+# CI never sets (#1274). harness.sh sources this too; doing it here also covers
+# the gates that do not source the harness.
+# shellcheck source=tests/lib/hermetic-env.sh
+. "$SCRIPT_DIR/lib/hermetic-env.sh"
+
 rc=0
 
 # Names of the stages that FAILED, one per line, accumulated by run_stage (#854).
