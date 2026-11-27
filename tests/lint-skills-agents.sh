@@ -628,6 +628,64 @@ test_bundled_shell_scripts_executable() {
     done < <(command find "$PLUGINS_DIR" -name '*.sh' -type f 2>/dev/null | command sort)
 }
 
+# nonexec_top_level_gates <dir> — every TOP-LEVEL *.sh in <dir> that carries a
+# `#!` shebang but lacks the executable bit, one path per line.
+#
+# The sweep above covers plugins/ only, so 14 tests/*.sh gates sat at 100644
+# unnoticed (#1254). The suite masked it by invoking every gate as `bash <gate>`,
+# but the documented capture recipe calls a gate BARE (`tests/x.sh > log 2>&1;
+# echo $?`, #1247), and a non-executable gate then exits 126 having run nothing.
+#
+# Top level only, and shebang-keyed: split-suite fragments (tests/<suite>/*.sh)
+# and tests/lib/* are SOURCED, carry `# shellcheck shell=bash` instead of a
+# shebang, and are correctly 100644. A directory argument (not a hardcoded
+# tests/) is what lets the negative fixture below drive the same code.
+nonexec_top_level_gates() {
+    local dir="$1" f first
+    while IFS= read -r f; do
+        [ -n "$f" ] || continue
+        first=""
+        IFS= read -r first <"$f" || true
+        case "$first" in
+            '#!'*) [ -x "$f" ] || command printf '%s\n' "$f" ;;
+        esac
+    done < <(command find "$dir" -maxdepth 1 -name '*.sh' -type f 2>/dev/null | command sort)
+}
+
+# Every top-level tests/*.sh gate with a shebang is executable (#1254).
+test_top_level_test_gates_executable() {
+    local bad n
+    n="$(command find "$SCRIPT_DIR" -maxdepth 1 -name '*.sh' -type f | command wc -l)"
+    # Non-vacuity: a wrong $SCRIPT_DIR would sweep nothing and report clean.
+    assert_true "[ $n -gt 50 ]" "the sweep inspected the real tests/ corpus (found $n gates)"
+    bad="$(nonexec_top_level_gates "$SCRIPT_DIR")"
+    assert_equals "" "$bad" "top-level tests/*.sh gates with a shebang are executable (chmod +x)"
+}
+
+# The detector FIRES on a planted non-executable gate, and ONLY on it — not on a
+# shebang-less sourced file or a nested fragment, both legitimately 100644.
+test_top_level_gate_exec_guard_detects_drift() {
+    local d
+    d="$(command mktemp -d)" || {
+        skip_test "mktemp unavailable"
+        return
+    }
+    command mkdir "$d/suite"
+    command printf '#!/usr/bin/env bash\n' >"$d/ok.sh"
+    command chmod 755 "$d/ok.sh"
+    command printf '#!/usr/bin/env bash\n' >"$d/bad.sh"
+    command chmod 644 "$d/bad.sh"
+    command printf '# shellcheck shell=bash\n' >"$d/sourced.sh"
+    command chmod 644 "$d/sourced.sh"
+    command printf '#!/usr/bin/env bash\n' >"$d/suite/10-frag.sh"
+    command chmod 644 "$d/suite/10-frag.sh"
+    local got
+    got="$(nonexec_top_level_gates "$d")"
+    command rm -rf "$d"
+    assert_equals "$d/bad.sh" "$got" \
+        "detector reports exactly the non-executable shebang gate"
+}
+
 # --- Workflow Harness Tests -------------------------------------------------
 
 # Every workflow.js `export const meta` block is a pure literal.
@@ -1073,6 +1131,8 @@ run_test test_loop_skill_structure "loop-* skills have 5-file structure"
 run_test test_context_skill_structure "context-* skills have 3-file structure"
 run_test test_patterns_sh_executable "patterns.sh files are executable"
 run_test test_bundled_shell_scripts_executable "every bundled .sh under plugins/ is executable (#604)"
+run_test test_top_level_test_gates_executable "every top-level tests/*.sh gate is executable (#1254)"
+run_test test_top_level_gate_exec_guard_detects_drift "test-gate exec guard fires on a planted 100644 gate, only on it"
 run_test test_workflow_meta_pure_literal "Every workflow.js meta is a pure literal (no concat/interpolation)"
 run_test test_workflow_js_node_check "Every workflow.js passes node --check (syntax valid)"
 run_test test_workflow_js_node_check_detects_syntax_error "node --check guard fires on a syntax error"

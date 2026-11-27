@@ -37,6 +37,42 @@ capture_assert() {
     ("$@") 2>&1
 }
 
+# --- hermetic-env scrub (#1274) ---------------------------------------------
+
+# Sourcing the harness drops BASH_ENV and every env-injected git config var, so
+# a child bash a test spawns cannot source a developer hook (/etc/bash_env) or
+# inherit a credential provider's user.name / include.path. Driven in a fresh
+# bash with the vars PLANTED, so the assertion fails if the scrub is removed —
+# the running suite's own env is already scrubbed and would pass vacuously.
+_hermetic_probe() {
+    command env BASH_ENV=/nonexistent/bash_env GIT_CONFIG_COUNT=2 \
+        GIT_CONFIG_KEY_0=user.name GIT_CONFIG_VALUE_0=LEAKED \
+        GIT_CONFIG_KEY_1=include.path GIT_CONFIG_VALUE_1=/nonexistent \
+        GIT_CONFIG_PARAMETERS="'user.email=leaked@x'" KEEP_ME=1 \
+        bash -c '. "$1"; command env' _ "$SCRIPT_DIR/lib/harness.sh"
+}
+
+test_hermetic_env_drops_bash_env_and_git_config() {
+    local out
+    out="$(_hermetic_probe)"
+    assert_not_contains "$out" "BASH_ENV=" "BASH_ENV is unexported"
+    assert_not_contains "$out" "GIT_CONFIG_COUNT=" "GIT_CONFIG_COUNT is unexported"
+    assert_not_contains "$out" "GIT_CONFIG_KEY_" "every GIT_CONFIG_KEY_<n> is unexported"
+    assert_not_contains "$out" "GIT_CONFIG_VALUE_" "every GIT_CONFIG_VALUE_<n> is unexported"
+    assert_not_contains "$out" "GIT_CONFIG_PARAMETERS=" "GIT_CONFIG_PARAMETERS is unexported"
+    # Non-vacuity: the probe really ran and kept an unrelated var, so an empty
+    # or crashed child cannot satisfy the not-contains assertions above.
+    assert_contains "$out" "KEEP_ME=1" "an unrelated exported var survives the scrub"
+}
+
+# A test may still inject git config ON PURPOSE, per command, after the scrub —
+# the scrub runs once at load, so it must not reach a later explicit assignment.
+test_hermetic_env_allows_later_explicit_injection() {
+    local out
+    out="$(bash -c '. "$1"; GIT_CONFIG_COUNT=1 command env' _ "$SCRIPT_DIR/lib/harness.sh")"
+    assert_contains "$out" "GIT_CONFIG_COUNT=1" "a per-command injection after load still reaches the child"
+}
+
 # --- assert_true heuristic --------------------------------------------------
 
 # A last argument containing whitespace is taken as the failure message, leaving
@@ -913,5 +949,8 @@ run_test test_analyzer_report_captured_zero_rc_is_silent "assert_analyzer_report
 run_test test_analyzer_report_captured_crash_reports_evidence "assert_analyzer_report_captured: a crash carries the report as evidence (#1082)"
 run_test test_analyzer_report_captured_empty_report_uses_placeholder "assert_analyzer_report_captured: an empty report uses the placeholder (#1082)"
 run_test test_analyzer_report_captured_empty_rc_fails_closed "assert_analyzer_report_captured: an empty rc fails closed (#1082)"
+
+run_test test_hermetic_env_drops_bash_env_and_git_config "hermetic-env: sourcing the harness drops BASH_ENV and env-injected git config (#1274)"
+run_test test_hermetic_env_allows_later_explicit_injection "hermetic-env: a per-command injection after load is untouched (#1274)"
 
 generate_report
